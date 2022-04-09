@@ -866,6 +866,10 @@ ask to kick a door open, if it's locked and you don't have unlocking tool
 give a message when stinking cloud is created on top of hero
 when being life-saved prevents the hero from moving again during current turn,
 	avoid logfile annotation "while helpless" if hero dies a second time
+if drinking from a fountain randomly gave the 'detect monsters' effect but
+	there were no monsters on the level then there was no feedback
+object detection always showed a mimic imitating a statue as a tengu even if
+	it had information available about some other type of monster
 
 
 Fixes to 3.7.0-x Problems that Were Exposed Via git Repository
@@ -1125,6 +1129,7 @@ changes in encumbrance sometimes went unreported, leaving stale status line
 taking off yellow dragon scales/mail or having temporary stoning resistance
 	time out while wielding a cockatrice corpse without gloves left that
 	corpse safely wielded instead of petrifying the hero
+special level loading wasn't honoring gender specified in lua code
 
 curses: 'msg_window' option wasn't functional for curses unless the binary
 	also included tty support
