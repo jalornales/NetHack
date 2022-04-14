@@ -270,7 +270,7 @@ cmdq_add_key(char key)
 void
 cmdq_add_dir(schar dx, schar dy, schar dz)
 {
-    struct _cmd_queue *tmp = (struct _cmd_queue *)alloc(sizeof(struct _cmd_queue));
+    struct _cmd_queue *tmp = (struct _cmd_queue *) alloc(sizeof *tmp);
     struct _cmd_queue *cq = g.command_queue;
 
     tmp->typ = CMDQ_DIR;
@@ -292,7 +292,7 @@ cmdq_add_dir(schar dx, schar dy, schar dz)
 void
 cmdq_add_userinput(void)
 {
-    struct _cmd_queue *tmp = (struct _cmd_queue *)alloc(sizeof(struct _cmd_queue));
+    struct _cmd_queue *tmp = (struct _cmd_queue *) alloc(sizeof *tmp);
     struct _cmd_queue *cq = g.command_queue;
 
     tmp->typ = CMDQ_USER_INPUT;
@@ -320,6 +320,13 @@ cmdq_pop(void)
         tmp->next = NULL;
     }
     return tmp;
+}
+
+/* get the top entry without popping it */
+struct _cmd_queue *
+cmdq_peek(void)
+{
+    return g.command_queue;
 }
 
 /* clear all commands from the command queue */
@@ -2237,7 +2244,7 @@ struct ext_func_tab extcmdlist[] = {
     { M('C'), "conduct", "list voluntary challenges you have maintained",
               doconduct, IFBURIED | AUTOCOMPLETE | GENERALCMD, NULL },
     { M('d'), "dip", "dip an object into something",
-              dodip, AUTOCOMPLETE, NULL },
+              dodip, AUTOCOMPLETE | CMD_M_PREFIX, NULL },
     { '>',    "down", "go down a staircase",
               /* allows 'm' prefix (for move without autopickup) but not the
                  g/G/F movement modifiers; not flagged as MOVEMENTCMD because
@@ -2329,7 +2336,7 @@ struct ext_func_tab extcmdlist[] = {
     { 'P',    "puton", "put on an accessory (ring, amulet, etc)",
               doputon, 0, NULL },
     { 'q',    "quaff", "quaff (drink) something",
-              dodrink, 0, NULL },
+              dodrink, CMD_M_PREFIX, NULL },
     { '\0', "quit", "exit without saving current game",
               done2, IFBURIED | AUTOCOMPLETE | GENERALCMD | NOFUZZERCMD,
               NULL },
@@ -2547,7 +2554,8 @@ struct ext_func_tab extcmdlist[] = {
             do_run_southwest, MOVEMENTCMD | CMD_M_PREFIX, NULL },
 
     /* internal commands: only used by game core, not available for user */
-    { '\0',   "clicklook", NULL, doclicklook, INTERNALCMD, NULL },
+    { '\0', "clicklook", NULL, doclicklook, INTERNALCMD, NULL },
+    { '\0', "altdip", NULL, dip_into, INTERNALCMD, NULL },
     { '\0', (char *) 0, (char *) 0, donull, 0, (char *) 0 } /* sentinel */
 };
 
@@ -4001,11 +4009,11 @@ rhack(char *cmd)
                    doextcmd() notifies us what that was via ext_tlist;
                    other commands leave it Null */
                 if (g.ext_tlist)
-                    tlist = g.ext_tlist;
+                    tlist = g.ext_tlist, g.ext_tlist = NULL;
 
-                if ((tlist->flags & PREFIXCMD)) {
+                if ((tlist->flags & PREFIXCMD) != 0) {
                     /* it was a prefix command, mark and get another cmd */
-                    if ((res & ECMD_CANCEL)) {
+                    if ((res & ECMD_CANCEL) != 0) {
                         /* prefix commands cancel if pressed twice */
                         reset_cmd_vars(TRUE);
                         return;
@@ -4048,17 +4056,14 @@ rhack(char *cmd)
                 prefix_seen = 0;
                 was_m_prefix = FALSE;
             }
-            if ((res & (ECMD_CANCEL|ECMD_FAIL))) {
+            if ((res & (ECMD_CANCEL | ECMD_FAIL)) != 0) {
                 /* command was canceled by user, maybe they declined to
                    pick an object to act on, or command failed to finish */
                 reset_cmd_vars(TRUE);
-                prefix_seen = 0;
-                cmdq_ec = NULL;
-            }
-            if (!(res & ECMD_TIME)) {
+            } else if ((res & ECMD_TIME) != 0) {
+                g.context.move = TRUE;
+            } else { /* ECMD_OK */
                 reset_cmd_vars(FALSE);
-                prefix_seen = 0;
-                cmdq_ec = NULL;
             }
             return;
         }
@@ -4492,6 +4497,7 @@ enum menucmd {
     MCMD_SEARCH,
     MCMD_LOOK_TRAP,
     MCMD_UNTRAP_TRAP,
+    MCMD_MOVE_DIR,
     MCMD_RIDE,
     MCMD_REMOVE_SADDLE,
     MCMD_APPLY_SADDLE,
@@ -4514,6 +4520,8 @@ enum menucmd {
     MCMD_ATTACK_NEXT2U,
     MCMD_UNTRAP_HERE,
     MCMD_OFFER,
+    MCMD_INVENTORY,
+    MCMD_CAST_SPELL,
 
     MCMD_THROW_OBJ,
     MCMD_TRAVEL,
@@ -4596,12 +4604,17 @@ there_cmd_menu_self(winid win, int x, int y, int *act UNUSED)
         }
     }
 
-    if (g.invent)
-        mcmd_addmenu(win, MCMD_DROP, "Drop items"), ++K;
 
+    if (g.invent) {
+        mcmd_addmenu(win, MCMD_INVENTORY, "Inventory"), ++K;
+        mcmd_addmenu(win, MCMD_DROP, "Drop items"), ++K;
+    }
     mcmd_addmenu(win, MCMD_REST, "Rest one turn"), ++K;
     mcmd_addmenu(win, MCMD_SEARCH, "Search around you"), ++K;
     mcmd_addmenu(win, MCMD_LOOK_HERE, "Look at what is here"), ++K;
+
+    if (num_spells() > 0)
+        mcmd_addmenu(win, MCMD_CAST_SPELL, "Cast a spell"), ++K;
 
     if ((ttmp = t_at(x, y)) != 0 && ttmp->tseen) {
         if (ttmp->ttyp != VIBRATING_SQUARE)
@@ -4658,7 +4671,7 @@ there_cmd_menu_next2u(winid win, int x, int y, int mod, int *act)
         if (ttmp->ttyp != VIBRATING_SQUARE)
             mcmd_addmenu(win, MCMD_UNTRAP_TRAP,
                                  "Attempt to disarm trap"), ++K;
-        /* TODO: "Step on the <trap>" */
+        mcmd_addmenu(win, MCMD_MOVE_DIR, "Move on the trap"), ++K;
     }
 
     mtmp = m_at(x, y);
@@ -4761,7 +4774,7 @@ there_cmd_menu(int x, int y, int mod)
 
     if (!K) {
         /* no menu options, try to move */
-        if (next2u(x, y) && !test_move(u.ux, u.uy, x, y, TEST_MOVE))
+        if (next2u(x, y) && !test_move(u.ux, u.uy, dx, dy, TEST_MOVE))
             cmdq_add_ec(move_funcs[dir][MV_WALK]);
         else if (flags.travelcmd) {
             iflags.travelcc.x = u.tx = x;
@@ -4836,6 +4849,9 @@ there_cmd_menu(int x, int y, int mod)
             cmdq_add_ec(dountrap);
             cmdq_add_dir(dx, dy, 0);
             break;
+        case MCMD_MOVE_DIR:
+            cmdq_add_ec(move_funcs[xytod(dx, dy)][MV_WALK]);
+            break;
         case MCMD_RIDE:
             cmdq_add_ec(doride);
             cmdq_add_dir(dx, dy, 0);
@@ -4899,6 +4915,9 @@ there_cmd_menu(int x, int y, int mod)
         case MCMD_DROP:
             cmdq_add_ec(dodrop);
             break;
+        case MCMD_INVENTORY:
+            cmdq_add_ec(ddoinv);
+            break;
         case MCMD_REST:
             cmdq_add_ec(donull);
             break;
@@ -4917,6 +4936,9 @@ there_cmd_menu(int x, int y, int mod)
         case MCMD_OFFER:
             cmdq_add_ec(dosacrifice);
             cmdq_add_userinput();
+            break;
+        case MCMD_CAST_SPELL:
+            cmdq_add_ec(docast);
             break;
         default: break;
         }
@@ -5118,7 +5140,7 @@ parse(void)
 
     iflags.in_parse = TRUE;
     g.command_count = 0;
-    g.context.move = 1;
+    g.context.move = TRUE; /* assume next command will take game time */
     flush_screen(1); /* Flush screen buffer. Put the cursor on the hero. */
 
     g.program_state.getting_a_command = 1; /* affects readchar() behavior for

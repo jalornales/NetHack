@@ -19,9 +19,7 @@ static void kops_gone(boolean);
 #define ANGRY(mon) (!NOTANGRY(mon))
 #define IS_SHOP(x) (g.rooms[x].rtype >= SHOPBASE)
 
-#define muteshk(shkp)                       \
-    (helpless(shkp) \
-     || (shkp)->data->msound <= MS_ANIMAL)
+#define muteshk(shkp) (helpless(shkp) || (shkp)->data->msound <= MS_ANIMAL)
 
 extern const struct shclass shtypes[]; /* defined in shknam.c */
 
@@ -67,6 +65,7 @@ static void shk_fixes_damage(struct monst *);
 static xchar *litter_getpos(int *, xchar, xchar, struct monst *);
 static void litter_scatter(xchar *, int, xchar, xchar, struct monst *);
 static void litter_newsyms(xchar *, xchar, xchar);
+static int repair_damage(struct monst *, struct damage *, boolean);
 static void sub_one_frombill(struct obj *, struct monst *);
 static void add_one_tobill(struct obj *, boolean, struct monst *);
 static void dropped_container(struct obj *, struct monst *, boolean);
@@ -156,7 +155,7 @@ money2u(struct monst* mon, long amount)
 }
 
 static struct monst *
-next_shkp(register struct monst* shkp, register boolean withbill)
+next_shkp(register struct monst *shkp, boolean withbill)
 {
     for (; shkp; shkp = shkp->nmon) {
         if (DEADMONSTER(shkp))
@@ -1983,9 +1982,11 @@ find_oid(unsigned int id)
 /* Returns the price of an arbitrary item in the shop,
    0 if the item doesn't belong to a shopkeeper or hero is not in the shop. */
 long
-get_cost_of_shop_item(register struct obj* obj, int* nochrg)
-             /* alternate return value: 1: no charge, 0: shop owned,        */
-{            /* -1: not in a shop (so should't be formatted as "no charge") */
+get_cost_of_shop_item(
+    struct obj *obj,
+    int *nochrg) /* alternate return value: 1: no charge, 0: shop owned,
+                  * -1: not in a shop (so don't format as "no charge") */
+{
     struct monst *shkp;
     struct obj *top;
     xchar x, y;
@@ -3632,7 +3633,7 @@ discard_damage_owned_by(struct monst *shkp)
 
 /* Shopkeeper tries to repair damage belonging to them */
 static void
-shk_fixes_damage(struct monst* shkp)
+shk_fixes_damage(struct monst *shkp)
 {
     struct damage *dam = find_damage(shkp);
     boolean shk_closeby;
@@ -3766,11 +3767,11 @@ litter_newsyms(xchar *litter, xchar x, xchar y)
  * 0: repair postponed, 1: silent repair (no messages), 2: normal repair
  * 3: untrap
  */
-int
+static int
 repair_damage(
     struct monst *shkp,
     struct damage *tmp_dam,
-    boolean catchup) /* restoring a level */
+    boolean catchup)
 {
     xchar x, y;
     xchar *litter;
@@ -3782,6 +3783,7 @@ repair_damage(
     if (!repairable_damage(tmp_dam, shkp))
         return 0;
 
+    catchup = g.moves > tmp_dam->when + REPAIR_DELAY;
     x = tmp_dam->place.x;
     y = tmp_dam->place.y;
 
@@ -3873,11 +3875,40 @@ repair_damage(
     return disposition;
 }
 
+/* normally repair is done when a shopkeeper moves, but we also try to
+   catch up for lost time when reloading a previously visited level */
+void
+fix_shop_damage(void)
+{
+    struct monst *shkp;
+    struct damage *damg, *nextdamg;
+
+    /* if this level has no shop damage, there's nothing to do */
+    if (!g.level.damagelist)
+        return;
+
+    /* go through all shopkeepers on the level */
+    for (shkp = next_shkp(fmon, FALSE); shkp;
+         shkp = next_shkp(shkp->nmon, FALSE)) {
+        /* if this shopkeeper isn't in his shop or can't move, skip */
+        if (shk_impaired(shkp))
+            continue;
+        /* go through all damage data trying to have this shopkeeper
+           fix it; repair_damage() will only make repairs for damage
+           matching shop controlled by specified shopkeeper */
+        for (damg = g.level.damagelist; damg; damg = nextdamg) {
+            nextdamg = damg->next;
+            if (repair_damage(shkp, damg, TRUE))
+                discard_damage_struct(damg);
+        }
+    }
+}
+
 /*
  * shk_move: return 1: moved  0: didn't  -1: let m_move do it  -2: died
  */
 int
-shk_move(struct monst* shkp)
+shk_move(struct monst *shkp)
 {
     xchar gx, gy, omx, omy;
     int udist;
@@ -4776,15 +4807,22 @@ block_entry(register xchar x, register xchar y)
 
 /* "your " or "Foobar's " (note the trailing space) */
 char *
-shk_your(char *buf, struct obj* obj)
+shk_your(char *buf, struct obj *obj)
 {
-    if (!shk_owns(buf, obj) && !mon_owns(buf, obj))
+    boolean chk_pm = obj->otyp == CORPSE && obj->corpsenm >= LOW_PM;
+
+    buf[0] = '\0';
+    if (chk_pm && type_is_pname(&mons[obj->corpsenm]))
+        return buf; /* skip ownership prefix and space: "Medusa's corpse" */
+    else if (chk_pm && the_unique_pm(&mons[obj->corpsenm]))
+        Strcpy(buf, "the"); /* override ownership: "the Oracle's corpse" */
+    else if (!shk_owns(buf, obj) && !mon_owns(buf, obj))
         Strcpy(buf, the_your[carried(obj) ? 1 : 0]);
     return strcat(buf, " ");
 }
 
 char *
-Shk_Your(char* buf, struct obj* obj)
+Shk_Your(char *buf, struct obj *obj)
 {
     (void) shk_your(buf, obj);
     *buf = highc(*buf);
@@ -4792,7 +4830,7 @@ Shk_Your(char* buf, struct obj* obj)
 }
 
 static char *
-shk_owns(char* buf, struct obj* obj)
+shk_owns(char *buf, struct obj *obj)
 {
     struct monst *shkp;
     xchar x, y;
@@ -4807,7 +4845,7 @@ shk_owns(char* buf, struct obj* obj)
 }
 
 static char *
-mon_owns(char* buf, struct obj* obj)
+mon_owns(char *buf, struct obj *obj)
 {
     if (obj->where == OBJ_MINVENT)
         return strcpy(buf, s_suffix(y_monnam(obj->ocarry)));

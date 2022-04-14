@@ -985,6 +985,12 @@ query_objlist(const char *qstr,        /* query string */
     win = create_nhwindow(NHW_MENU);
     start_menu(win, MENU_BEHAVE_STANDARD);
     any = cg.zeroany;
+    if (g.this_title) {
+        /* dotypeinv() supplies g.this_title to display as initial header;
+           intentionally avoid the menu_headings highlight attribute here */
+        add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
+                 g.this_title, MENU_ITEMFLAGS_NONE);
+    }
     /*
      * Run through the list and add the objects to the menu.  If
      * INVORDER_SORT is set, we'll run through the list once for
@@ -2691,10 +2697,10 @@ stash_ok(struct obj *obj)
 }
 
 int
-use_container(struct obj **objp,
-              int held,
-              boolean more_containers) /* True iff #loot multiple and this
-                                          isn't last one */
+use_container(
+    struct obj **objp,
+    int held,
+    boolean more_containers) /* True iff #loot multiple and this isn't last */
 {
     struct obj *otmp, *obj = *objp;
     boolean quantum_cat, cursed_mbag, loot_out, loot_in, loot_in_first,
@@ -2811,7 +2817,8 @@ use_container(struct obj **objp,
             } else {
                 c = in_or_out_menu(qbuf, g.current_container,
                                    outmaybe, inokay,
-                                   (boolean) (used != ECMD_OK), more_containers);
+                                   (boolean) (used != ECMD_OK),
+                                   more_containers);
             }
         } else { /* TRADITIONAL or COMBINATION */
             xbuf[0] = '\0'; /* list of extra acceptable responses */
