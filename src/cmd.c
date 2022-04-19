@@ -1,4 +1,4 @@
-/* NetHack 3.7	cmd.c	$NHDT-Date: 1649272000 2022/04/06 19:06:40 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.539 $ */
+/* NetHack 3.7	cmd.c	$NHDT-Date: 1650048286 2022/04/15 18:44:46 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.553 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2013. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -398,6 +398,44 @@ savech(char ch)
             g.saveq[g.shead++] = ch;
     }
     return;
+}
+
+/* perform savech() for the characters of an extended command name */
+void
+savech_extcmd(const char *str, boolean addnewline)
+{
+    unsigned j, L = Strlen(str);
+
+    /* DEBUGFILES='cmd.c' -- for tty or other one-line message 'window'
+       this debuging line could be immediately erased and need ^P to read */
+    debugpline1("savech_extcmd(\"%s\")", str);
+
+    /* 'str' might be the full command name or maybe just enough to be
+       unambiguous depending on how the interface handles that; if it is
+       "repeat" (or leading substring of that), don't save it for do-again */
+    if (!g.in_doagain && (L > 2 && strncmp(str, "repeat", L))) {
+        uchar c = (g.shead > 0) ? (uchar) (g.saveq[g.shead - 1] & 0xff) : 0;
+
+        /* reset saveq unless it holds a prefix */
+        if (!c || !g.Cmd.commands[c]
+            || (g.Cmd.commands[c]->flags & PREFIXCMD) == 0)
+            savech(0);
+
+        /* insert the '#' first because rhack() avoids doing that when
+           processing doextcmd() */
+        savech(g.Cmd.extcmd_char);
+        for (j = 0; j < L; ++j)
+            savech(str[j]);
+        if (addnewline)
+            savech('\n');
+    }
+}
+
+/* '#' or whatever has been bound to doextcmd() in its place */
+char
+extcmd_initiator(void)
+{
+    return g.Cmd.extcmd_char;
 }
 
 static boolean
@@ -2199,15 +2237,26 @@ do_fight(void)
 int
 do_repeat(void)
 {
-    if (!g.in_doagain && g.saveq[0]) {
+    int res = ECMD_OK;
+
+    if (!g.in_doagain) {
+        char c = g.saveq[0];
+
+        if (!c || !g.Cmd.commands[c & 0xff]) {
+            Norep("There is no command available to repeat.");
+            if (c)
+                savech(0);
+            return ECMD_FAIL;
+        }
         g.in_doagain = TRUE;
         g.stail = 0;
         rhack((char *) 0); /* read and execute command */
         g.in_doagain = FALSE;
         iflags.menu_requested = FALSE;
-        return ECMD_TIME;
+        if (g.context.move)
+            res = ECMD_TIME;
     }
-    return ECMD_OK;
+    return res;
 }
 
 /* extcmdlist: full command list, ordered by command name;
@@ -2216,7 +2265,7 @@ do_repeat(void)
    or control keystroke generally should not be; there are a few exceptions
    such as ^O/#overview and C/N/#name */
 struct ext_func_tab extcmdlist[] = {
-    { '#',    "#", "perform an extended command",
+    { '#',    "#", "enter and perform an extended command",
               doextcmd, IFBURIED | GENERALCMD | CMD_M_PREFIX, NULL },
     { M('?'), "?", "list all extended commands",
               doextlist, IFBURIED | AUTOCOMPLETE | GENERALCMD | CMD_M_PREFIX,
@@ -2575,7 +2624,7 @@ static int (*move_funcs[N_DIRS_Z][N_MOVEMODES])(void) = {
     { doup,              doup,             doup },
 };
 
-/* used by dokeylist() and by key2extcmdesc() for dowhatdoes() */
+/* used by dokeylist() and by key2extcmddesc() for dowhatdoes() */
 static const struct {
     int nhkf;
     const char *desc;
@@ -2645,6 +2694,7 @@ const char *
 key2extcmddesc(uchar key)
 {
     static char key2cmdbuf[QBUFSZ];
+    const char *txt;
     int k, i, j;
     uchar M_5 = (uchar) M('5'), M_0 = (uchar) M('0');
 
@@ -2679,13 +2729,11 @@ key2extcmddesc(uchar key)
             return misc_keys[i].desc;
     }
     /* finally, check whether 'key' is a command */
-    if (g.Cmd.commands[key]) {
-        if (g.Cmd.commands[key]->ef_txt) {
-            Sprintf(key2cmdbuf, "%s (#%s)",
-                    g.Cmd.commands[key]->ef_desc,
-                    g.Cmd.commands[key]->ef_txt);
-            return key2cmdbuf;
-        }
+    if (g.Cmd.commands[key] && (txt = g.Cmd.commands[key]->ef_txt) != 0) {
+        Sprintf(key2cmdbuf, "%s (#%s)", g.Cmd.commands[key]->ef_desc, txt);
+        /* special case: 'txt' for '#' is "#" and showing that as
+           "perform an extended command (##)" looks silly; strip "(##)" off */
+        return strsubst(key2cmdbuf, " (##)", "");
     }
     return (char *) 0;
 }
@@ -3078,11 +3126,11 @@ cmdname_from_func(
         res = strcpy(outbuf, res);
     } else {
         const struct ext_func_tab *matchcmd = extcmdlist;
-        int len = 0;
+        unsigned len = 0, maxlen = Strlen(res);
 
         /* find the shortest leading substring which is unambiguous */
         do {
-            if (++len >= (int) strlen(res))
+            if (++len >= maxlen)
                 break;
             for (extcmd = matchcmd; extcmd->ef_txt; ++extcmd) {
                 if (extcmd == cmdptr)
@@ -3097,6 +3145,8 @@ cmdname_from_func(
             }
         } while (extcmd->ef_txt);
         copynchars(outbuf, res, len);
+        /* [note: for Qt, this debugpline writes a couple dozen lines to
+            stdout during menu setup when message window isn't ready yet] */
         debugpline2("shortened %s: \"%s\"", res, outbuf);
         res = outbuf;
     }
@@ -3672,7 +3722,8 @@ reset_commands(boolean initial)
         if (backed_dir_cmd) {
             for (dir = 0; dir < N_DIRS; dir++) {
                 for (mode = 0; mode < N_MOVEMODES; mode++) {
-                    g.Cmd.commands[back_dir_key[dir][mode]] = back_dir_cmd[dir][mode];
+                    g.Cmd.commands[back_dir_key[dir][mode]]
+                        = back_dir_cmd[dir][mode];
                 }
             }
         }
@@ -3755,7 +3806,8 @@ reset_commands(boolean initial)
                 else if (mode == MV_RUSH) di = M(di);
             }
             back_dir_key[dir][mode] = di;
-            back_dir_cmd[dir][mode] = (struct ext_func_tab *) g.Cmd.commands[di];
+            back_dir_cmd[dir][mode]
+                = (struct ext_func_tab *) g.Cmd.commands[di];
             g.Cmd.commands[di] = (struct ext_func_tab *) 0;
         }
     }
@@ -3765,15 +3817,17 @@ reset_commands(boolean initial)
     for (i = 0; i < N_DIRS; i++) {
         (void) bind_key_fn(g.Cmd.dirchars[i], move_funcs[i][MV_WALK]);
         if (!g.Cmd.num_pad) {
-            (void) bind_key_fn(highc(g.Cmd.dirchars[i]), move_funcs[i][MV_RUN]);
+            (void) bind_key_fn(highc(g.Cmd.dirchars[i]),
+                               move_funcs[i][MV_RUN]);
             (void) bind_key_fn(C(g.Cmd.dirchars[i]), move_funcs[i][MV_RUSH]);
         } else {
             /* M(number) works when altmeta is on */
             (void) bind_key_fn(M(g.Cmd.dirchars[i]), move_funcs[i][MV_RUN]);
-            /* can't bind highc() or C() of numbers. just use the 5 prefix. */
+            /* can't bind highc() or C() of digits. just use the 5 prefix. */
         }
     }
     update_rest_on_space();
+    g.Cmd.extcmd_char = cmd_from_func(doextcmd);
 }
 
 /* called when 'rest_on_space' is toggled, also called by reset_commands()
@@ -3915,9 +3969,10 @@ reset_cmd_vars(boolean reset_cmdq)
 void
 rhack(char *cmd)
 {
+    char queuedkeystroke[2];
     int spkey = NHKF_ESC;
     boolean bad_command, firsttime = (cmd == 0);
-    struct _cmd_queue *cmdq = NULL;
+    struct _cmd_queue cq, *cmdq = NULL;
     const struct ext_func_tab *cmdq_ec = 0, *prefix_seen = 0;
     boolean was_m_prefix = FALSE;
 
@@ -3929,19 +3984,16 @@ rhack(char *cmd)
 #endif
     if ((cmdq = cmdq_pop()) != 0) {
         /* doing queued commands */
-        if (cmdq->typ == CMDQ_KEY) {
-            static char commandline[2];
-
-            if (!cmd)
-                cmd = commandline;
-            cmd[0] = cmdq->key;
-            cmd[1] = '\0';
-        } else if (cmdq->typ == CMDQ_EXTCMD) {
-            cmdq_ec = cmdq->ec_entry;
-        }
+        cq = *cmdq;
         free(cmdq);
-        if (cmdq_ec)
+        if (cq.typ == CMDQ_EXTCMD && (cmdq_ec = cq.ec_entry) != 0)
             goto do_cmdq_extcmd;
+        cmd = queuedkeystroke;
+        /* already handled a queued command (goto do_cmdq_extcmd);
+           if something other than a key is queued, we'll drop down
+           to the !*cmd handling which clears out the command-queue */
+        cmd[0] = (cq.typ == CMDQ_KEY) ? cq.key : '\0';
+        cmd[1] = '\0';
     } else if (firsttime) {
         cmd = parse();
         /* parse() pushed a cmd but didn't return any key */
@@ -3949,21 +4001,17 @@ rhack(char *cmd)
             goto got_prefix_input;
     }
 
-    if (*cmd == g.Cmd.spkeys[NHKF_ESC]) {
+    /* if there's no command, there's nothing to do except reset */
+    if (!cmd || !*cmd || *cmd == (char) 0377
+        || *cmd == g.Cmd.spkeys[NHKF_ESC]) {
+        if (!cmd || *cmd != g.Cmd.spkeys[NHKF_ESC])
+            nhbell();
         reset_cmd_vars(TRUE);
         return;
     }
 
-    /* Special case of *cmd == ' ' handled better below */
-    if (!*cmd || *cmd == (char) 0377) {
-        nhbell();
-        reset_cmd_vars(TRUE);
-        return; /* probably we just had an interrupt */
-    }
-
     /* handle most movement commands */
     g.context.travel = g.context.travel1 = 0;
-
     {
         register const struct ext_func_tab *tlist;
         int res, (*func)(void);
@@ -4063,7 +4111,7 @@ rhack(char *cmd)
             } else if ((res & ECMD_TIME) != 0) {
                 g.context.move = TRUE;
             } else { /* ECMD_OK */
-                reset_cmd_vars(FALSE);
+                reset_cmd_vars(g.multi < 0);
             }
             return;
         }
@@ -4857,6 +4905,8 @@ there_cmd_menu(int x, int y, int mod)
             cmdq_add_dir(dx, dy, 0);
             break;
         case MCMD_REMOVE_SADDLE:
+            /* m-prefix for #loot: skip any floor containers */
+            cmdq_add_ec(do_reqmenu);
             cmdq_add_ec(doloot);
             cmdq_add_dir(dx, dy, 0);
             cmdq_add_key('y'); /* "Do you want to remove the saddle ..." */
@@ -4864,6 +4914,7 @@ there_cmd_menu(int x, int y, int mod)
         case MCMD_APPLY_SADDLE:
             {
                 struct obj *otmp = carrying(SADDLE);
+
                 if (otmp) {
                     cmdq_add_ec(doapply);
                     cmdq_add_key(otmp->invlet);
@@ -5158,7 +5209,13 @@ parse(void)
         g.last_command_count = 0;
     } else if (g.in_doagain) {
         g.command_count = g.last_command_count;
-    } else if (foo && foo == cmd_from_func(do_repeat)) {
+    } else if (foo && g.Cmd.commands[foo & 0xff]
+               /* these shouldn't go into the do-again buffer */
+               && (g.Cmd.commands[foo & 0xff]->ef_funct == do_repeat
+                   || g.Cmd.commands[foo & 0xff]->ef_funct == doprev_message
+                   /* this one might get put into the do-again buffer but
+                      only if the interface code tells the core to do it */
+                   || g.Cmd.commands[foo & 0xff]->ef_funct == doextcmd)) {
         /* g.command_count will be set again when we
            re-enter with g.in_doagain set true */
         g.command_count = g.last_command_count;
@@ -5247,8 +5304,10 @@ readchar_core(int *x, int *y, int *mod)
         return randomkey();
     if (*readchar_queue)
         sym = *readchar_queue++;
+    else if (g.in_doagain)
+        sym = pgetchar();
     else
-        sym = g.in_doagain ? pgetchar() : nh_poskey(x, y, mod);
+        sym = nh_poskey(x, y, mod);
 
 #ifdef NR_OF_EOFS
     if (sym == EOF) {
@@ -5404,7 +5463,7 @@ doclicklook(void)
 char
 yn_function(const char *query, const char *resp, char def)
 {
-    char res, qbuf[QBUFSZ];
+    char res = '\033', qbuf[QBUFSZ];
     struct _cmd_queue *cmdq = cmdq_pop();
 #ifdef DUMPLOG
     unsigned idx = g.saved_pline_index;
@@ -5422,8 +5481,11 @@ yn_function(const char *query, const char *resp, char def)
         Strcpy(&qbuf[QBUFSZ - 1 - 3], "...");
         query = qbuf;
     }
-    if (cmdq && cmdq->typ == CMDQ_KEY) {
-        res = cmdq->key;
+    if (cmdq) {
+        if (cmdq->typ == CMDQ_KEY)
+            res = cmdq->key;
+        else
+            cmdq_clear(); /* 'res' is ESC */
     } else {
         res = (*windowprocs.win_yn_function)(query, resp, def);
     }
