@@ -214,6 +214,7 @@ enum misc_arti_nums {
 
 #include "rect.h"
 #include "region.h"
+#include "trap.h"
 #include "display.h"
 #include "decl.h"
 #include "timeout.h"
@@ -265,7 +266,6 @@ typedef struct sortloot_item Loot;
 
 typedef uint32_t mmflags_nht;     /* makemon MM_ flags */
 
-#include "trap.h"
 #include "flag.h"
 #include "vision.h"
 #include "engrave.h"
@@ -475,6 +475,11 @@ typedef uint32_t mmflags_nht;     /* makemon MM_ flags */
 #define OVERRIDE_MSGTYPE 2
 #define SUPPRESS_HISTORY 4
 #define URGENT_MESSAGE   8
+
+/* get_count flags */
+#define GC_NOFLAGS   0
+#define GC_SAVEHIST  1 /* save "Count: 123" in message history */
+#define GC_ECHOFIRST 2 /* echo "Count: 1" even when there's only one digit */
 
 /* rloc() flags */
 #define RLOC_NONE    0x00

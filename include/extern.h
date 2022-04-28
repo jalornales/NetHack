@@ -1,4 +1,4 @@
-/* NetHack 3.7	extern.h	$NHDT-Date: 1646870811 2022/03/10 00:06:51 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.1069 $ */
+/* NetHack 3.7	extern.h	$NHDT-Date: 1650875486 2022/04/25 08:31:26 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.1109 $ */
 /* Copyright (c) Steve Creps, 1988.				  */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -286,7 +286,7 @@ extern const char *directionname(int);
 extern int isok(int, int);
 extern int get_adjacent_loc(const char *, const char *, xchar, xchar, coord *);
 extern const char *click_to_cmd(int, int, int);
-extern char get_count(char *, char, long, cmdcount_nht *, boolean);
+extern char get_count(const char *, char, long, cmdcount_nht *, unsigned);
 #ifdef HANGUPHANDLING
 extern void hangup(int);
 extern void end_of_input(void);
@@ -568,6 +568,7 @@ extern struct obj *stuck_ring(struct obj *, int);
 extern struct obj *unchanger(void);
 extern void reset_remarm(void);
 extern int doddoremarm(void);
+extern int remarm_swapwep(void);
 extern int destroy_arm(struct obj *);
 extern void adj_abon(struct obj *, schar);
 extern boolean inaccessible_equipment(struct obj *, const char *, boolean);
@@ -1094,6 +1095,7 @@ extern void freeinv_core(struct obj *);
 extern void freeinv(struct obj *);
 extern void delallobj(int, int);
 extern void delobj(struct obj *);
+extern void delobj_core(struct obj *, boolean);
 extern struct obj *sobj_at(int, int, int);
 extern struct obj *nxtobj(struct obj *, int, boolean);
 extern struct obj *carrying(int);
@@ -1148,6 +1150,7 @@ extern void free_invbuf(void);
 extern void reassign(void);
 extern boolean check_invent_gold(const char *);
 extern int doorganize(void);
+extern int adjust_split(void);
 extern void free_pickinv_cache(void);
 extern int count_unpaid(struct obj *);
 extern int count_buc(struct obj *, int, boolean(*)(struct obj *));
@@ -1535,7 +1538,10 @@ extern void wakeup(struct monst *, boolean);
 extern void wake_nearby(void);
 extern void wake_nearto(int, int, int);
 extern void seemimic(struct monst *);
-extern void normal_shape(struct monst *mon);
+extern void normal_shape(struct monst *);
+extern void iter_mons(void (*)(struct monst *));
+extern struct monst *get_iter_mons(boolean (*)(struct monst *));
+extern struct monst *get_iter_mons_xy(boolean (*)(struct monst *, xchar, xchar), xchar, xchar);
 extern void rescham(void);
 extern void restartcham(void);
 extern void restore_cham(struct monst *);
@@ -3128,11 +3134,13 @@ extern void set_ulycn(int);
 /* ### wield.c ### */
 
 extern void setuwep(struct obj *);
+extern const char *empty_handed(void);
 extern void setuqwep(struct obj *);
 extern void setuswapwep(struct obj *);
 extern int dowield(void);
 extern int doswapweapon(void);
 extern int dowieldquiver(void);
+extern int doquiver_core(const char *);
 extern boolean wield_tool(struct obj *, const char *);
 extern int can_twoweapon(void);
 extern void drop_uswapwep(void);

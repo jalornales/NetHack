@@ -913,8 +913,7 @@ getpos(coord *ccp, boolean force, const char *goal)
                         || c == (int) g.showsyms[sidx]
                         /* have '^' match webs and vibrating square or any
                            other trap that uses something other than '^' */
-                        || (c == '^' && (is_cmap_trap(sidx)
-                                         || sidx == S_vibrating_square)))
+                        || (c == '^' && is_cmap_trap(sidx)))
                         matching[sidx] = (char) ++k;
                 }
                 if (k) {
@@ -1365,11 +1364,21 @@ objtyp_is_callable(int i)
         return TRUE;
 
     switch(objects[i].oc_class) {
+    case AMULET_CLASS:
+        /* 3.7: calling these used to be allowed but that enabled the
+           player to tell whether two unID'd amulets of yendor were both
+           fake or one was real by calling them distinct names and then
+           checking discoveries to see whether first name was replaced
+           by second or both names stuck; with more than two available
+           to work with, if they weren't all fake it was possible to
+           determine which one was the real one */
+        if (i == AMULET_OF_YENDOR || i == FAKE_AMULET_OF_YENDOR)
+            break; /* return FALSE */
+        /*FALLTHRU*/
     case SCROLL_CLASS:
     case POTION_CLASS:
     case WAND_CLASS:
     case RING_CLASS:
-    case AMULET_CLASS:
     case GEM_CLASS:
     case SPBOOK_CLASS:
     case ARMOR_CLASS:
