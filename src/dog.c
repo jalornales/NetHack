@@ -1,4 +1,4 @@
-/* NetHack 3.7	dog.c	$NHDT-Date: 1599330917 2020/09/05 18:35:17 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.104 $ */
+/* NetHack 3.7	dog.c	$NHDT-Date: 1652689621 2022/05/16 08:27:01 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.121 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2011. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -7,6 +7,15 @@
 
 static int pet_type(void);
 static void set_mon_lastmove(struct monst *);
+static int mon_leave(struct monst *);
+static boolean keep_mon_accessible(struct monst *);
+
+enum arrival {
+    Before_you = 0, /* monsters kept on migrating_mons for accessibility;
+                     * they haven't actually left their level */
+    With_you   = 1, /* pets and level followers */
+    After_you  = 2  /* regular migrating monsters */
+};
 
 void
 newedog(struct monst *mtmp)
@@ -65,7 +74,7 @@ pet_type(void)
 }
 
 struct monst *
-make_familiar(struct obj *otmp, xchar x, xchar y, boolean quietly)
+make_familiar(struct obj *otmp, coordxy x, coordxy y, boolean quietly)
 {
     struct permonst *pm;
     struct monst *mtmp = 0;
@@ -218,14 +227,16 @@ update_mlstmv(void)
 void
 losedogs(void)
 {
-    register struct monst *mtmp, *mtmp0, *mtmp2;
-    int dismissKops = 0;
+    register struct monst *mtmp, **mprev;
+    int dismissKops = 0, xyloc;
 
     /*
      * First, scan g.migrating_mons for shopkeepers who want to dismiss Kops,
      * and scan g.mydogs for shopkeepers who want to retain kops.
      * Second, dismiss kops if warranted, making more room for arrival.
-     * Third, place monsters accompanying the hero.
+     * Third, replace monsters who went onto migrating_mons in order to
+     * be accessible from other levels but didn't actually leave the level.
+     * Fourth, place monsters accompanying the hero.
      * Last, place migrating monsters coming to this level.
      *
      * Hero might eventually be displaced (due to the third step, but
@@ -267,41 +278,53 @@ losedogs(void)
     if (dismissKops > 0)
         make_happy_shoppers(TRUE);
 
-    /* place pets and/or any other monsters who accompany hero */
+    /* put monsters who went onto migrating_mons in order to be accessible
+       when other levels are active back to the positions on this level;
+       they're handled before mydogs so that monsters accompanying the
+       hero can't steal the spot that belongs to them
+       [note: mon_arrive() might fail and put mtmp back at the head of
+       migrating_mons; that doesn't interfere with our list traversal] */
+    for (mprev = &g.migrating_mons; (mtmp = *mprev) != 0; ) {
+        xyloc = mtmp->mtrack[0].x; /* (for legibility) */
+        if (mtmp->mux == u.uz.dnum && mtmp->muy == u.uz.dlevel
+            && xyloc == MIGR_EXACT_XY) {
+            *mprev = mtmp->nmon;
+            mon_arrive(mtmp, Before_you);
+        } else {
+            mprev = &mtmp->nmon;
+        }
+    }
+
+    /* place pets and/or any other monsters who accompany hero;
+       any that fail to arrive (level may be full) will be moved
+       to migrating_mons and immediately retry (and fail again) below */
     while ((mtmp = g.mydogs) != 0) {
         g.mydogs = mtmp->nmon;
-        mon_arrive(mtmp, TRUE);
+        mon_arrive(mtmp, With_you);
     }
 
     /* time for migrating monsters to arrive;
-       monsters who belong on this level but fail to arrive get put
-       back onto the list (at head), so traversing it is tricky */
-    for (mtmp = g.migrating_mons; mtmp; mtmp = mtmp2) {
-        mtmp2 = mtmp->nmon;
-        if (mtmp->mux == u.uz.dnum && mtmp->muy == u.uz.dlevel) {
-            /* remove mtmp from g.migrating_mons list */
-            if (mtmp == g.migrating_mons) {
-                g.migrating_mons = mtmp->nmon;
-            } else {
-                for (mtmp0 = g.migrating_mons; mtmp0; mtmp0 = mtmp0->nmon)
-                    if (mtmp0->nmon == mtmp) {
-                        mtmp0->nmon = mtmp->nmon;
-                        break;
-                    }
-                if (!mtmp0)
-                    panic("losedogs: can't find migrating mon");
-            }
-            mon_arrive(mtmp, FALSE);
+       monsters who belong on this level but fail to arrive get put back
+       onto the list (at head) but that doesn't interfere with traversal */
+    for (mprev = &g.migrating_mons; (mtmp = *mprev) != 0; ) {
+        xyloc = mtmp->mtrack[0].x;
+        if (mtmp->mux == u.uz.dnum && mtmp->muy == u.uz.dlevel
+            && xyloc != MIGR_EXACT_XY) {
+            *mprev = mtmp->nmon;
+            mon_arrive(mtmp, After_you);
+        } else {
+            mprev = &mtmp->nmon;
         }
     }
 }
 
 /* called from resurrect() in addition to losedogs() */
 void
-mon_arrive(struct monst *mtmp, boolean with_you)
+mon_arrive(struct monst *mtmp, int when)
 {
     struct trap *t;
-    xchar xlocale, ylocale, xyloc, xyflags, wander;
+    coordxy xlocale, ylocale, xyloc, xyflags;
+    xint16 wander;
     int num_segs;
     boolean failed_to_place = FALSE;
     stairway *stway;
@@ -334,11 +357,11 @@ mon_arrive(struct monst *mtmp, boolean with_you)
     ylocale = mtmp->mtrack[1].y;
     fromdlev.dnum = mtmp->mtrack[2].x;
     fromdlev.dlevel = mtmp->mtrack[2].y;
-    memset(mtmp->mtrack, 0, sizeof mtmp->mtrack);
+    mon_track_clear(mtmp);
 
     if (mtmp == u.usteed)
         return; /* don't place steed on the map */
-    if (with_you) {
+    if (when == With_you) {
         /* When a monster accompanies you, sometimes it will arrive
            at your intended destination and you'll end up next to
            that spot.  This code doesn't control the final outcome;
@@ -365,7 +388,7 @@ mon_arrive(struct monst *mtmp, boolean with_you)
         mtmp->mlstmv = g.moves - 1L;
 
         /* let monster move a bit on new level (see placement code below) */
-        wander = (xchar) min(nmv, 8);
+        wander = (xint16) min(nmv, 8);
     } else
         wander = 0;
 
@@ -578,14 +601,73 @@ mon_catchup_elapsed_time(
         mtmp->mhp += imv;
 }
 
+/* bookkeeping when mtmp is about to leave the current level;
+   common to keepdogs() and migrate_to_level() */
+static int
+mon_leave(struct monst *mtmp)
+{
+    struct obj *obj;
+    int num_segs = 0; /* return value */
+
+    /* set minvent's obj->no_charge to 0 */
+    for (obj = mtmp->minvent; obj; obj = obj->nobj) {
+        if (Has_contents(obj))
+            picked_container(obj); /* does the right thing */
+        obj->no_charge = 0;
+    }
+
+    /* if this is a shopkeeper, clear the 'resident' field of her shop;
+       if/when she returns, it will be set back by mon_arrive()  */
+    if (mtmp->isshk)
+        set_residency(mtmp, TRUE);
+
+    /* if this is a long worm, handle its tail segments before mtmp itself;
+       we pass possibly trundated segment count to caller via return value  */
+    if (mtmp->wormno) {
+        int cnt = count_wsegs(mtmp), mx = mtmp->mx, my = mtmp->my;
+
+        /* since monst->wormno is overloaded to hold the number of
+           tail segments during migration, a very long worm with
+           more segments than can fit in that field gets truncated */
+        num_segs = min(cnt, MAX_NUM_WORMS - 1);
+        wormgone(mtmp);
+        /* put the head back; note: mtmp might not be on the map if this
+           is happening during a failed attempt to migrate to this level */
+        if (mx)
+            place_monster(mtmp, mx, my);
+    }
+
+    return num_segs;
+}
+
+/* when hero leaves a level, some monsters should be placed on the
+   migrating_mons list instead of being stashed inside the level's file */
+static boolean
+keep_mon_accessible(struct monst *mon)
+{
+    /* the Wizard is kept accessible so that his harassment can fetch
+       him instead of creating a new instance but also so that he can
+       be put back at his current location if hero returns to his level */
+    if (mon->iswiz)
+        return TRUE;
+    /* monsters with special attachment to a particular level only need
+       to be kept accessible when on some other level */
+    if (mon->mextra
+        && ((mon->isshk && !on_level(&u.uz, &ESHK(mon)->shoplevel))
+            || (mon->ispriest && !on_level(&u.uz, &EPRI(mon)->shrlevel))
+            || (mon->isgd && !on_level(&u.uz, &EGD(mon)->gdlevel))))
+        return TRUE;
+    /* normal monsters go into the level save file instead of being held
+       on the migrating_mons list for off-level accessibility */
+    return FALSE;
+}
+
 /* called when you move to another level */
 void
-keepdogs(boolean pets_only) /* true for ascension or final escape */
+keepdogs(
+    boolean pets_only) /* true for ascension or final escape */
 {
     register struct monst *mtmp, *mtmp2;
-    register struct obj *obj;
-    int num_segs;
-    boolean stay_behind;
 
     for (mtmp = fmon; mtmp; mtmp = mtmp2) {
         mtmp2 = mtmp->nmon;
@@ -615,7 +697,9 @@ keepdogs(boolean pets_only) /* true for ascension or final escape */
                 || (mtmp == u.usteed))
             /* monster won't follow if it hasn't noticed you yet */
             && !(mtmp->mstrategy & STRAT_WAITFORU)) {
-            stay_behind = FALSE;
+            int num_segs;
+            boolean stay_behind = FALSE;
+
             if (mtmp->mtrapped)
                 (void) mintrap(mtmp, NO_TRAP_FLAGS); /* try to escape */
             if (mtmp == u.usteed) {
@@ -650,34 +734,22 @@ keepdogs(boolean pets_only) /* true for ascension or final escape */
                 }
                 continue;
             }
-            if (mtmp->isshk)
-                set_residency(mtmp, TRUE);
 
-            if (mtmp->wormno) {
-                register int cnt;
-                /* NOTE: worm is truncated to # segs = max wormno size */
-                cnt = count_wsegs(mtmp);
-                num_segs = min(cnt, MAX_NUM_WORMS - 1);
-                wormgone(mtmp);
-                place_monster(mtmp, mtmp->mx, mtmp->my);
-            } else
-                num_segs = 0;
-
-            /* set minvent's obj->no_charge to 0 */
-            for (obj = mtmp->minvent; obj; obj = obj->nobj) {
-                if (Has_contents(obj))
-                    picked_container(obj); /* does the right thing */
-                obj->no_charge = 0;
-            }
-
-            relmon(mtmp, &g.mydogs);   /* move it from map to g.mydogs */
-            mtmp->mx = mtmp->my = 0; /* avoid mnexto()/MON_AT() problem */
+            /* prepare to take mtmp off the map */
+            num_segs = mon_leave(mtmp);
+            /* take off map and move mtmp from fmon list to mydogs */
+            relmon(mtmp, &g.mydogs); /* mtmp->mx,my retain current value */
+            mtmp->mx = mtmp->my = 0; /* mx==0 implies migating */
             mtmp->wormno = num_segs;
             mtmp->mlstmv = g.moves;
-        } else if (mtmp->iswiz) {
-            /* we want to be able to find him when his next resurrection
-               chance comes up, but have him resume his present location
-               if player returns to this level before that time */
+        } else if (keep_mon_accessible(mtmp)) {
+            /* we want to be able to find the Wizard when his next
+               resurrection chance comes up, but have him resume his
+               present location if player returns to this level before
+               that time; also needed for monsters (shopkeeper, temple
+               priest, vault guard) who have level data in mon->mextra
+               in case #wizmakemap is used to replace their home level
+               while they're away from it */
             migrate_to_level(mtmp, ledger_no(&u.uz), MIGR_EXACT_XY,
                              (coord *) 0);
         } else if (mtmp->mleashed) {
@@ -692,61 +764,44 @@ keepdogs(boolean pets_only) /* true for ascension or final escape */
 void
 migrate_to_level(
     struct monst *mtmp,
-    xchar tolev, /* destination level */
-    xchar xyloc, /* MIGR_xxx destination xy location: */
+    xint16 tolev, /* destination level */
+    xint16 xyloc, /* MIGR_xxx destination xy location: */
     coord *cc)   /* optional destination coordinates */
 {
-    struct obj *obj;
     d_level new_lev;
-    xchar xyflags;
-    int num_segs = 0; /* count of worm segments */
-
-    if (mtmp->isshk)
-        set_residency(mtmp, TRUE);
-
-    if (mtmp->wormno) {
-        int cnt = count_wsegs(mtmp);
-
-        /* **** NOTE: worm is truncated to # segs = max wormno size **** */
-        num_segs = min(cnt, MAX_NUM_WORMS - 1); /* used below */
-        wormgone(mtmp); /* destroys tail and takes head off map */
-        /* there used to be a place_monster() here for the relmon() below,
-           but it doesn't require the monster to be on the map anymore */
-        mtmp->mx = mtmp->my = 0;
-    }
-
-    /* set minvent's obj->no_charge to 0 */
-    for (obj = mtmp->minvent; obj; obj = obj->nobj) {
-        if (Has_contents(obj))
-            picked_container(obj); /* does the right thing */
-        obj->no_charge = 0;
-    }
+    coordxy xyflags;
+    coordxy mx = mtmp->mx, my = mtmp->my; /* <mx,my> needed below */
+    int num_segs; /* count of worm segments */
 
     if (mtmp->mleashed) {
         mtmp->mtame--;
         m_unleash(mtmp, TRUE);
     }
-    relmon(mtmp, &g.migrating_mons); /* move it from map to g.migrating_mons */
+
+    /* prepare to take mtmp off the map */
+    num_segs = mon_leave(mtmp);
+    /* take off map and move mtmp from fmon list to migrating_mons */
+    relmon(mtmp, &g.migrating_mons); /* mtmp->mx,my retain their value */
     mtmp->mstate |= MON_MIGRATING;
 
-    new_lev.dnum = ledger_to_dnum((xchar) tolev);
-    new_lev.dlevel = ledger_to_dlev((xchar) tolev);
-    /* overload mtmp->[mx,my], mtmp->[mux,muy], and mtmp->mtrack[] as */
-    /* destination codes (setup flag bits before altering mx or my) */
+    new_lev.dnum = ledger_to_dnum((xint16) tolev);
+    new_lev.dlevel = ledger_to_dlev((xint16) tolev);
+    /* overload mtmp->[mx,my], mtmp->[mux,muy], and mtmp->mtrack[] as
+       destination codes */
     xyflags = (depth(&new_lev) < depth(&u.uz)); /* 1 => up */
-    if (In_W_tower(mtmp->mx, mtmp->my, &u.uz))
+    if (In_W_tower(mx, my, &u.uz))
         xyflags |= 2;
     mtmp->wormno = num_segs;
     mtmp->mlstmv = g.moves;
     mtmp->mtrack[2].x = u.uz.dnum; /* migrating from this dungeon */
     mtmp->mtrack[2].y = u.uz.dlevel; /* migrating from this dungeon level */
-    mtmp->mtrack[1].x = cc ? cc->x : mtmp->mx;
-    mtmp->mtrack[1].y = cc ? cc->y : mtmp->my;
+    mtmp->mtrack[1].x = cc ? cc->x : mx;
+    mtmp->mtrack[1].y = cc ? cc->y : my;
     mtmp->mtrack[0].x = xyloc;
     mtmp->mtrack[0].y = xyflags;
     mtmp->mux = new_lev.dnum;
     mtmp->muy = new_lev.dlevel;
-    mtmp->mx = mtmp->my = 0; /* this implies migration */
+    mtmp->mx = mtmp->my = 0; /* mx==0 implies migating */
 
     /* don't extinguish a mobile light; it still exists but has changed
        from local (monst->mx > 0) to global (mx==0, not on this level) */
@@ -957,8 +1012,23 @@ tamedog(struct monst *mtmp, struct obj *obj)
             return FALSE;
     }
 
-    if (mtmp->mtame || !mtmp->mcanmove
-        /* monsters with conflicting structures cannot be tamed */
+    /* if already tame, taming magic might make it become tamer */
+    if (mtmp->mtame) {
+        /* maximum tameness is 20, only reachable via eating */
+        if (rnd(10) > mtmp->mtame)
+            mtmp->mtame++;
+        return FALSE; /* didn't just get tamed */
+    }
+    /* pacify angry shopkeeper but don't tame him/her/it/them */
+    if (mtmp->isshk) {
+        make_happy_shk(mtmp, FALSE);
+        return FALSE;
+    }
+
+    if (!mtmp->mcanmove
+        /* monsters with conflicting structures cannot be tamed
+           [note: the various mextra structures don't actually conflict
+           with each other anymore] */
         || mtmp->isshk || mtmp->isgd || mtmp->ispriest || mtmp->isminion
         || is_covetous(mtmp->data) || is_human(mtmp->data)
         || (is_demon(mtmp->data) && !is_demon(g.youmonst.data))

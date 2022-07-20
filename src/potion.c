@@ -488,7 +488,7 @@ ghost_from_bottle(void)
     }
     pline("As you open the bottle, an enormous %s emerges!",
           Hallucination ? rndmonnam(NULL) : (const char *) "ghost");
-    if (flags.verbose)
+    if (Verbose(3, ghost_from_bottle))
         You("are frightened to death, and unable to move.");
     nomul(-3);
     g.multi_reason = "being frightened to death";
@@ -1295,11 +1295,18 @@ peffect_acid(struct obj *otmp)
 }
 
 static void
-peffect_polymorph(struct obj *otmp UNUSED)
+peffect_polymorph(struct obj *otmp)
 {
     You_feel("a little %s.", Hallucination ? "normal" : "strange");
-    if (!Unchanging)
-        polyself(0);
+    if (!Unchanging) {
+        if (!otmp->blessed || (u.umonnum != u.umonster))
+            polyself(POLY_NOFLAGS);
+        else {
+            polyself(POLY_CONTROLLED|POLY_LOW_CTRL);
+            if (u.mtimedone && u.umonnum != u.umonster)
+                u.mtimedone = min(u.mtimedone, rn2(15) + 10);
+        }
+    }
 }
 
 int
@@ -1654,7 +1661,7 @@ potionhit(struct monst *mon, struct obj *obj, int how)
         case POT_POLYMORPH:
             You_feel("a little %s.", Hallucination ? "normal" : "strange");
             if (!Unchanging && !Antimagic)
-                polyself(0);
+                polyself(POLY_NOFLAGS);
             break;
         case POT_ACID:
             if (!Acid_resistance) {
@@ -2239,7 +2246,7 @@ dodip(void)
             ; /* can't dip something into fountain or pool if can't reach */
         } else if (IS_FOUNTAIN(here)) {
             Snprintf(qbuf, sizeof(qbuf), "%s%s into the fountain?", Dip_,
-                     flags.verbose ? obuf : shortestname);
+                     Verbose(3, dodip1) ? obuf : shortestname);
             /* "Dip <the object> into the fountain?" */
             if (yn(qbuf) == 'y') {
                 obj->pickup_prev = 0;
@@ -2251,7 +2258,7 @@ dodip(void)
             const char *pooltype = waterbody_name(u.ux, u.uy);
 
             Snprintf(qbuf, sizeof(qbuf), "%s%s into the %s?", Dip_,
-                     flags.verbose ? obuf : shortestname, pooltype);
+                     Verbose(3, dodip2) ? obuf : shortestname, pooltype);
             /* "Dip <the object> into the {pool, moat, &c}?" */
             if (yn(qbuf) == 'y') {
                 if (Levitation) {
@@ -2275,7 +2282,7 @@ dodip(void)
 
     /* "What do you want to dip <the object> into? [xyz or ?*] " */
     Snprintf(qbuf, sizeof qbuf, "dip %s into",
-             flags.verbose ? obuf : shortestname);
+             Verbose(3, dodip3) ? obuf : shortestname);
     potion = getobj(qbuf, drink_ok, GETOBJ_NOFLAGS);
     if (!potion)
         return ECMD_CANCEL;

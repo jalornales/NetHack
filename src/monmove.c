@@ -1,4 +1,4 @@
-/* NetHack 3.7	monmove.c	$NHDT-Date: 1603507386 2020/10/24 02:43:06 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.146 $ */
+/* NetHack 3.7	monmove.c	$NHDT-Date: 1651886999 2022/05/07 01:29:59 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.179 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2006. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -12,8 +12,8 @@ static int disturb(struct monst *);
 static void release_hero(struct monst *);
 static void distfleeck(struct monst *, int *, int *, int *);
 static int m_arrival(struct monst *);
-static boolean holds_up_web(xchar, xchar);
-static int count_webbing_walls(xchar, xchar);
+static boolean holds_up_web(coordxy, coordxy);
+static int count_webbing_walls(coordxy, coordxy);
 static boolean soko_allow_web(struct monst *);
 static boolean leppie_avoidance(struct monst *);
 static void leppie_stash(struct monst *);
@@ -27,7 +27,7 @@ static int vamp_shift(struct monst *, struct permonst *, boolean);
 boolean
 mb_trapped(struct monst *mtmp, boolean canseeit)
 {
-    if (flags.verbose) {
+    if (Verbose(2, mb_trapped)) {
         if (canseeit && !Unaware)
             pline("KABOOM!!  You see a door explode.");
         else if (!Deaf)
@@ -46,6 +46,24 @@ mb_trapped(struct monst *mtmp, boolean canseeit)
     }
     mtmp->mtrapseen |= (1 << (TRAPPED_DOOR - 1));
     return FALSE;
+}
+
+/* push coordinate x,y to mtrack, making monster remember where it was */
+void
+mon_track_add(struct monst *mtmp, coordxy x, coordxy y)
+{
+    int j;
+
+    for (j = MTSZ - 1; j > 0; j--)
+        mtmp->mtrack[j] = mtmp->mtrack[j - 1];
+    mtmp->mtrack[0].x = x;
+    mtmp->mtrack[0].y = y;
+}
+
+void
+mon_track_clear(struct monst *mtmp)
+{
+    memset(mtmp->mtrack, 0, sizeof(mtmp->mtrack));
 }
 
 /* check whether a monster is carrying a locking/unlocking tool */
@@ -85,7 +103,7 @@ mon_yells(struct monst* mon, const char* shout)
 static void
 watch_on_duty(register struct monst* mtmp)
 {
-    int x, y;
+    coordxy x, y;
 
     if (mtmp->mpeaceful && in_town(u.ux + u.dx, u.uy + u.dy)
         && mtmp->mcansee && m_canseeu(mtmp) && !rn2(3)) {
@@ -109,14 +127,26 @@ watch_on_duty(register struct monst* mtmp)
     }
 }
 
+/* move a monster; if a threat to busy hero, stop doing whatever it is */
 int
-dochugw(register struct monst* mtmp)
+dochugw(
+    register struct monst *mtmp,
+    boolean chug) /* True: monster is moving;
+                   * False: monster was just created or has teleported
+                   * so perform stop-what-you're-doing-if-close-enough-
+                   * to-be-a-threat check but don't move mtmp */
 {
-    int x = mtmp->mx, y = mtmp->my;
-    boolean already_saw_mon = !g.occupation ? 0 : canspotmon(mtmp);
-    int rd = dochug(mtmp);
+    coordxy x = mtmp->mx, y = mtmp->my; /* 'mtmp's location before dochug() */
+    /* skip canspotmon() if occupation is Null */
+    boolean already_saw_mon = (chug && g.occupation) ? canspotmon(mtmp) : 0;
+    int rd = chug ? dochug(mtmp) : 0;
 
-    /* a similar check is in monster_nearby() in hack.c */
+    /*
+     * A similar check is in monster_nearby() in hack.c.
+     * [The two checks have a lot of differences and chances are high
+     * that some of those are unintentional.]
+     */
+
     /* check whether hero notices monster and stops current activity */
     if (g.occupation && !rd
         /* monster is hostile and can attack (or hallu distorts knowledge) */
@@ -136,7 +166,7 @@ dochugw(register struct monst* mtmp)
 }
 
 boolean
-onscary(int x, int y, struct monst* mtmp)
+onscary(coordxy x, coordxy y, struct monst* mtmp)
 {
     /* creatures who are directly resistant to magical scaring:
      * humans aren't monsters
@@ -382,7 +412,7 @@ monflee(
         mtmp->mflee = 1;
     }
     /* ignore recently-stepped spaces when made to flee */
-    memset(mtmp->mtrack, 0, sizeof(mtmp->mtrack));
+    mon_track_clear(mtmp);
 }
 
 static void
@@ -690,7 +720,7 @@ dochug(register struct monst* mtmp)
             for (a = &mdat->mattk[0]; a < &mdat->mattk[NATTK]; a++) {
                 if (a->aatyp == AT_MAGC
                     && (a->adtyp == AD_SPEL || a->adtyp == AD_CLRC)) {
-                    if (castmu(mtmp, a, FALSE, FALSE)) {
+                    if ((castmu(mtmp, a, FALSE, FALSE) & MM_HIT)) {
                         tmp = MMOVE_DONE; /* bypass m_move() */
                         break;
                     }
@@ -800,8 +830,8 @@ should_displace(
     coord *poss, /* coord poss[9] */
     long *info,  /* long info[9] */
     int cnt,
-    xchar gx,
-    xchar gy)
+    coordxy gx,
+    coordxy gy)
 {
     int shortest_with_displacing = -1;
     int shortest_without_displacing = -1;
@@ -833,7 +863,7 @@ should_displace(
 }
 
 boolean
-m_digweapon_check(struct monst* mtmp, xchar nix, xchar niy)
+m_digweapon_check(struct monst* mtmp, coordxy nix, coordxy niy)
 {
     boolean can_tunnel = 0;
     struct obj *mw_tmp = MON_WEP(mtmp);
@@ -928,7 +958,7 @@ m_balks_at_approaching(struct monst* mtmp)
 }
 
 static boolean
-holds_up_web(xchar x, xchar y)
+holds_up_web(coordxy x, coordxy y)
 {
     stairway *sway;
 
@@ -945,7 +975,7 @@ holds_up_web(xchar x, xchar y)
 /* returns the number of walls in the four cardinal directions that could
    hold up a web */
 static int
-count_webbing_walls(xchar x, xchar y)
+count_webbing_walls(coordxy x, coordxy y)
 {
     return (holds_up_web(x, y - 1) + holds_up_web(x + 1, y)
             + holds_up_web(x, y + 1) + holds_up_web(x - 1, y));
@@ -1006,7 +1036,8 @@ int
 m_move(register struct monst* mtmp, register int after)
 {
     int appr, etmp;
-    xchar gx, gy, nix, niy, chcnt;
+    coordxy gx, gy, nix, niy;
+    xint16 chcnt;
     int chi; /* could be schar except for stupid Sun-2 compiler */
     boolean likegold = 0, likegems = 0, likeobjs = 0, likemagic = 0,
             conceals = 0;
@@ -1064,7 +1095,7 @@ m_move(register struct monst* mtmp, register int after)
 
     /* and the acquisitive monsters get special treatment */
     if (is_covetous(ptr)) {
-        xchar tx = STRAT_GOALX(mtmp->mstrategy),
+        coordxy tx = STRAT_GOALX(mtmp->mstrategy),
               ty = STRAT_GOALY(mtmp->mstrategy);
         struct monst *intruder = m_at(tx, ty);
         /*
@@ -1187,8 +1218,8 @@ m_move(register struct monst* mtmp, register int after)
     {
         register int minr = SQSRCHRADIUS; /* not too far away */
         register struct obj *otmp;
-        register int xx, yy;
-        int oomx, oomy, lmx, lmy;
+        register coordxy xx, yy;
+        coordxy oomx, oomy, lmx, lmy;
 
         /* cut down the search radius if it thinks character is closer. */
         if (distmin(mtmp->mux, mtmp->muy, omx, omy) < SQSRCHRADIUS
@@ -1360,8 +1391,6 @@ m_move(register struct monst* mtmp, register int after)
     }
 
     if (mmoved) {
-        register int j;
-
         if (mmoved == MMOVE_MOVED && (u.ux != nix || u.uy != niy) && itsstuck(mtmp))
             return MMOVE_DONE;
 
@@ -1426,10 +1455,7 @@ m_move(register struct monst* mtmp, register int after)
 
         maybe_unhide_at(mtmp->mx, mtmp->my);
 
-        for (j = MTSZ - 1; j > 0; j--)
-            mtmp->mtrack[j] = mtmp->mtrack[j - 1];
-        mtmp->mtrack[0].x = omx;
-        mtmp->mtrack[0].y = omy;
+        mon_track_add(mtmp, omx, omy);
     } else {
         if (is_unicorn(ptr) && rn2(2) && !tele_restrict(mtmp)) {
             (void) rloc(mtmp, RLOC_MSG);
@@ -1520,7 +1546,7 @@ m_move(register struct monst* mtmp, register int after)
                 }
                 if ((here->doormask & (D_LOCKED | D_CLOSED)) != 0
                     && amorphous(ptr)) {
-                    if (flags.verbose && canseemon(mtmp))
+                    if (Verbose(2, m_move1) && canseemon(mtmp))
                         pline("%s %s under the door.", Monnam(mtmp),
                               (ptr == &mons[PM_FOG_CLOUD]
                                || ptr->mlet == S_LIGHT) ? "flows" : "oozes");
@@ -1534,7 +1560,7 @@ m_move(register struct monst* mtmp, register int after)
                         if (mb_trapped(mtmp, canseeit))
                             return 2;
                     } else {
-                        if (flags.verbose) {
+                        if (Verbose(2, m_move2)) {
                             if (canseeit && canspotmon(mtmp))
                                 pline("%s unlocks and opens a door.",
                                       Monnam(mtmp));
@@ -1550,7 +1576,7 @@ m_move(register struct monst* mtmp, register int after)
                         if (mb_trapped(mtmp, canseeit))
                             return 2;
                     } else {
-                        if (flags.verbose) {
+                        if (Verbose(2, m_move3)) {
                             if (canseeit && canspotmon(mtmp))
                                 pline("%s opens a door.", Monnam(mtmp));
                             else if (canseeit)
@@ -1571,7 +1597,7 @@ m_move(register struct monst* mtmp, register int after)
                         if (mb_trapped(mtmp, canseeit))
                             return 2;
                     } else {
-                        if (flags.verbose) {
+                        if (Verbose(2, m_move4)) {
                             if (canseeit && canspotmon(mtmp))
                                 pline("%s smashes down a door.",
                                       Monnam(mtmp));
@@ -1596,7 +1622,7 @@ m_move(register struct monst* mtmp, register int after)
                         pline("%s eats through the iron bars.", Monnam(mtmp));
                     dissolve_bars(mtmp->mx, mtmp->my);
                     return 3;
-                } else if (flags.verbose && canseemon(mtmp))
+                } else if (Verbose(2, m_move5) && canseemon(mtmp))
                     Norep("%s %s %s the iron bars.", Monnam(mtmp),
                           /* pluralization fakes verb conjugation */
                           makeplural(locomotion(ptr, "pass")),
@@ -1711,7 +1737,7 @@ m_move(register struct monst* mtmp, register int after)
  * (mtmp died) or 3 (mtmp made its move).
  */
 int
-m_move_aggress(struct monst* mtmp, xchar x, xchar y)
+m_move_aggress(struct monst* mtmp, coordxy x, coordxy y)
 {
     struct monst *mtmp2;
     int mstatus;
@@ -1737,7 +1763,7 @@ m_move_aggress(struct monst* mtmp, xchar x, xchar y)
 }
 
 void
-dissolve_bars(register int x, register int y)
+dissolve_bars(coordxy x, coordxy y)
 {
     levl[x][y].typ = (Is_special(&u.uz) || *in_rooms(x, y, 0)) ? ROOM : CORR;
     levl[x][y].flags = 0;
@@ -1747,14 +1773,14 @@ dissolve_bars(register int x, register int y)
 }
 
 boolean
-closed_door(register int x, register int y)
+closed_door(coordxy x, coordxy y)
 {
     return (boolean) (IS_DOOR(levl[x][y].typ)
                       && (levl[x][y].doormask & (D_LOCKED | D_CLOSED)));
 }
 
 boolean
-accessible(register int x, register int y)
+accessible(coordxy x, coordxy y)
 {
     int levtyp = levl[x][y].typ;
 
@@ -1770,7 +1796,8 @@ void
 set_apparxy(register struct monst* mtmp)
 {
     boolean notseen, notthere, gotu;
-    int disp, mx = mtmp->mux, my = mtmp->muy;
+    int disp;
+    coordxy mx = mtmp->mux, my = mtmp->muy;
     long umoney = money_cnt(g.invent);
 
     /*
@@ -1843,8 +1870,8 @@ set_apparxy(register struct monst* mtmp)
 boolean
 undesirable_disp(
     struct monst *mtmp, /* barging creature */
-    xchar x,
-    xchar y) /* spot 'mtmp' is considering moving to */
+    coordxy x,
+    coordxy y) /* spot 'mtmp' is considering moving to */
 {
     boolean is_pet = (mtmp && mtmp->mtame && !mtmp->isminion);
     struct trap *trap = t_at(x, y);
@@ -1955,7 +1982,7 @@ vamp_shift(
         reslt = 1;
         domsg = FALSE;
     } else if (is_vampshifter(mon)) {
-        reslt = newcham(mon, ptr, FALSE, FALSE);
+        reslt = newcham(mon, ptr, NO_NC_FLAGS);
     }
 
     if (reslt && domsg) {

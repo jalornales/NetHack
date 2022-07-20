@@ -1,4 +1,4 @@
-/* NetHack 3.7	timeout.c	$NHDT-Date: 1648318982 2022/03/26 18:23:02 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.137 $ */
+/* NetHack 3.7	timeout.c	$NHDT-Date: 1653507043 2022/05/25 19:30:43 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.139 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2018. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -899,7 +899,7 @@ hatch_egg(anything *arg, long timeout)
     struct obj *egg;
     struct monst *mon, *mon2;
     coord cc;
-    xchar x, y;
+    coordxy x, y;
     boolean yours, silent, knows_egg = FALSE;
     boolean cansee_hatchspot = FALSE;
     int i, mnum, hatchcount = 0;
@@ -1222,7 +1222,7 @@ burn_object(anything *arg, long timeout)
 {
     struct obj *obj = arg->a_obj;
     boolean canseeit, many, menorah, need_newsym, need_invupdate;
-    xchar x, y;
+    coordxy x, y;
     char whose[BUFSZ];
 
     menorah = obj->otyp == CANDELABRUM_OF_INVOCATION;
@@ -1462,11 +1462,15 @@ burn_object(anything *arg, long timeout)
                 if (carried(obj)) {
                     useupall(obj);
                 } else {
+                    boolean onfloor = (obj->where == OBJ_FLOOR);
+
                     /* clear migrating obj's destination code
                        so obfree won't think this item is worn */
                     if (obj->where == OBJ_MIGRATING)
                         obj->owornmask = 0L;
                     obj_extract_self(obj);
+                    if (onfloor)
+                        maybe_unhide_at(x, y);
                     obfree(obj, (struct obj *) 0);
                 }
                 obj = (struct obj *) 0;
@@ -1604,7 +1608,7 @@ begin_burn(struct obj *obj, boolean already_lit)
     }
 
     if (obj->lamplit && !already_lit) {
-        xchar x, y;
+        coordxy x, y;
 
         if (get_obj_location(obj, &x, &y, CONTAINED_TOO | BURIED_TOO))
             new_light_source(x, y, radius, LS_OBJECT, obj_to_any(obj));
@@ -1925,8 +1929,8 @@ timer_sanity_check(void)
             }
         } else if (curr->kind == TIMER_LEVEL) {
             long where = curr->arg.a_long;
-            xchar x = (xchar) ((where >> 16) & 0xFFFF),
-                  y = (xchar) (where & 0xFFFF);
+            coordxy x = (coordxy) ((where >> 16) & 0xFFFF),
+                  y = (coordxy) (where & 0xFFFF);
 
             if (!isok(x, y)) {
                 impossible("timer sanity: spot timer %lu at <%d,%d>",
@@ -2022,6 +2026,7 @@ start_timer(
 long
 stop_timer(short func_index, anything *arg)
 {
+    timeout_proc cleanup_func;
     timer_element *doomed;
     long timeout;
 
@@ -2031,8 +2036,8 @@ stop_timer(short func_index, anything *arg)
         timeout = doomed->timeout;
         if (doomed->kind == TIMER_OBJECT)
             (arg->a_obj)->timed--;
-        if (timeout_funcs[doomed->func_index].cleanup)
-            (*timeout_funcs[doomed->func_index].cleanup)(arg, timeout);
+        if ((cleanup_func = timeout_funcs[doomed->func_index].cleanup) != 0)
+            (*cleanup_func)(arg, timeout);
         free((genericptr_t) doomed);
         return (timeout - g.moves);
     }
@@ -2098,6 +2103,7 @@ obj_split_timers(struct obj* src, struct obj* dest)
 void
 obj_stop_timers(struct obj* obj)
 {
+    timeout_proc cleanup_func;
     timer_element *curr, *prev, *next_timer = 0;
 
     for (prev = 0, curr = g.timer_base; curr; curr = next_timer) {
@@ -2107,9 +2113,8 @@ obj_stop_timers(struct obj* obj)
                 prev->next = curr->next;
             else
                 g.timer_base = curr->next;
-            if (timeout_funcs[curr->func_index].cleanup)
-                (*timeout_funcs[curr->func_index].cleanup)(&curr->arg,
-                                                           curr->timeout);
+            if ((cleanup_func = timeout_funcs[curr->func_index].cleanup) != 0)
+                (*cleanup_func)(&curr->arg, curr->timeout);
             free((genericptr_t) curr);
         } else {
             prev = curr;
@@ -2134,8 +2139,9 @@ obj_has_timer(struct obj* object, short timer_type)
  *
  */
 void
-spot_stop_timers(xchar x, xchar y, short func_index)
+spot_stop_timers(coordxy x, coordxy y, short func_index)
 {
+    timeout_proc cleanup_func;
     timer_element *curr, *prev, *next_timer = 0;
     long where = (((long) x << 16) | ((long) y));
 
@@ -2147,9 +2153,8 @@ spot_stop_timers(xchar x, xchar y, short func_index)
                 prev->next = curr->next;
             else
                 g.timer_base = curr->next;
-            if (timeout_funcs[curr->func_index].cleanup)
-                (*timeout_funcs[curr->func_index].cleanup)(&curr->arg,
-                                                           curr->timeout);
+            if ((cleanup_func = timeout_funcs[curr->func_index].cleanup) != 0)
+                (*cleanup_func)(&curr->arg, curr->timeout);
             free((genericptr_t) curr);
         } else {
             prev = curr;
@@ -2162,7 +2167,7 @@ spot_stop_timers(xchar x, xchar y, short func_index)
  * Returns 0L if no such timer.
  */
 long
-spot_time_expires(xchar x, xchar y, short func_index)
+spot_time_expires(coordxy x, coordxy y, short func_index)
 {
     timer_element *curr;
     long where = (((long) x << 16) | ((long) y));
@@ -2176,7 +2181,7 @@ spot_time_expires(xchar x, xchar y, short func_index)
 }
 
 long
-spot_time_left(xchar x, xchar y, short func_index)
+spot_time_left(coordxy x, coordxy y, short func_index)
 {
     long expires = spot_time_expires(x, y, func_index);
     return (expires > 0L) ? expires - g.moves : 0L;

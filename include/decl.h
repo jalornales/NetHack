@@ -1,4 +1,4 @@
-/* NetHack 3.7  decl.h  $NHDT-Date: 1645000560 2022/02/16 08:36:00 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.283 $ */
+/* NetHack 3.7  decl.h  $NHDT-Date: 1657918080 2022/07/15 20:48:00 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.303 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2007. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -32,9 +32,9 @@ struct dgn_topology { /* special dungeon levels for speed */
     d_level d_fire_level;
     d_level d_air_level;
     d_level d_astral_level;
-    xchar d_tower_dnum;
-    xchar d_sokoban_dnum;
-    xchar d_mines_dnum, d_quest_dnum;
+    xint16 d_tower_dnum;
+    xint16 d_sokoban_dnum;
+    xint16 d_mines_dnum, d_quest_dnum;
     d_level d_qstart_level, d_qlocate_level, d_nemesis_level;
     d_level d_knox_level;
     d_level d_mineend_level;
@@ -98,9 +98,11 @@ struct sinfo {
     int restoring;
     int in_moveloop;
     int in_impossible;
+    int in_docrt;               /* in docrt() */
     int in_self_recover;
     int in_parseoptions;        /* in parseoptions */
     int config_error_ready;     /* config_error_add is ready, available */
+    int beyond_savefile_load;   /* set when past savefile loading */
 #ifdef PANICLOG
     int in_paniclog;
 #endif
@@ -388,8 +390,8 @@ E const char *fqn_prefix_names[PREFIX_COUNT];
 #endif
 
 struct restore_info {
-	const char *name;
-	int mread_flags;
+    const char *name;
+    int mread_flags;
 };
 E struct restore_info restoreinfo;
 
@@ -408,7 +410,7 @@ struct autopickup_exception {
 };
 
 struct plinemsg_type {
-    xchar msgtype;  /* one of MSGTYP_foo */
+    xint16 msgtype;  /* one of MSGTYP_foo */
     struct nhregex *regex;
     char *pattern;
     struct plinemsg_type *next;
@@ -434,7 +436,10 @@ E const char *ARGV0;
 enum earlyarg {ARG_DEBUG, ARG_VERSION, ARG_SHOWPATHS
 #ifndef NODUMPENUMS
     , ARG_DUMPENUMS
+#ifdef ENHANCED_SYMBOLS
+    , ARG_DUMPGLYPHIDS
 #endif
+#endif /* NODUMPENUMS */
 #ifdef WIN32
     ,ARG_WINDOWS
 #endif
@@ -454,6 +459,9 @@ enum nh_keyfunc {
     NHKF_GETDIR_SELF,
     NHKF_GETDIR_SELF2,
     NHKF_GETDIR_HELP,
+    NHKF_GETDIR_MOUSE,   /* simulated click for #therecmdmenu; use '_' as
+                          * direction to initiate, then getpos() finishing
+                          * with ',' (left click) or '.' (right click) */
     NHKF_COUNT,
     NHKF_GETPOS_SELF,
     NHKF_GETPOS_PICK,
@@ -537,7 +545,7 @@ struct xlock_s {
 
 struct trapinfo {
     struct obj *tobj;
-    xchar tx, ty;
+    coordxy tx, ty;
     int time_needed;
     boolean force_bungle;
 };
@@ -556,8 +564,8 @@ enum vanq_order_modes {
 };
 
 struct rogueroom {
-    xchar rlx, rly;
-    xchar dx, dy;
+    coordxy rlx, rly;
+    coordxy dx, dy;
     boolean real;
     uchar doortable;
     int nroom; /* Only meaningful for "real" rooms */
@@ -565,7 +573,7 @@ struct rogueroom {
 
 typedef struct ls_t {
     struct ls_t *next;
-    xchar x, y;  /* source's position */
+    coordxy x, y;  /* source's position */
     short range; /* source's current range */
     short flags;
     short type;  /* type of light source */
@@ -574,7 +582,7 @@ typedef struct ls_t {
 
 struct container {
     struct container *next;
-    xchar x, y;
+    coordxy x, y;
     short what;
     genericptr_t list;
 };
@@ -589,7 +597,7 @@ enum bubble_contains_types {
 #define MAX_BMASK 4
 
 struct bubble {
-    xchar x, y;   /* coordinates of the upper left corner */
+    coordxy x, y;   /* coordinates of the upper left corner */
     schar dx, dy; /* the general direction of the bubble's movement */
     uchar bm[MAX_BMASK + 2];    /* bubble bit mask */
     struct bubble *prev, *next; /* need to traverse the list up and down */
@@ -613,7 +621,7 @@ struct h2o_ctx {
 
 struct launchplace {
     struct obj *obj;
-    xchar x, y;
+    coordxy x, y;
 };
 
 struct repo { /* repossession context */
@@ -677,6 +685,11 @@ struct _cmd_queue {
     schar dirx, diry, dirz;
     const struct ext_func_tab *ec_entry;
     struct _cmd_queue *next;
+};
+
+struct enum_dump {
+    int val;
+    const char *nm;
 };
 
 typedef long cmdcount_nht;	/* Command counts */
@@ -849,8 +862,8 @@ struct instance_globals {
 
     /* display.c */
     gbuf_entry gbuf[ROWNO][COLNO];
-    xchar gbuf_start[ROWNO];
-    xchar gbuf_stop[ROWNO];
+    coordxy gbuf_start[ROWNO];
+    coordxy gbuf_stop[ROWNO];
 
 
     /* do.c */
@@ -871,9 +884,9 @@ struct instance_globals {
 
     /* dog.c */
     int petname_used; /* user preferred pet name has been used */
-    xchar gtyp;  /* type of dog's current goal */
-    xchar gx; /* x position of dog's current goal */
-    xchar gy; /* y position of dog's current goal */
+    xint16 gtyp;  /* type of dog's current goal */
+    coordxy gx; /* x position of dog's current goal */
+    coordxy gy; /* y position of dog's current goal */
     char dogname[PL_PSIZ];
     char catname[PL_PSIZ];
     char horsename[PL_PSIZ];
@@ -888,8 +901,11 @@ struct instance_globals {
     struct rm nowhere;
     const char *gate_str;
 
-    /* drawing */
+    /* symbols.c */
     struct symsetentry symset[NUM_GRAPHICS];
+#ifdef ENHANCED_SYMBOLS
+    struct symset_customization sym_customizations[NUM_GRAPHICS + 1]; /* adds UNICODESET */
+#endif
     int currentgraphics;
     nhsym showsyms[SYM_MAX]; /* symbols to be displayed */
     nhsym primary_syms[SYM_MAX];   /* loaded primary symbols          */
@@ -956,6 +972,11 @@ struct instance_globals {
        persistent one doesn't get shrunk during filtering for item selection
        then regrown to full inventory, possibly being resized in the process */
     winid cached_pickinv_win;
+    int core_invent_state;
+    int in_sync_perminvent;
+    int perm_invent_toggling_direction;
+    long glyph_reset_timestamp;
+
     /* query objlist callback: return TRUE if obj type matches "this_type" */
     int this_type;
     const char *this_title; /* title for inventory list of specific type */
@@ -981,8 +1002,8 @@ struct instance_globals {
 
     /* mklev.c */
     genericptr_t luathemes[MAXDUNGEON];
-    xchar vault_x;
-    xchar vault_y;
+    coordxy vault_x;
+    coordxy vault_y;
     boolean made_branch; /* used only during level creation */
 
     /* mkmap.c */
@@ -1037,6 +1058,7 @@ struct instance_globals {
 
     /* nhlua.c */
     genericptr_t luacore; /* lua_State * */
+    char lua_warnbuf[BUFSZ];
 
     /* o_init.c */
     short disco[NUM_OBJECTS];
@@ -1165,6 +1187,7 @@ struct instance_globals {
     unsigned usteed_id; /* need to preserve during save */
     struct obj *looseball;  /* track uball during save and... */
     struct obj *loosechain; /* track uchain since saving might free it */
+    d_level uz_save;
 
     /* shk.c */
     /* auto-response flag for/from "sell foo?" 'a' => 'y', 'q' => 'n' */
@@ -1181,8 +1204,8 @@ struct instance_globals {
     lev_region *lregions;
     int num_lregions;
     struct sp_coder *coder;
-    xchar xstart, ystart;
-    xchar xsize, ysize;
+    coordxy xstart, ystart;
+    coordxy xsize, ysize;
     boolean in_mk_themerooms;
     boolean themeroom_failed;
 
@@ -1224,13 +1247,14 @@ struct instance_globals {
     short nocreate4;
     /* uhitm.c */
     boolean override_confirmation; /* Used to flag attacks caused by
-                                      Stormbringer's maliciousness. */
+                                    * Stormbringer's maliciousness. */
 
     /* vision.c */
-    xchar **viz_array; /* used in cansee() and couldsee() macros */
-    xchar *viz_rmin;			/* min could see indices */
-    xchar *viz_rmax;			/* max could see indices */
+    seenV **viz_array; /* used in cansee() and couldsee() macros */
+    coordxy *viz_rmin;			/* min could see indices */
+    coordxy *viz_rmax;			/* max could see indices */
     boolean vision_full_recalc;
+    int seethru; /* 'bubble' debugging: clouds and water don't block light */
 
     /* weapon.c */
     struct obj *propellor;
@@ -1248,6 +1272,8 @@ struct instance_globals {
 
     /* per-level glyph mapping flags */
     long glyphmap_perlevel_flags;
+    int early_raw_messages;   /* if raw_prints occurred early prior
+                                 to g.beyond_savefile_load */
 
     unsigned long magic; /* validate that structure layout is preserved */
 };

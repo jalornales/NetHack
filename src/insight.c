@@ -113,11 +113,13 @@ static struct ll_achieve_msg achieve_msg [] = {
 static void
 enlght_out(const char *buf)
 {
+    int clr = 0;
+
     if (g.en_via_menu) {
         anything any;
 
         any = cg.zeroany;
-        add_menu(g.en_win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, buf,
+        add_menu(g.en_win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr, buf,
                  MENU_ITEMFLAGS_NONE);
     } else
         putstr(g.en_win, 0, buf);
@@ -199,8 +201,7 @@ walking_on_water(void)
 {
     if (u.uinwater || Levitation || Flying)
         return FALSE;
-    return (boolean) (Wwalking
-                      && (is_pool(u.ux, u.uy) || is_lava(u.ux, u.uy)));
+    return (boolean) (Wwalking && is_pool_or_lava(u.ux, u.uy));
 }
 
 /* describe u.utraptype; used by status_enlightenment() and self_lookat() */
@@ -1643,6 +1644,23 @@ attributes_enlightenment(int unused_mode UNUSED, int final)
         }
         BFlying = save_BFly;
     }
+    /* including this might bring attention to the fact that ceiling
+       clinging has inconsistencies... */
+    if (is_clinger(g.youmonst.data)) {
+        boolean has_lid = has_ceiling(&u.uz);
+
+        if (has_lid && !u.uinwater) {
+            you_can("cling to the ceiling", "");
+        } else {
+            Sprintf(buf, " to the ceiling if %s%s%s",
+                    !has_lid ? "there was one" : "",
+                    (!has_lid && u.uinwater) ? " and " : "",
+                    u.uinwater ? (Underwater ? "you weren't underwater"
+                                  : "you weren't in the water") : "");
+            /* past tense is applicable for death while Unchanging */
+            enl_msg(You_, "could cling", "could have clung", buf, "");
+        }
+    }
     /* actively walking on water handled earlier as a status condition */
     if (Wwalking && !walking_on_water())
         you_can("walk on water", from_what(WWALKING));
@@ -2551,7 +2569,8 @@ set_vanq_order(void)
     winid tmpwin;
     menu_item *selected;
     anything any;
-    int i, n, choice;
+    int i, n, choice,
+        clr = 0;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -2560,7 +2579,7 @@ set_vanq_order(void)
         if (i == VANQ_ALPHA_MIX || i == VANQ_MCLS_HTOL) /* skip these */
             continue;
         any.a_int = i + 1;
-        add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
+        add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr,
                  vanqorders[i],
                  (i == g.vanq_sortmode)
                     ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE);
@@ -2728,7 +2747,7 @@ list_vanquished(char defquery, boolean ask)
                                 makeplural(mons[i].pmnames[NEUTRAL]));
                 }
                 /* number of leading spaces to match 3 digit prefix */
-                pfx = !strncmpi(buf, "the ", 3) ? 0
+                pfx = !strncmpi(buf, "the ", 4) ? 0
                       : !strncmpi(buf, "an ", 3) ? 1
                         : !strncmpi(buf, "a ", 2) ? 2
                           : !digit(buf[2]) ? 4 : 0;

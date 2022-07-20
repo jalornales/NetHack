@@ -46,7 +46,7 @@
 \author{Original version - Eric S. Raymond\\
 (Edited and expanded for 3.7 by Mike Stephenson and others)}
 %DO NOT REMOVE NH_DATESUB \date{DATE(%B %-d, %Y)}
-\date{February 27, 2022}
+\date{May 23, 2022}
 
 \maketitle
 
@@ -474,8 +474,14 @@ Movement~modifiers:
 
 %.lp ""
 Other conditions and modifiers exist, but there isn't enough room to
-display them with the other status fields.  The `{\tt \^{}X}' command shows
-all relevant status conditions.
+display them with the other status fields.
+\\
+% unindented paragraph
+The {\tt \#doattributes} command (default key {\tt \^{}X} will show
+all current status information in unabbreviated format.
+It also shows other information which might be included on the status
+lines if those had more room.
+
 \elist
 
 %.hn 2
@@ -571,7 +577,7 @@ A boulder or statue.
 \item[\tb{0}]
 An iron ball.
 %.lp
-\item[\tb{_}]
+\item[\tb{\verb+_+}]
 An altar, or an iron chain.
 %.lp
 \item[\tb{\{}]
@@ -758,30 +764,43 @@ used with the ``{\tt \#teleport}'' and ``{\tt \#wizlevelport}'' commands.
 \item[\tb{F[yuhjklbn]}]
 Prefix:  fight a monster (even if you only guess one is there).
 %.lp
-\item[\tb{M[yuhjklbn]}]
-Prefix:  Move far, no pickup.
-%.lp
 \item[\tb{g[yuhjklbn]}]
 Prefix:  Move until something interesting is found.
 %.lp
-\item[\tb{G[yuhjklbn] {\rm or} <CONTROL->[yuhjklbn]}]
-Prefix:  Same as `{\tt g}', but forking of corridors is not considered
+\item[\tb{G[yuhjklbn] {\rm or} <Control>+[yuhjklbn]}]
+Prefix:  Similar to `{\tt g}', but forking of corridors is not considered
 interesting.
+\\
+Note:  <Control>+<key> means holding the <Control> or <Ctrl> key
+down like <Shift> while typing and releasing <key>, then releasing <Control>.
+Control characters are case-insensitive so {\tt \^{}x} and {\tt \^{}X}
+are the same.
 %.lp
-\item[\tb{_}]
+\item[\tb{M<direction>}]
+Old versions supported `{\tt M}' as a movement prefix which
+combined the effect of `{\tt m}' with {\tt <Control>}+<direction>.
+That is no longer supported as a prefix but similar effect can be achieved
+by using {\tt m} and {\tt G}+<direction> in combination.
+{\tt m} can also be used in combination with {\tt g}+<direction>,
+{\tt <Control>}+<direction>, or {\tt <Shift>}+<direction>.
+%.lp
+\item[\tb{\tt \verb+_+}]
 Travel to a map location via a shortest-path algorithm.\\
 %.lp ""
 The shortest path
 is computed over map locations the hero knows about (e.g. seen or
-previously traversed).  If there is no known path, a guess is made instead.
+previously traversed).
+If there is no known path, a guess is made instead.
 Stops on most of
 the same conditions as the `G' command, but without picking up
-objects, similar to the `M' command.  For ports with mouse
+objects, so implicitly forces the `m' prefix.
+For ports with mouse
 support, the command is also invoked when a mouse-click takes place on a
 location other than the current position.
 %.lp
 \item[\tb{.}]
-Wait or rest, do nothing for one turn. Precede with the `{\tt m}' prefix
+Wait or rest, do nothing for one turn.
+Precede with the `{\tt m}' prefix
 to wait for a turn even next to a hostile monster, if {\it safe\verb+_+wait\/}
 is on.
 %.lp
@@ -789,7 +808,8 @@ is on.
 Apply (use) a tool (pick-axe, key, lamp \ldots).\\
 %.lp ""
 If used on a wand, that wand will be broken, releasing its magic in the
-process.  Confirmation is required.
+process.
+Confirmation is required.
 %.lp
 \item[\tb{A}]
 Remove one or more worn items, such as armor.\\
@@ -1210,7 +1230,7 @@ May be preceded by `{\tt m}' to select preferred display order.
 %.lp
 \item[\tb{|}]
 If persistent inventory display is supported and enabled (with the
-{\it perm_invent\/}
+{\it perm\verb+_+invent\/}
 option), interact with it instead of with the map.
 \\
 %.lp ""
@@ -1218,7 +1238,7 @@ Allows scrolling with the
 menu\verb+_+first\verb+_+page, menu\verb+_+previous\verb+_+page,
 menu\verb+_+next\verb+_+page, and menu\verb+_+last\verb+_+page
 keys (`{\tt \^{}}', `{\tt <}', `{\tt >}', `{\tt \verb+|+}' by default).
-Some interfaces also support menu_shift_left and menu_shift_right
+Some interfaces also support menu\verb+_+shift\verb+_+left and menu\verb+_+shift\verb+_+right
 keys (`{\tt \verb+{+}' and `{\tt \verb+}+}' by default).
 Use the {\it Return\/} (aka {\it Enter\/}) or {\it Escape\/} key to
 resume play.
@@ -1577,7 +1597,7 @@ Default key is `{\tt m}'.
 %.lp
 \item[\tb{\#retravel}]
 Travel to a previously selected travel destination.
-Default key is `{\tt C-_}'.
+Default key is `{\tt C-\verb+_+}'.
 See also {\tt \#travel}.
 %.lp
 \item[\tb{\#ride}]
@@ -1834,6 +1854,13 @@ Default key is `{\tt \^{}I}'.
 %.lp
 \item[\tb{\#wizintrinsic}]
 Set one or more intrinsic attributes.
+Autocompletes.
+Debug mode only.
+%.lp
+\item[\tb{\#wizkill}]
+Remove monsters from play by just pointing at them.
+By default the hero gets credit or blame for killing the targets.
+Precede this command with the `{\tt m}' prefix to override that.
 Autocompletes.
 Debug mode only.
 %.lp
@@ -2878,7 +2905,7 @@ weapons or having one of them be stolen or destroyed will also make you
 revert to single-weapon combat.
 
 %.hn 2
-\subsection*{Armor (`{\tt [}')}
+\subsection*{Armor (`{\tt \verb+[+}')}
 
 %.pg
 Lots of unfriendly things lurk about; you need armor to protect
@@ -3640,8 +3667,8 @@ Any line in the configuration file starting with `{\tt \#}' is treated
 as a comment and ignored.
 Empty lines are ignored.
 
-Any line beginning with `{\tt [}' and ending in `{\tt ]}'
-is a section marker (the closing `{\tt ]}' can be followed
+Any line beginning with `{\tt \verb+[+}' and ending in `{\tt \verb+]+}'
+is a section marker (the closing `{\tt \verb+]+}' can be followed
 by whitespace and then an arbitrary comment beginning with `{\tt \#}').
 The text between the square brackets is the section name.
 Section markers are only valid after a CHOOSE directive and their names
@@ -3970,9 +3997,54 @@ If no weapon is found or the option is
 false, the `t' (throw) command is executed instead.  Persistent.
 %.lp
 \item[\ib{autounlock}]
-Walking into a locked door or looting a locked container while carrying
-an unlocking tool (such as a key) will ask whether to use that tool to
-unlock the door or container (default true).
+%\hyphenation{apply\-key}%this needs to be tested...
+Controls what action to take when attempting to walk into a locked door
+or to loot a locked container.
+Takes a plus-sign separated list of values:
+% paranoid
+% au => autounlock
+\newlength{\auwidth}
+%.PS Apply-Key
+\settowidth{\auwidth}{\tt Apply-Key}
+\addtolength{\auwidth}{\labelsep}
+\blist{\leftmargin \auwidth \topsep 1mm \itemsep 0mm}
+%.PL Untrap
+\item[{\tt Untrap}]
+prompt about whether to attempt to find a trap;
+it might fail to find one even when present; if it does find one, it
+will ask whether you want to try to disarm the trap; if you decline,
+your character will forget that the door or box is trapped;
+%.PL Apply-Key
+\item[{\tt Apply-Key}]
+if carrying a key or other unlocking tool, prompt about using it;
+%.PL Kick
+\item[{\tt Kick}]
+kick the door (if you omit untrap or decline to attempt untrap and
+you omit apply-key or you lack a key or you decline to use the key;
+has no effect on containers);
+%.PL Force
+\item[{\tt Force}]
+try to force a container's lid with your currently
+wielded weapon (if you omit untrap or decline to attempt untrap and
+you omit apply-key or you lack a key or you decline to use the key;
+has no effect on doors);
+%.PL None
+\item[{\tt None}]
+none of the above; can't be combined with the other choices.
+%.PE
+\elist
+Omitting the value is treated as if {\tt autounlock:apply-key}.
+Preceding {\tt autounlock} with `{\tt !}' or ``{\tt no}'' is treated as
+{\tt autounlock:none}.
+\\
+%.lp ""
+Applying a key might set off a trap if the door or container is trapped.
+Successfully kicking a door will break it and wake up nearby monsters.
+Successfully forcing a container open will break its lock and might also
+destroy some of its contents or damage your weapon or both.
+\\
+%.lp ""
+The default is Apply-Key.
 Persistent.
 %.lp
 \item[\ib{blind}]
@@ -4747,7 +4819,7 @@ Show the elapsed game time in turns on bottom line (default off).  Persistent.
 \item[\ib{timed\verb+_+delay}]
 When pausing momentarily for display effect, such as with explosions and
 moving objects, use a timer rather than sending extra characters to the
-screen.  (Applies to ``tty'' interface only; ``X11'' interface always
+screen.  (Applies to ``tty'' and ``curses'' interfaces only; ``X11'' interface always
 uses a timer based delay.  The default is on if configured into the
 program.)  Persistent.
 %.lp
@@ -5336,11 +5408,22 @@ With {\it number\verb+_+pad\/} only. Default is~`{\tt n}'.
 \item[{\bb{getdir.help}}]
 When asked for a direction, the key to show the help. Default is~`{\tt ?}'.
 %.lp
+\item[{\bb{getdir.mouse}}]
+When asked for a direction, the key to initiate a simulated mouse click.
+You will be asked to pick a location.
+Use movement keystrokes to move the cursor around the map, then type
+the getpos.pick.once key (default `{\tt ,}')
+or the getpos.pick key (default `{\tt .}')
+to finish as if performing a left or right click.
+Only useful when using the {\tt \#therecmdmenu} command.
+Default is~`{\tt \verb+_+}'.
+%.lp
 \item[{\bb{getdir.self}}]
 When asked for a direction, the key to target yourself. Default is~`{\tt .}'.
 %.lp
 \item[{\bb{getdir.self2}}]
-When asked for a direction, the key to target yourself. Default is~`{\tt s}'.
+When asked for a direction, an alternate key to target yourself.
+Default is~`{\tt s}'.
 %.lp
 \item[{\bb{getpos.autodescribe}}]
 When asked for a location, the key to toggle {\it autodescribe\/}.
@@ -5398,11 +5481,17 @@ filtering, in view only, and in the same area only. Default is~`{\tt "}'.
 %.lp
 \item[{\bb{getpos.pick}}]
 When asked for a location, the key to choose the location, and possibly
-ask for more info. Default is~`{\tt .}'.
+ask for more info.
+When simulating a mouse click after being asked for a direction (see
+getdir.mouse above), the key to use to respond as right click.
+Default is~`{\tt .}'.
 %.lp
 \item[{\bb{getpos.pick.once}}]
 When asked for a location, the key to choose the location, and skip
-asking for more info. Default is~`{\tt ,}'.
+asking for more info.
+When simulating a mouse click after being asked for a direction,
+the key to respond as left click.
+Default is~`{\tt ,}'.
 %.lp
 \item[{\bb{getpos.pick.quick}}]
 When asked for a location, the key to choose the location, skip asking
@@ -6025,6 +6114,46 @@ Statues and boulders are the rock being referred to, but since
 version 3.6.0, statues are displayed as the monster they depict.
 So S\verb+_+rock is only used for boulders and not used at all if
 overridden by the more specific S\verb+_+boulder.
+
+%.lp
+%.hn 2
+\subsection*{Customizing Map Glyph Representations Using Unicode}
+
+%.pg
+If your platform or terminal supports the display of UTF-8 character
+sequences, you can customize your game display by assigning Unicode
+codepoint values and red-green-blue colors to glyph
+representations. The customizations can be specified for use with a symset that
+has a UTF8 handler within the symbols file such as the enhanced1 set, or
+individually within your own nethack.rc file.
+
+The format for defining a glyph representation is:\\
+\begin{verbatim}
+OPTIONS=glyph:glyphid/U+nnnn/R-G-B
+\end{verbatim}
+
+The window port that is active needs to provide support for displaying UTF-8
+character sequences and explicit 24-bit red-green-blue colors in order for the glyph
+representation to be visible as specified.
+
+For example, the following line in your configuration file will cause
+the glyph representation for glyphid G\verb+_+pool to use Unicode codepoint U+224B
+and the color represented by R-G-B value 0-0-160:\\
+\begin{verbatim}
+OPTIONS=glyph:G_pool/U+224B/0-0-160
+\end{verbatim}
+
+The list of acceptable glyphid's can be produced by 
+\begin{verbatim}
+    nethack --glyphids
+\end{verbatim}
+Individual NetHack glyphs can be specified using the G\verb+_+ prefix,
+or you can use an S\verb+_+ symbol for a glyphid and store the custom
+representation for all NetHack glyphs that would map to that
+particular symbol.
+
+You will need to select a symset with a UTF8 handler to enable the
+display of the customizations, such as the Enhanced symset.
 
 %.pg
 %.hn 2

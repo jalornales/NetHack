@@ -281,6 +281,15 @@
 /* #define NODUMPENUMS */
 
 /*
+ *      ENHANCED_SYMBOLS
+ *      Support the enhanced display of symbols by utilizing utf8 and 24-bit
+ *      color sequences. Enabled by default, but it can be disabled by
+ *      commenting it out.
+ */
+
+#define ENHANCED_SYMBOLS
+
+/*
  *      If COMPRESS is defined, it should contain the full path name of your
  *      'compress' program.
  *
@@ -551,10 +560,14 @@ typedef unsigned char uchar;
 /* #define TTY_TILES_ESCCODES */
 /* #define TTY_SOUND_ESCCODES */
 
+/* An experimental minimalist inventory list capability under tty if you have
+ * at least 28 additional rows beneath the status window on your terminal  */
+/* #define TTY_PERM_INVENT */
+
 /* NetHack will execute an external program whenever a new message-window
  * message is shown.  The program to execute is given in environment variable
  * NETHACK_MSGHANDLER.  It will get the message as the only parameter.
- * Only available with POSIX_TYPES or GNU C */
+ * Only available with POSIX_TYPES, GNU C, or WIN32 */
 /* #define MSGHANDLER */
 
 /* enable status highlighting via STATUS_HILITE directives in run-time
@@ -639,6 +652,10 @@ typedef unsigned char uchar;
 #endif
 
 #define USE_ISAAC64 /* Use cross-plattform, bundled RNG */
+
+/* TEMPORARY - MAKE UNCONDITIONAL BEFORE RELEASE */
+/* undef this to check if sandbox breaks something */
+#define NHL_SANDBOX
 
 /* End of Section 4 */
 

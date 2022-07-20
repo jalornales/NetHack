@@ -1,16 +1,16 @@
-/* NetHack 3.7	teleport.c	$NHDT-Date: 1646838392 2022/03/09 15:06:32 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.163 $ */
+/* NetHack 3.7	teleport.c	$NHDT-Date: 1654710406 2022/06/08 17:46:46 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.169 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2011. */
 /* NetHack may be freely redistributed.  See license for details. */
 
 #include "hack.h"
 
-static boolean goodpos_onscary(int, int, struct permonst *);
-static boolean tele_jump_ok(int, int, int, int);
-static boolean teleok(int, int, boolean);
+static boolean goodpos_onscary(coordxy, coordxy, struct permonst *);
+static boolean tele_jump_ok(coordxy, coordxy, coordxy, coordxy);
+static boolean teleok(coordxy, coordxy, boolean);
 static void vault_tele(void);
-static boolean rloc_pos_ok(int, int, struct monst *);
-static void rloc_to_core(struct monst *, int, int, unsigned);
+static boolean rloc_pos_ok(coordxy, coordxy, struct monst *);
+static void rloc_to_core(struct monst *, coordxy, coordxy, unsigned);
 static void mvault_tele(struct monst *);
 static boolean m_blocks_teleporting(struct monst *);
 
@@ -43,7 +43,7 @@ noteleport_level(struct monst* mon)
    fields aside from 'monst->data' */
 static boolean
 goodpos_onscary(
-    int x, int y,
+    coordxy x, coordxy y,
     struct permonst *mptr)
 {
     /* onscary() checks Angels and lawful minions; this oversimplifies */
@@ -75,7 +75,7 @@ goodpos_onscary(
  */
 boolean
 goodpos(
-    int x, int y,
+    coordxy x, coordxy y,
     struct monst *mtmp,
     mmflags_nht gpflags)
 {
@@ -180,7 +180,7 @@ goodpos(
 boolean
 enexto(
     coord *cc,
-    xchar xx, xchar yy,
+    coordxy xx, coordxy yy,
     struct permonst *mdat)
 {
     return (enexto_core(cc, xx, yy, mdat, GP_CHECKSCARY)
@@ -190,14 +190,14 @@ enexto(
 boolean
 enexto_core(
     coord *cc,
-    xchar xx, xchar yy,
+    coordxy xx, coordxy yy,
     struct permonst *mdat,
     mmflags_nht entflags)
 {
 #define MAX_GOOD 15
     coord good[MAX_GOOD], *good_ptr;
-    int x, y, range, i;
-    int xmin, xmax, ymin, ymax, rangemax;
+    coordxy x, y, range, i;
+    coordxy xmin, xmax, ymin, ymax, rangemax;
     struct monst fakemon; /* dummy monster */
     boolean allow_xx_yy = (boolean) ((entflags & GP_ALLOW_XY) != 0);
 
@@ -278,7 +278,7 @@ enexto_core(
 
  full:
     /* we've got between 1 and SIZE(good) candidates; choose one */
-    i = rn2((int) (good_ptr - good));
+    i = (coordxy) rn2((int) (good_ptr - good));
     cc->x = good[i].x;
     cc->y = good[i].y;
     return TRUE;
@@ -290,7 +290,7 @@ enexto_core(
  * only for explicitly chosen destinations.)
  */
 static boolean
-tele_jump_ok(int x1, int y1, int x2, int y2)
+tele_jump_ok(coordxy x1, coordxy y1, coordxy x2, coordxy y2)
 {
     if (!isok(x2, y2))
         return FALSE;
@@ -324,7 +324,7 @@ tele_jump_ok(int x1, int y1, int x2, int y2)
 }
 
 static boolean
-teleok(register int x, register int y, boolean trapok)
+teleok(coordxy x, coordxy y, boolean trapok)
 {
     if (!trapok) {
         /* allow teleportation onto vibrating square, it's not a real trap;
@@ -352,7 +352,7 @@ teleok(register int x, register int y, boolean trapok)
 }
 
 void
-teleds(int nux, int nuy, int teleds_flags)
+teleds(coordxy nux, coordxy nuy, int teleds_flags)
 {
     boolean ball_active, ball_still_in_range = FALSE,
             allow_drag = (teleds_flags & TELEDS_ALLOW_DRAG) != 0,
@@ -411,7 +411,7 @@ teleds(int nux, int nuy, int teleds_flags)
     }
     if (ball_active && (ball_still_in_range || allow_drag)) {
         int bc_control;
-        xchar ballx, bally, chainx, chainy;
+        coordxy ballx, bally, chainx, chainy;
         boolean cause_delay;
 
         if (drag_ball(nux, nuy, &bc_control, &ballx, &bally, &chainx,
@@ -449,7 +449,7 @@ teleds(int nux, int nuy, int teleds_flags)
 
     /* this used to take place sooner, but if a --More-- prompt was issued
        then the old map display was shown instead of the new one */
-    if (is_teleport && flags.verbose)
+    if (is_teleport && Verbose(2, teleds))
         You("materialize in %s location!",
             (nux == u.ux0 && nuy == u.uy0) ? "the same" : "a different");
     /* if terrain type changes, levitation or flying might become blocked
@@ -479,7 +479,8 @@ teleds(int nux, int nuy, int teleds_flags)
 boolean
 safe_teleds(int teleds_flags)
 {
-    register int nux, nuy, tcnt = 0;
+    coordxy nux, nuy;
+    int tcnt = 0;
 
     do {
         nux = rnd(COLNO - 1);
@@ -661,7 +662,7 @@ dotelecmd(void)
         menu_item *picks = (menu_item *) 0;
         anything any;
         winid win;
-        int i, tmode;
+        int i, tmode, clr = 0;
 
         win = create_nhwindow(NHW_MENU);
         start_menu(win, MENU_BEHAVE_STANDARD);
@@ -669,7 +670,7 @@ dotelecmd(void)
         for (i = 0; i < SIZE(tports); ++i) {
             any.a_int = (int) tports[i].menulet;
             add_menu(win, &nul_glyphinfo, &any, (char) any.a_int, 0,
-                     ATR_NONE, tports[i].menudesc,
+                     ATR_NONE, clr, tports[i].menudesc,
                      (tports[i].menulet == 'w') ? MENU_ITEMFLAGS_SELECTED
                                                 : MENU_ITEMFLAGS_NONE);
         }
@@ -901,7 +902,7 @@ level_tele(void)
             }
             if (wizard && !strcmp(buf, "?")) {
                 schar destlev;
-                xchar destdnum;
+                coordxy destdnum;
 
  levTport_menu:
                 destlev = 0;
@@ -1104,8 +1105,9 @@ level_tele(void)
     }
 
     schedule_goto(&newlevel, UTOTYPE_NONE, (char *) 0,
-                  flags.verbose ? "You materialize on a different level!"
-                                : (char *) 0);
+                  Verbose(2, level_tele)
+                      ? "You materialize on a different level!"
+                      : (char *) 0);
 
     /* in case player just read a scroll and is about to be asked to
        call it something, we can't defer until the end of the turn */
@@ -1114,9 +1116,10 @@ level_tele(void)
 }
 
 void
-domagicportal(register struct trap* ttmp)
+domagicportal(struct trap *ttmp)
 {
     struct d_level target_level;
+    boolean already_stunned;
 
     if (u.utrap && u.utraptype == TT_BURIEDBALL)
         buried_ball_to_punishment();
@@ -1142,15 +1145,17 @@ domagicportal(register struct trap* ttmp)
         return;
     }
 
+    already_stunned = !!Stunned;
     make_stunned((HStun & TIMEOUT) + 3L, FALSE);
     target_level = ttmp->dst;
     schedule_goto(&target_level, UTOTYPE_PORTAL,
-                  "You feel dizzy for a moment, but the sensation passes.",
+                  !already_stunned ? "You feel slightly dizzy."
+                                   : "You feel dizzier.",
                   (char *) 0);
 }
 
 void
-tele_trap(struct trap* trap)
+tele_trap(struct trap *trap)
 {
     if (In_endgame(&u.uz) || Antimagic) {
         if (Antimagic)
@@ -1190,19 +1195,24 @@ level_tele_trap(struct trap* trap, unsigned int trflags)
         You("are momentarily blinded by a flash of light.");
     else
         You("are momentarily disoriented.");
-    make_stunned((HStun & TIMEOUT) + 3L, FALSE);
     deltrap(trap);
     newsym(u.ux, u.uy); /* get rid of trap symbol */
     level_tele();
+    /* magic portal traversal causes brief Stun; for level teleport, use
+       confusion instead, and only when hero lacks control; do this after
+       processing the level teleportation attempt because being confused
+       can affect the outcome ("Oops" result) */
+    if (!Teleport_control)
+        make_confused((HConfusion & TIMEOUT) + 3L, FALSE);
 }
 
 /* check whether monster can arrive at location <x,y> via Tport (or fall) */
 static boolean
 rloc_pos_ok(
-    int x, int y, /* coordinates of candidate location */
+    coordxy x, coordxy y, /* coordinates of candidate location */
     struct monst *mtmp)
 {
-    register int xx, yy;
+    coordxy xx, yy;
 
     if (!goodpos(x, y, mtmp, GP_CHECKSCARY))
         return FALSE;
@@ -1267,10 +1277,10 @@ rloc_pos_ok(
 static void
 rloc_to_core(
     struct monst* mtmp,
-    int x, int y,
+    coordxy x, coordxy y,
     unsigned rlocflags)
 {
-    register int oldx = mtmp->mx, oldy = mtmp->my;
+    coordxy oldx = mtmp->mx, oldy = mtmp->my;
     boolean resident_shk = mtmp->isshk && inhishop(mtmp);
     boolean preventmsg = (rlocflags & RLOC_NOMSG) != 0;
     boolean vanishmsg = (rlocflags & RLOC_MSG) != 0;
@@ -1288,6 +1298,11 @@ rloc_to_core(
             } else {
                 pline("%s vanishes!", Monnam(mtmp));
             }
+            /* avoid "It suddenly appears!" for a STRAT_APPEARMSG monster
+               that has just teleported away if we won't see it after this
+               vanishing (the regular appears message will be given if we
+               do see it) */
+            appearmsg = FALSE;
         }
 
         if (mtmp->wormno) {
@@ -1298,7 +1313,7 @@ rloc_to_core(
         }
     }
 
-    memset(mtmp->mtrack, 0, sizeof mtmp->mtrack);
+    mon_track_clear(mtmp);
     place_monster(mtmp, x, y); /* put monster down */
     update_monster_region(mtmp);
 
@@ -1318,21 +1333,25 @@ rloc_to_core(
     newsym(x, y);      /* update new location */
     set_apparxy(mtmp); /* orient monster */
     if (domsg && (canspotmon(mtmp) || appearmsg)) {
+        int du = distu(x, y), olddu;
+        const char *next = (du <= 2) ? " next to you" : 0, /* next2u() */
+                   *near = (du <= BOLT_LIM * BOLT_LIM) ? " close by" : 0;
+
         mtmp->mstrategy &= ~STRAT_APPEARMSG; /* one chance only */
         if (telemsg && (couldsee(x, y) || sensemon(mtmp))) {
             pline("%s vanishes and reappears%s.",
                   Monnam(mtmp),
-                  next2u(x, y) ? " next to you"
-                  : (distu(x, y) <= (BOLT_LIM * BOLT_LIM)) ? " close by"
-                  : (distu(x, y) < distu(oldx, oldy)) ? " closer to you"
-                  : " further away");
+                  next ? next
+                  : near ? near
+                    : ((olddu = distu(oldx, oldy)) == du) ? ""
+                      : (du < olddu) ? " closer to you"
+                        : " farther away");
         } else {
             pline("%s %s%s%s!",
                   appearmsg ? Amonnam(mtmp) : Monnam(mtmp),
                   appearmsg ? "suddenly " : "",
                   !Blind ? "appears" : "arrives",
-                  next2u(x, y) ? " next to you"
-                  : (distu(x, y) <= (BOLT_LIM * BOLT_LIM)) ? " close by" : "");
+                  next ? next : near ? near : "");
         }
     }
 
@@ -1342,19 +1361,23 @@ rloc_to_core(
     if (resident_shk && !inhishop(mtmp))
         make_angry_shk(mtmp, oldx, oldy);
 
+    /* if hero is busy, maybe stop occupation */
+    if (g.occupation)
+        (void) dochugw(mtmp, FALSE);
+
     /* trapped monster teleported away */
     if (mtmp->mtrapped && !mtmp->wormno)
         (void) mintrap(mtmp, NO_TRAP_FLAGS);
 }
 
 void
-rloc_to(struct monst *mtmp, int x, int y)
+rloc_to(struct monst *mtmp, coordxy x, coordxy y)
 {
     rloc_to_core(mtmp, x, y, RLOC_NOMSG);
 }
 
 void
-rloc_to_flag(struct monst *mtmp, int x, int y, unsigned int rlocflags)
+rloc_to_flag(struct monst *mtmp, coordxy x, coordxy y, unsigned int rlocflags)
 {
     rloc_to_core(mtmp, x, y, rlocflags);
 }
@@ -1378,7 +1401,8 @@ rloc(
     struct monst *mtmp, /* mx==0 implies migrating monster arrival */
     unsigned int rlocflags)
 {
-    register int x, y, trycount;
+    coordxy x, y;
+    int trycount;
 
     if (mtmp == u.usteed) {
         tele();
@@ -1566,7 +1590,8 @@ mlevel_tele_trap(
             if (trap)
                 seetrap(trap);
         }
-        mtmp->mstun = 1;
+        if (is_xport(tt) && !control_teleport(mtmp->data))
+            mtmp->mconf = 1;
         migrate_to_level(mtmp, ledger_no(&tolevel), migrate_typ, (coord *) 0);
         return Trap_Moved_Mon; /* no longer on this level */
     }
@@ -1577,7 +1602,7 @@ mlevel_tele_trap(
 boolean
 rloco(register struct obj* obj)
 {
-    register xchar tx, ty, otx, oty;
+    coordxy tx, ty, otx, oty;
     boolean restricted_fall;
     int try_limit = 4000;
 

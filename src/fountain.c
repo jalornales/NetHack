@@ -9,7 +9,7 @@
 static void dowatersnakes(void);
 static void dowaterdemon(void);
 static void dowaternymph(void);
-static void gush(int, int, genericptr_t);
+static void gush(coordxy, coordxy, genericptr_t);
 static void dofindgem(void);
 static boolean watchman_warn_fountain(struct monst *);
 
@@ -121,7 +121,7 @@ dogushforth(int drinking)
 }
 
 static void
-gush(int x, int y, genericptr_t poolcnt)
+gush(coordxy x, coordxy y, genericptr_t poolcnt)
 {
     register struct monst *mtmp;
     register struct trap *ttmp;
@@ -187,7 +187,7 @@ watchman_warn_fountain(struct monst *mtmp)
 }
 
 void
-dryup(xchar x, xchar y, boolean isyou)
+dryup(coordxy x, coordxy y, boolean isyou)
 {
     if (IS_FOUNTAIN(levl[x][y].typ)
         && (!rn2(3) || FOUNTAIN_IS_WARNED(x, y))) {
@@ -377,6 +377,8 @@ drinkfountain(void)
 void
 dipfountain(register struct obj *obj)
 {
+    int er = ER_NOTHING;
+
     if (Levitation) {
         floating_above("fountain");
         return;
@@ -425,7 +427,7 @@ dipfountain(register struct obj *obj)
             (void) angry_guards(FALSE);
         return;
     } else {
-        int er = water_damage(obj, NULL, TRUE);
+        er = water_damage(obj, NULL, TRUE);
 
         if (obj->otyp == POT_ACID
             && er != ER_DESTROYED) { /* Acid and water don't mix */
@@ -521,13 +523,17 @@ dipfountain(register struct obj *obj)
         exercise(A_WIS, TRUE);
         newsym(u.ux, u.uy);
         break;
+    default:
+        if (er == ER_NOTHING)
+            pline("Nothing seems to happen.");
+        break;
     }
     update_inventory();
     dryup(u.ux, u.uy, TRUE);
 }
 
 void
-breaksink(int x, int y)
+breaksink(coordxy x, coordxy y)
 {
     if (cansee(x, y) || u_at(x, y))
         pline_The("pipes break!  Water spurts out!");
@@ -626,7 +632,7 @@ drinksink(void)
         pline("This %s contains toxic wastes!", hliquid("water"));
         if (!Unchanging) {
             You("undergo a freakish metamorphosis!");
-            polyself(0);
+            polyself(POLY_NOFLAGS);
         }
         break;
     /* more odd messages --JJB */

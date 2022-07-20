@@ -1,4 +1,4 @@
-/* NetHack 3.7	worn.c	$NHDT-Date: 1649529637 2022/04/09 18:40:37 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.82 $ */
+/* NetHack 3.7	worn.c	$NHDT-Date: 1652577035 2022/05/15 01:10:35 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.84 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2013. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -321,7 +321,7 @@ mon_adjust_speed(struct monst *mon,
         if (petrify) {
             /* mimic the player's petrification countdown; "slowing down"
                even if fast movement rate retained via worn speed boots */
-            if (flags.verbose)
+            if (Verbose(3, mon_adjust_speed))
                 pline("%s is slowing down.", Monnam(mon));
         } else if (adjust > 0 || mon->mspeed == MFAST)
             pline("%s is suddenly moving %sfaster.", Monnam(mon), howmuch);
@@ -860,8 +860,9 @@ bypass_obj(struct obj *obj)
 
 /* set or clear the bypass bit in a list of objects */
 void
-bypass_objlist(struct obj *objchain,
-               boolean on) /* TRUE => set, FALSE => clear */
+bypass_objlist(
+    struct obj *objchain,
+    boolean on) /* TRUE => set, FALSE => clear */
 {
     if (on && objchain)
         g.context.bypasses = TRUE;

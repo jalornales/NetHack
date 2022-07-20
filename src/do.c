@@ -1,4 +1,4 @@
-/* NetHack 3.7	do.c	$NHDT-Date: 1646171623 2022/03/01 21:53:43 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.296 $ */
+/* NetHack 3.7	do.c	$NHDT-Date: 1652831519 2022/05/17 23:51:59 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.304 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Derek S. Ray, 2015. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -18,7 +18,7 @@ static int menu_drop(int);
 static NHFILE *currentlevel_rewrite(void);
 static void final_level(void);
 
-/* static boolean badspot(xchar,xchar); */
+/* static boolean badspot(coordxy,coordxy); */
 
 /* the #drop command: drop one inventory item */
 int
@@ -43,18 +43,25 @@ dodrop(void)
  * it's gone for good...  If the destination is not a pool, returns FALSE.
  */
 boolean
-boulder_hits_pool(struct obj *otmp, int rx, int ry, boolean pushing)
+boulder_hits_pool(
+    struct obj *otmp,
+    coordxy rx, coordxy ry,
+    boolean pushing)
 {
     if (!otmp || otmp->otyp != BOULDER) {
         impossible("Not a boulder?");
-    } else if (!Is_waterlevel(&u.uz) && is_pool_or_lava(rx, ry)) {
+    } else if (is_pool_or_lava(rx, ry)) {
         boolean lava = is_lava(rx, ry), fills_up;
         const char *what = waterbody_name(rx, ry);
         schar ltyp = levl[rx][ry].typ;
         int chance = rn2(10); /* water: 90%; lava: 10% */
         struct monst *mtmp;
 
-        fills_up = lava ? chance == 0 : chance != 0;
+        /* chance for boulder to fill pool:  Plane of Water==0%,
+           lava 10%, wall of water==50%, other water==90% */
+        fills_up = Is_waterlevel(&u.uz) ? FALSE
+                   : IS_WATERWALL(ltyp) ? (chance < 5)
+                     : lava ? (chance == 0) : (chance != 0);
 
         if (fills_up) {
             struct trap *ttmp = t_at(rx, ry);
@@ -62,9 +69,9 @@ boulder_hits_pool(struct obj *otmp, int rx, int ry, boolean pushing)
             if (ltyp == DRAWBRIDGE_UP) {
                 levl[rx][ry].drawbridgemask &= ~DB_UNDER; /* clear lava */
                 levl[rx][ry].drawbridgemask |= DB_FLOOR;
-            } else
+            } else {
                 levl[rx][ry].typ = ROOM, levl[rx][ry].flags = 0;
-
+            }
             /* 3.7: normally DEADMONSTER() is used when traversing the fmon
                list--dead monsters usually aren't still at specific map
                locations; however, if ice melts causing a giant to drown,
@@ -89,7 +96,7 @@ boulder_hits_pool(struct obj *otmp, int rx, int ry, boolean pushing)
                     Strcpy(whobuf, y_monnam(u.usteed));
                 pline("%s %s %s into the %s.", upstart(whobuf),
                       vtense(whobuf, "push"), the(xname(otmp)), what);
-                if (flags.verbose && !Blind)
+                if (Verbose(0, boulder_hits_pool1) && !Blind)
                     pline("Now you can cross it!");
                 /* no splashing in this case */
             }
@@ -100,8 +107,9 @@ boulder_hits_pool(struct obj *otmp, int rx, int ry, boolean pushing)
                     There("is a large splash as %s %s the %s.",
                           the(xname(otmp)), fills_up ? "fills" : "falls into",
                           what);
-                } else if (!Deaf)
+                } else if (!Deaf) {
                     You_hear("a%s splash.", lava ? " sizzling" : "");
+                }
                 wake_nearto(rx, ry, 40);
             }
 
@@ -112,13 +120,14 @@ boulder_hits_pool(struct obj *otmp, int rx, int ry, boolean pushing)
                 You("find yourself on dry land again!");
             } else if (lava && next2u(rx, ry)) {
                 int dmg;
+
                 You("are hit by molten %s%c",
                     hliquid("lava"), Fire_resistance ? '.' : '!');
                 burn_away_slime();
                 dmg = d((Fire_resistance ? 1 : 3), 6);
                 losehp(Maybe_Half_Phys(dmg), /* lava damage */
                        "molten lava", KILLED_BY);
-            } else if (!fills_up && flags.verbose
+            } else if (!fills_up && Verbose(0, boulder_hits_pool2)
                        && (pushing ? !Blind : cansee(rx, ry)))
                 pline("It sinks without a trace!");
         }
@@ -138,7 +147,7 @@ boulder_hits_pool(struct obj *otmp, int rx, int ry, boolean pushing)
  * away.
  */
 boolean
-flooreffects(struct obj *obj, int x, int y, const char *verb)
+flooreffects(struct obj *obj, coordxy x, coordxy y, const char *verb)
 {
     struct trap *t;
     struct monst *mtmp;
@@ -385,7 +394,7 @@ polymorph_sink(void)
 static boolean
 teleport_sink(void)
 {
-    int cx, cy;
+    coordxy cx, cy;
     int cnt = 0;
     struct trap *trp;
     struct engr *eng;
@@ -637,7 +646,7 @@ drop(struct obj *obj)
 
     if (u.uswallow) {
         /* barrier between you and the floor */
-        if (flags.verbose) {
+        if (Verbose(0, drop1)) {
             char *onam_p, monbuf[BUFSZ];
 
             /* doname can call s_suffix, reusing its buffer */
@@ -660,7 +669,7 @@ drop(struct obj *obj)
 
             if (levhack)
                 ELevitation = W_ART; /* other than W_ARTI */
-            if (flags.verbose)
+            if (Verbose(0, drop2))
                 You("drop %s.", doname(obj));
             freeinv(obj);
             hitfloor(obj, TRUE);
@@ -668,7 +677,7 @@ drop(struct obj *obj)
                 float_down(I_SPECIAL | TIMEOUT, W_ARTI | W_ART);
             return ECMD_TIME;
         }
-        if (!IS_ALTAR(levl[u.ux][u.uy].typ) && flags.verbose)
+        if (!IS_ALTAR(levl[u.ux][u.uy].typ) && Verbose(0, drop3))
             You("drop %s.", doname(obj));
     }
     dropx(obj);
@@ -766,7 +775,7 @@ engulfer_digests_food(struct obj *obj)
 
         if (could_poly || could_slime) {
             (void) newcham(u.ustuck, could_slime ? &mons[PM_GREEN_SLIME] : 0,
-                           FALSE, could_slime);
+                           could_slime ? NC_SHOW_MSG : NO_NC_FLAGS);
         } else if (could_petrify) {
             minstapetrify(u.ustuck, TRUE);
         } else if (could_grow) {
@@ -1237,7 +1246,7 @@ save_currentstate(void)
 
 /*
 static boolean
-badspot(register xchar x, register xchar y)
+badspot(register coordxy x, register coordxy y)
 {
     return (boolean) ((levl[x][y].typ != ROOM
                        && levl[x][y].typ != AIR
@@ -1295,7 +1304,7 @@ goto_level(
 {
     int l_idx, save_mode;
     NHFILE *nhfp;
-    xchar new_ledger;
+    xint16 new_ledger;
     boolean cant_go_back, great_effort,
             up = (depth(newlevel) < depth(&u.uz)),
             newdungeon = (u.uz.dnum != newlevel->dnum),
@@ -1444,22 +1453,6 @@ goto_level(
     nhfp->mode = cant_go_back ? FREEING : (WRITING | FREEING);
     savelev(nhfp, ledger_no(&u.uz));
     nhfp->mode = save_mode;
-    /* air bubbles and clouds are saved in game-state rather than with the
-       level they're used on; in normal play, you can't leave and return
-       to any endgame level--bubbles aren't needed once you move to the
-       next level so used to be discarded when the next special level was
-       loaded; but in wizard mode you can leave and return, and since they
-       aren't saved with the level and restored upon return (new ones are
-       created instead), we need to discard them to avoid a memory leak;
-       so bubbles are now discarded as we leave the level they're used on */
-    if (Is_waterlevel(&u.uz) || Is_airlevel(&u.uz)) {
-        NHFILE tmpnhfp;
-
-        zero_nhfile(&tmpnhfp);
-        tmpnhfp.fd = -1;
-        tmpnhfp.mode = FREEING;
-        save_waterlevel(&tmpnhfp);
-    }
     close_nhfile(nhfp);
     if (cant_go_back) {
         /* discard unreachable levels; keep #0 */
@@ -1471,7 +1464,7 @@ goto_level(
     }
 
     if (Is_rogue_level(newlevel) || Is_rogue_level(&u.uz))
-        assign_graphics(Is_rogue_level(newlevel) ? ROGUESET : PRIMARY);
+        assign_graphics(Is_rogue_level(newlevel) ? ROGUESET : PRIMARYSET);
     check_gold_symbol();
     /* record this level transition as a potential seen branch unless using
      * some non-standard means of transportation (level teleport).
@@ -1517,16 +1510,6 @@ goto_level(
         reseed_random(rn2_on_display_rng);
         minit(); /* ZEROCOMP */
         getlev(nhfp, g.hackpid, new_ledger);
-        /* when in wizard mode, it is possible to leave from and return to
-           any level in the endgame; above, we discarded bubble/cloud info
-           when leaving Plane of Water or Air so recreate some now */
-        if (Is_waterlevel(&u.uz) || Is_airlevel(&u.uz)) {
-            NHFILE tmpnhfp;
-
-            zero_nhfile(&tmpnhfp);
-            tmpnhfp.fd = -1;
-            restore_waterlevel(&tmpnhfp);
-        }
         close_nhfile(nhfp);
         oinit(); /* reassign level dependent obj probabilities */
     }
@@ -1572,7 +1555,7 @@ goto_level(
             /* you climb up the {stairs|ladder};
                fly up the stairs; fly up along the ladder */
             great_effort = (Punished && !Levitation);
-            if (flags.verbose || great_effort)
+            if (Verbose(0, go_to_level1) || great_effort)
                 pline("%s %s up%s the %s.",
                       great_effort ? "With great effort, you" : "You",
                       u_locomotion("climb"),
@@ -1590,7 +1573,7 @@ goto_level(
             if (!u.dz) {
                 ; /* stayed on same level? (no transit effects) */
             } else if (Flying) {
-                if (flags.verbose)
+                if (Verbose(0, go_to_level2))
                     You("fly down %s.",
                         g.at_ladder ? "along the ladder" : "the stairs");
             } else if (near_capacity() > UNENCUMBERED
@@ -1610,7 +1593,7 @@ goto_level(
                            KILLED_BY);
                 selftouch("Falling, you");
             } else { /* ordinary descent */
-                if (flags.verbose)
+                if (Verbose(0, go_to_level3))
                     You("%s.", g.at_ladder ? "climb down the ladder"
                                          : "descend the stairs");
             }
@@ -1652,7 +1635,6 @@ goto_level(
 
     /* Reset the screen. */
     vision_reset(); /* reset the blockages */
-    g.glyphmap_perlevel_flags = 0L; /* force per-level map_glyphinfo() changes */
     reset_glyphmap(gm_levelchange);
     docrt(); /* does a full vision recalc */
     flush_screen(-1);
@@ -1684,7 +1666,7 @@ goto_level(
 #endif
             You_hear("groans and moans everywhere.");
         } else
-            pline("It is hot here.  You smell smoke...");
+            hellish_smoke_mesg(); /* "It is hot here.  You smell smoke..." */
 
         record_achievement(ACH_HELL); /* reached Gehennom */
     }
@@ -1825,6 +1807,16 @@ goto_level(
 
 RESTORE_WARNING_FORMAT_NONLITERAL
 
+/* give a message when entering a Gehennom level other than the Valley;
+   also given if restoring a game in that situation */
+void
+hellish_smoke_mesg(void)
+{
+    if (Inhell && !Is_valley(&u.uz))
+        pline("It is hot here.  You %s smoke...",
+              olfaction(g.youmonst.data) ? "smell" : "sense");
+}
+
 /* usually called from goto_level(); might be called from Sting_effects() */
 void
 maybe_lvltport_feedback(void)
@@ -1907,7 +1899,7 @@ revive_corpse(struct obj *corpse)
 {
     struct monst *mtmp, *mcarry;
     boolean is_uwep, chewed;
-    xchar where;
+    xint16 where;
     char cname[BUFSZ];
     struct obj *container = (struct obj *) 0;
     int container_where = 0;
@@ -2022,7 +2014,7 @@ revive_mon(anything *arg, long timeout UNUSED)
     struct obj *body = arg->a_obj;
     struct permonst *mptr = &mons[body->corpsenm];
     struct monst *mtmp;
-    xchar x, y;
+    coordxy x, y;
 
     /* corpse will revive somewhere else if there is a monster in the way;
        Riders get a chance to try to bump the obstacle out of their way */

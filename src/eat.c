@@ -1,4 +1,4 @@
-/* NetHack 3.7	eat.c	$NHDT-Date: 1648318981 2022/03/26 18:23:01 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.269 $ */
+/* NetHack 3.7	eat.c	$NHDT-Date: 1654886097 2022/06/10 18:34:57 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.281 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -537,21 +537,21 @@ eating_conducts(struct permonst *pd)
     int ll_conduct = 0;
 
     if (!u.uconduct.food++) {
-        livelog_printf(LL_CONDUCT, "ate for first time - %s",
+        livelog_printf(LL_CONDUCT, "ate for the first time - %s",
                        pd->pmnames[NEUTRAL]);
         ll_conduct++;
     }
     if (!vegan(pd)) {
         if (!u.uconduct.unvegan++ && !ll_conduct) {
             livelog_printf(LL_CONDUCT,
-                           "consumed animal products (%s) for first time",
+                           "consumed animal products (%s) for the first time",
                            pd->pmnames[NEUTRAL]);
             ll_conduct++;
         }
     }
     if (!vegetarian(pd)) {
         if (!u.uconduct.unvegetarian && !ll_conduct)
-            livelog_printf(LL_CONDUCT, "tasted meat (%s) for first time",
+            livelog_printf(LL_CONDUCT, "tasted meat (%s) for the first time",
                            pd->pmnames[NEUTRAL]);
         violated_vegetarian();
     }
@@ -1140,7 +1140,7 @@ cpostfx(int pm)
 
             if (!u.uconduct.polyselfs++) /* you're changing form */
                 livelog_printf(LL_CONDUCT,
-                               "changed form for first time by mimicking %s",
+                            "changed form for the first time by mimicking %s",
                                Hallucination ? "an orange" : "a pile of gold");
             You_cant("resist the temptation to mimic %s.",
                      Hallucination ? "an orange" : "a pile of gold");
@@ -1194,7 +1194,7 @@ cpostfx(int pm)
             You("%s.", (pm == PM_GENETIC_ENGINEER)
                           ? "undergo a freakish metamorphosis"
                           : "feel a change coming over you");
-            polyself(0);
+            polyself(POLY_NOFLAGS);
         }
         break;
     case PM_DISPLACER_BEAST:
@@ -1489,7 +1489,7 @@ consume_tin(const char *mesg)
 
         pline("It smells like %s.", what);
         if (yn("Eat it?") == 'n') {
-            if (flags.verbose)
+            if (Verbose(0, consume_tin1))
                 You("discard the open tin.");
             if (!Hallucination)
                 tin->dknown = tin->known = 1;
@@ -1545,7 +1545,7 @@ consume_tin(const char *mesg)
         }
 
         if (yn("Eat it?") == 'n') {
-            if (flags.verbose)
+            if (Verbose(0, consume_tin2))
                 You("discard the open tin.");
             tin = costly_tin(COST_OPEN);
             goto use_up_tin;
@@ -1557,7 +1557,7 @@ consume_tin(const char *mesg)
          */
         /* don't need vegetarian checks for spinach */
         if (!u.uconduct.food++)
-            livelog_printf(LL_CONDUCT, "ate for first time (spinach)");
+            livelog_printf(LL_CONDUCT, "ate for the first time (spinach)");
         if (!tin->cursed)
             pline("This makes you feel like %s!",
                   /* "Swee'pea" is a character from the Popeye cartoons */
@@ -1754,14 +1754,14 @@ eatcorpse(struct obj *otmp)
     if (!vegan(&mons[mnum]))
         if (!u.uconduct.unvegan++) {
             livelog_printf(LL_CONDUCT,
-                      "consumed animal products for first time, by eating %s",
+                  "consumed animal products for the first time, by eating %s",
                            an(food_xname(otmp, FALSE)));
             ll_conduct++;
         }
     if (!vegetarian(&mons[mnum])) {
         if (!u.uconduct.unvegetarian && !ll_conduct)
             livelog_printf(LL_CONDUCT,
-                           "tasted meat for first time, by eating %s",
+                           "tasted meat for the first time, by eating %s",
                            an(food_xname(otmp, FALSE)));
         violated_vegetarian();
     }
@@ -1870,6 +1870,9 @@ eatcorpse(struct obj *otmp)
                              && rn2(10)
                              && (rotted < 1 || !rn2((int) rotted + 1)));
         const char *pmxnam = food_xname(otmp, FALSE);
+        static const char *const palatable_msgs[] = {
+            "okay", "stringy", "gamey", "fatty", "tough"
+        };
 
         if (!strncmpi(pmxnam, "the ", 4))
             pmxnam += 4;
@@ -1883,7 +1886,8 @@ eatcorpse(struct obj *otmp)
               Hallucination
                  ? (yummy ? ((u.umonnum == PM_TIGER) ? "gr-r-reat" : "gnarly")
                           : palatable ? "copacetic" : "grody")
-                 : (yummy ? "delicious" : palatable ? "okay" : "terrible"),
+              : (yummy ? "delicious" : palatable ?
+                 palatable_msgs[mnum % SIZE(palatable_msgs)] : "terrible"),
               (yummy || !palatable) ? '!' : '.');
     }
 
@@ -2712,7 +2716,7 @@ doeat(void)
 
         if (!u.uconduct.food++) {
             ll_conduct++;
-            livelog_printf(LL_CONDUCT, "ate for first time (%s)",
+            livelog_printf(LL_CONDUCT, "ate for the first time (%s)",
                            food_xname(otmp, FALSE));
         }
         material = objects[otmp->otyp].oc_material;
@@ -2720,14 +2724,14 @@ doeat(void)
             || material == DRAGON_HIDE || material == WAX) {
             if (!u.uconduct.unvegan++ && !ll_conduct) {
                 livelog_printf(LL_CONDUCT,
-                      "consumed animal products for first time, by eating %s",
+                  "consumed animal products for the first time, by eating %s",
                                an(food_xname(otmp, FALSE)));
                 ll_conduct++;
             }
             if (material != WAX) {
                 if (!u.uconduct.unvegetarian && !ll_conduct)
                     livelog_printf(LL_CONDUCT,
-                       "tasted meat by-products for first time, by eating %s",
+                   "tasted meat by-products for the first time, by eating %s",
                                    an(food_xname(otmp, FALSE)));
                 violated_vegetarian();
             }
@@ -2795,7 +2799,7 @@ doeat(void)
 
     /* KMH, conduct */
     if (!u.uconduct.food++) {
-        livelog_printf(LL_CONDUCT, "ate for first time - %s",
+        livelog_printf(LL_CONDUCT, "ate for the first time - %s",
                        food_xname(otmp, FALSE));
         ll_conduct++;
     }
@@ -2830,14 +2834,14 @@ doeat(void)
         case FLESH:
             if (!u.uconduct.unvegan++ && !ll_conduct) {
                 livelog_printf(LL_CONDUCT,
-                      "consumed animal products for first time, by eating %s",
+                  "consumed animal products for the first time, by eating %s",
                                an(food_xname(otmp, FALSE)));
                 ll_conduct++;
             }
             if (otmp->otyp != EGG) {
                 if (!u.uconduct.unvegetarian && !ll_conduct)
                     livelog_printf(LL_CONDUCT,
-                                   "tasted meat for first time, by eating %s",
+                               "tasted meat for the first time, by eating %s",
                                    an(food_xname(otmp, FALSE)));
 
                 violated_vegetarian();
@@ -2849,7 +2853,7 @@ doeat(void)
                 || otmp->otyp == LUMP_OF_ROYAL_JELLY)
                 if (!u.uconduct.unvegan++ && !ll_conduct)
                     livelog_printf(LL_CONDUCT,
-                               "consumed animal products (%s) for first time",
+                           "consumed animal products (%s) for the first time",
                                    food_xname(otmp, FALSE));
             break;
         }
@@ -3140,8 +3144,9 @@ lesshungry(int num)
             } else {
                 g.context.victual.fullwarn = TRUE;
                 if (g.context.victual.canchoke
-                    && g.context.victual.reqtime > 1) {
-                    /* a one-gulp food will not survive a stop */
+                    && (g.context.victual.reqtime
+                        - g.context.victual.usedtime) > 1) {
+                    /* food with one bite left will not survive a stop */
                     if (!paranoid_query(ParanoidEating, "Continue eating?")) {
                         reset_eat();
                         g.nomovemsg = (char *) 0;
@@ -3433,10 +3438,20 @@ floorfood(
             Sprintf(qbuf, "There is a bear trap here (%s); eat it?",
                     u_in_beartrap ? "holding you" : "armed");
             if ((c = yn_function(qbuf, ynqchars, 'n')) == 'y') {
+                struct obj *beartrap;
+
                 deltrap(ttmp);
                 if (u_in_beartrap)
                     reset_utrap(TRUE);
-                return mksobj(BEARTRAP, TRUE, FALSE);
+                beartrap = mksobj(BEARTRAP, TRUE, FALSE);
+                Sprintf(qbuf,"You only manage to %s the bear trap.",
+                        u_in_beartrap ? "free yourself from" : "disarm");
+                if (check_capacity(qbuf) && beartrap) {
+                    obj_extract_self(beartrap);
+                    dropy(beartrap);           /* put it on the floor */
+                    return (struct obj *) 0;
+                }
+                return beartrap;
             } else if (c == 'q') {
                 return (struct obj *) 0;
             }
@@ -3692,11 +3707,37 @@ maybe_finished_meal(boolean stopping)
         && g.context.victual.usedtime >= g.context.victual.reqtime) {
         if (stopping)
             g.occupation = 0; /* for do_reset_eat */
-        (void) eatfood();   /* calls done_eating() to use up
-                               g.context.victual.piece */
+        /* eatfood() calls done_eating() to use up g.context.victual.piece */
+        (void) eatfood();
         return TRUE;
     }
     return FALSE;
+}
+
+/* called by revive(); sort of the opposite of maybe_finished_meal() */
+void
+cant_finish_meal(struct obj *corpse)
+{
+    /*
+     * When a corpse gets resurrected, the makemon() for that might
+     * call stop_occupation().  If that happens, prevent it from using
+     * up the corpse via maybe_finished_meal() when there's not enough
+     * left for another bite.  revive() needs continued access to the
+     * corpse and will delete it when done.
+     */
+    if (g.occupation == eatfood && g.context.victual.piece == corpse) {
+        /* normally performed by done_eating() */
+        g.context.victual.piece = (struct obj *) 0;
+        g.context.victual.o_id = 0;
+        g.context.victual.fullwarn = g.context.victual.eating =
+            g.context.victual.doreset = FALSE;
+
+        if (!corpse->oeaten)
+            corpse->oeaten = 1; /* [see consume_oeaten()] */
+        g.occupation = donull; /* any non-Null other than eatfood() */
+        stop_occupation();
+        newuhs(FALSE);
+    }
 }
 
 /* Tin of <something> to the rescue?  Decide whether current occupation

@@ -71,7 +71,7 @@ static void dump_display_nhwindow(winid, boolean);
 static void dump_destroy_nhwindow(winid);
 static void dump_start_menu(winid, unsigned long);
 static void dump_add_menu(winid, const glyph_info *, const ANY_P *, char,
-                          char, int, const char *, unsigned int);
+                          char, int, int, const char *, unsigned int);
 static void dump_end_menu(winid, const char *);
 static int dump_select_menu(winid, int, MENU_ITEM_P **);
 static void dump_putstr(winid, int, const char *);
@@ -312,7 +312,7 @@ choose_windows(const char *s)
         free((genericptr_t) tmps) /*, tmps = 0*/ ;
 
     if (windowprocs.win_raw_print == def_raw_print
-            || WINDOWPORT("safe-startup"))
+            || WINDOWPORT(safestartup))
         nh_terminate(EXIT_SUCCESS);
 }
 
@@ -501,17 +501,17 @@ genl_putmsghistory(const char *msg, boolean is_restoring)
 
 static int hup_nhgetch(void);
 static char hup_yn_function(const char *, const char *, char);
-static int hup_nh_poskey(int *, int *, int *);
+static int hup_nh_poskey(coordxy *, coordxy *, int *);
 static void hup_getlin(const char *, char *);
 static void hup_init_nhwindows(int *, char **);
 static void hup_exit_nhwindows(const char *);
 static winid hup_create_nhwindow(int);
 static int hup_select_menu(winid, int, MENU_ITEM_P **);
 static void hup_add_menu(winid, const glyph_info *, const anything *, char,
-                         char, int, const char *, unsigned int);
+                         char, int, int, const char *, unsigned int);
 static void hup_end_menu(winid, const char *);
 static void hup_putstr(winid, int, const char *);
-static void hup_print_glyph(winid, xchar, xchar, const glyph_info *,
+static void hup_print_glyph(winid, coordxy, coordxy, const glyph_info *,
                             const glyph_info *);
 static void hup_outrip(winid, int, time_t);
 static void hup_curs(winid, int, int);
@@ -536,9 +536,10 @@ static void hup_void_fdecl_int(int);
 static void hup_void_fdecl_winid(winid);
 static void hup_void_fdecl_winid_ulong(winid, unsigned long);
 static void hup_void_fdecl_constchar_p(const char *);
+static win_request_info *hup_ctrl_nhwindow(winid, int, win_request_info *);
 
 static struct window_procs hup_procs = {
-    "hup", 0L, 0L,
+    WPID(hup), 0L, 0L,
     {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     hup_init_nhwindows,
     hup_void_ndecl,                                    /* player_selection */
@@ -551,7 +552,6 @@ static struct window_procs hup_procs = {
     hup_curs, hup_putstr, hup_putstr,                  /* putmixed */
     hup_display_file, hup_void_fdecl_winid_ulong,      /* start_menu */
     hup_add_menu, hup_end_menu, hup_select_menu, genl_message_menu,
-    hup_void_fdecl_int,                                /* update_inventory */
     hup_void_ndecl,                                    /* mark_synch */
     hup_void_ndecl,                                    /* wait_synch */
 #ifdef CLIPPING
@@ -584,6 +584,8 @@ static struct window_procs hup_procs = {
     hup_void_ndecl,                                   /* status_finish */
     genl_status_enablefield, hup_status_update,
     genl_can_suspend_no,
+    hup_void_fdecl_int,                                /* update_inventory */
+    hup_ctrl_nhwindow,
 };
 
 static void (*previnterface_exit_nhwindows)(const char *) = 0;
@@ -650,7 +652,7 @@ hup_yn_function(const char *prompt UNUSED,
 
 /*ARGSUSED*/
 static int
-hup_nh_poskey(int *x UNUSED, int *y UNUSED, int *mod UNUSED)
+hup_nh_poskey(coordxy *x UNUSED, coordxy *y UNUSED, int *mod UNUSED)
 {
     return '\033';
 }
@@ -692,6 +694,7 @@ hup_add_menu(winid window UNUSED,
              char sel UNUSED,
              char grpsel UNUSED,
              int attr UNUSED,
+             int clr UNUSED,
              const char *txt UNUSED,
              unsigned int itemflags UNUSED)
 {
@@ -715,7 +718,7 @@ hup_putstr(winid window UNUSED, int attr UNUSED, const char *text UNUSED)
 /*ARGSUSED*/
 static void
 hup_print_glyph(winid window UNUSED,
-                xchar x UNUSED, xchar y UNUSED,
+                coordxy x UNUSED, coordxy y UNUSED,
                 const glyph_info *glyphinfo UNUSED,
                 const glyph_info *bkglyphinfo UNUSED)
 {
@@ -835,6 +838,16 @@ static void
 hup_void_fdecl_constchar_p(const char *string UNUSED)
 {
     return;
+}
+
+/*ARGUSED*/
+win_request_info *
+hup_ctrl_nhwindow(
+    winid window UNUSED,  /* window to use, must be of type NHW_MENU */
+    int request UNUSED,
+    win_request_info *wri UNUSED)
+{
+    return (win_request_info *) 0;
 }
 
 #endif /* HANGUPHANDLING */
@@ -1141,7 +1154,7 @@ dump_fmtstr(const char *fmt, char *buf,
                     Strcpy(tmpbuf, "{current date+time}");
                 break;
             case 'v': /* version, eg. "3.7.0-0" */
-                Sprintf(tmpbuf, "%s", version_string(verbuf));
+                Sprintf(tmpbuf, "%s", version_string(verbuf, sizeof verbuf));
                 break;
             case 'u': /* UID */
                 Sprintf(tmpbuf, "%ld", uid);
@@ -1284,6 +1297,7 @@ dump_add_menu(winid win UNUSED,
               char ch,
               char gch UNUSED,
               int attr UNUSED,
+              int clr UNUSED,
               const char *str,
               unsigned int itemflags UNUSED)
 {
@@ -1375,7 +1389,7 @@ glyph2symidx(int glyph)
     glyph_info glyphinfo;
 
     map_glyphinfo(0, 0, glyph, 0, &glyphinfo);
-    return glyphinfo.gm.symidx;
+    return glyphinfo.gm.sym.symidx;
 }
 
 char *
@@ -1387,10 +1401,37 @@ encglyph(int glyph)
     return encbuf;
 }
 
+int
+decode_glyph(const char *str, int *glyph_ptr)
+{
+    static const char hex[] = "00112233445566778899aAbBcCdDeEfF";
+    int rndchk = 0, dcount = 0, retval = 0;
+    const char *dp;
+
+    for (; *str && ++dcount <= 4; ++str) {
+        if ((dp = index(hex, *str)) != 0) {
+            retval++;
+            rndchk = (rndchk * 16) + ((int) (dp - hex) / 2);
+        } else
+            break;
+    }
+    if (rndchk == g.context.rndencode) {
+        *glyph_ptr = dcount = 0;
+        for (; *str && ++dcount <= 4; ++str) {
+            if ((dp = index(hex, *str)) != 0) {
+                retval++;
+                *glyph_ptr = (*glyph_ptr * 16) + ((int) (dp - hex) / 2);
+            } else
+                break;
+        }
+        return retval;
+    }
+    return 0;
+}
+
 char *
 decode_mixed(char *buf, const char *str)
 {
-    static const char hex[] = "00112233445566778899aAbBcCdDeEfF";
     char *put = buf;
     glyph_info glyphinfo = nul_glyphinfo;
 
@@ -1399,27 +1440,16 @@ decode_mixed(char *buf, const char *str)
 
     while (*str) {
         if (*str == '\\') {
-            int rndchk, dcount, so, gv;
-            const char *dp, *save_str;
+            int dcount, so, gv;
+            const char *save_str;
 
             save_str = str++;
             switch (*str) {
             case 'G': /* glyph value \GXXXXNNNN*/
-                rndchk = dcount = 0;
-                for (++str; *str && ++dcount <= 4; ++str)
-                    if ((dp = index(hex, *str)) != 0)
-                        rndchk = (rndchk * 16) + ((int) (dp - hex) / 2);
-                    else
-                        break;
-                if (rndchk == g.context.rndencode) {
-                    gv = dcount = 0;
-                    for (; *str && ++dcount <= 4; ++str)
-                        if ((dp = index(hex, *str)) != 0)
-                            gv = (gv * 16) + ((int) (dp - hex) / 2);
-                        else
-                            break;
+                if ((dcount = decode_glyph(str + 1, &gv))) {
+                    str += (dcount + 1);
                     map_glyphinfo(0, 0, gv, 0, &glyphinfo);
-                    so = glyphinfo.gm.symidx;
+                    so = glyphinfo.gm.sym.symidx;
                     *put++ = g.showsyms[so];
                     /* 'str' is ready for the next loop iteration and '*str'
                        should not be copied at the end of this iteration */
@@ -1429,25 +1459,6 @@ decode_mixed(char *buf, const char *str)
                     str = save_str;
                 }
                 break;
-#if 0
-            case 'S': /* symbol offset */
-                so = rndchk = dcount = 0;
-                for (++str; *str && ++dcount <= 4; ++str)
-                    if ((dp = index(hex, *str)) != 0)
-                        rndchk = (rndchk * 16) + ((int) (dp - hex) / 2);
-                    else
-                        break;
-                if (rndchk == g.context.rndencode) {
-                    dcount = 0;
-                    for (; *str && ++dcount <= 2; ++str)
-                        if ((dp = index(hex, *str)) != 0)
-                            so = (so * 16) + ((int) (dp - hex) / 2);
-                        else
-                            break;
-                }
-                *put++ = g.showsyms[so];
-                break;
-#endif
             case '\\':
                 break;
             case '\0':
@@ -1466,6 +1477,7 @@ decode_mixed(char *buf, const char *str)
     *put = '\0';
     return buf;
 }
+
 
 /*
  * This differs from putstr() because the str parameter can

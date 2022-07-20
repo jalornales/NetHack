@@ -7,6 +7,7 @@
 static int prayer_done(void);
 static struct obj *worst_cursed_item(void);
 static int in_trouble(void);
+static void fix_curse_trouble(struct obj *, const char *);
 static void fix_worst_trouble(int);
 static void angrygods(aligntyp);
 static void at_your_feet(const char *);
@@ -20,6 +21,8 @@ static void gods_angry(aligntyp);
 static void gods_upset(aligntyp);
 static void consume_offering(struct obj *);
 static void offer_too_soon(aligntyp);
+static void desecrate_high_altar(aligntyp);
+static boolean pray_revive(void);
 static boolean water_prayer(boolean);
 static boolean blocked_boulder(int, int);
 
@@ -328,6 +331,30 @@ worst_cursed_item(void)
 }
 
 static void
+fix_curse_trouble(struct obj *otmp, const char *what)
+{
+    if (!otmp) {
+        impossible("fix_curse_trouble: nothing to uncurse.");
+        return;
+    }
+    if (otmp == uarmg && Glib) {
+        make_glib(0);
+        Your("%s are no longer slippery.", gloves_simple_name(uarmg));
+        if (!otmp->cursed)
+            return;
+    }
+    if (!Blind || (otmp == ublindf && Blindfolded_only)) {
+        pline("%s %s.",
+                what ? what : (const char *) Yobjnam2(otmp, "softly glow"),
+                hcolor(NH_AMBER));
+        iflags.last_msg = PLNMSG_OBJ_GLOWS;
+        otmp->bknown = !Hallucination; /* ok to skip set_bknown() */
+    }
+    uncurse(otmp);
+    update_inventory();
+}
+
+static void
 fix_worst_trouble(int trouble)
 {
     int i;
@@ -408,8 +435,10 @@ fix_worst_trouble(int trouble)
                 if (otmp == uright)
                     what = rightglow;
             }
-            if (otmp)
-                goto decurse;
+            if (otmp) {
+                fix_curse_trouble(otmp, what);
+                break;
+            }
         }
         break;
     case TROUBLE_STUCK_IN_WALL:
@@ -440,11 +469,13 @@ fix_worst_trouble(int trouble)
             if (otmp == uright)
                 what = rightglow;
         }
-        goto decurse;
+        fix_curse_trouble(otmp, what);
+        break;
     case TROUBLE_UNUSEABLE_HANDS:
         if (welded(uwep)) {
             otmp = uwep;
-            goto decurse;
+            fix_curse_trouble(otmp, what);
+            break;
         }
         if (Upolyd && nohands(g.youmonst.data)) {
             if (!Unchanging) {
@@ -452,7 +483,8 @@ fix_worst_trouble(int trouble)
                 rehumanize(); /* "You return to {normal} form." */
             } else if ((otmp = unchanger()) != 0 && otmp->cursed) {
                 /* otmp is an amulet of unchanging */
-                goto decurse;
+                fix_curse_trouble(otmp, what);
+                break;
             }
         }
         if (nohands(g.youmonst.data) || !freehand())
@@ -460,7 +492,8 @@ fix_worst_trouble(int trouble)
         break;
     case TROUBLE_CURSED_BLINDFOLD:
         otmp = ublindf;
-        goto decurse;
+        fix_curse_trouble(otmp, what);
+        break;
     case TROUBLE_LYCANTHROPE:
         you_unwere(TRUE);
         break;
@@ -478,8 +511,7 @@ fix_worst_trouble(int trouble)
             otmp = uarmg;
         else if (Cursed_obj(uarmf, FUMBLE_BOOTS))
             otmp = uarmf;
-        goto decurse;
-        /*NOTREACHED*/
+        fix_curse_trouble(otmp, what);
         break;
     case TROUBLE_CURSED_ITEMS:
         otmp = worst_cursed_item();
@@ -487,26 +519,7 @@ fix_worst_trouble(int trouble)
             what = rightglow;
         else if (otmp == uleft)
             what = leftglow;
- decurse:
-        if (!otmp) {
-            impossible("fix_worst_trouble: nothing to uncurse.");
-            return;
-        }
-        if (otmp == uarmg && Glib) {
-            make_glib(0);
-            Your("%s are no longer slippery.", gloves_simple_name(uarmg));
-            if (!otmp->cursed)
-                break;
-        }
-        if (!Blind || (otmp == ublindf && Blindfolded_only)) {
-            pline("%s %s.",
-                  what ? what : (const char *) Yobjnam2(otmp, "softly glow"),
-                  hcolor(NH_AMBER));
-            iflags.last_msg = PLNMSG_OBJ_GLOWS;
-            otmp->bknown = !Hallucination; /* ok to skip set_bknown() */
-        }
-        uncurse(otmp);
-        update_inventory();
+        fix_curse_trouble(otmp, what);
         break;
     case TROUBLE_POISONED:
         /* override Fixed_abil; ignore items which confer that */
@@ -818,7 +831,7 @@ gcrownu(void)
                 ? "take lives"
                 : "steal souls");
         verbalize("Thou art chosen to %s for My Glory!", what);
-        livelog_printf(LL_DIVINEGIFT, "chosen to %s for the Glory of %s",
+        livelog_printf(LL_DIVINEGIFT, "was chosen to %s for the Glory of %s",
                        what, u_gname());
         break;
     }
@@ -841,7 +854,7 @@ gcrownu(void)
         /* not an artifact, but treat like one for this situation;
            classify as a spoiler in case player hasn't IDed the book yet */
         livelog_printf(LL_DIVINEGIFT | LL_ARTIFACT | LL_SPOILER,
-                       "bestowed with %s", bbuf);
+                       "was bestowed with %s", bbuf);
 
         /* when getting a new book for known spell, enhance
            currently wielded weapon rather than the book */
@@ -864,8 +877,8 @@ gcrownu(void)
             if (obj && obj->oartifact == ART_EXCALIBUR) {
                 u.ugifts++;
                 livelog_printf(LL_DIVINEGIFT | LL_ARTIFACT,
-                               "wielded %s transformed into %s",
-                               lbuf, artiname(ART_EXCALIBUR));
+                               "had %s wielded %s transformed into %s",
+                               uhis(), lbuf, artiname(ART_EXCALIBUR));
             }
         }
         /* acquire Excalibur's skill regardless of weapon or gift */
@@ -888,7 +901,8 @@ gcrownu(void)
             dropy(obj);
             u.ugifts++;
             livelog_printf(LL_DIVINEGIFT | LL_ARTIFACT,
-                           "bestowed with %s", artiname(ART_VORPAL_BLADE));
+                           "was bestowed with %s",
+                           artiname(ART_VORPAL_BLADE));
         }
         /* acquire Vorpal Blade's skill regardless of weapon or gift */
         unrestrict_weapon_skill(P_LONG_SWORD);
@@ -913,7 +927,8 @@ gcrownu(void)
             dropy(obj);
             u.ugifts++;
             livelog_printf(LL_DIVINEGIFT | LL_ARTIFACT,
-                           "bestowed with %s", artiname(ART_STORMBRINGER));
+                           "was bestowed with %s",
+                           artiname(ART_STORMBRINGER));
         }
         /* acquire Stormbringer's skill regardless of weapon or gift */
         unrestrict_weapon_skill(P_BROAD_SWORD);
@@ -1437,6 +1452,21 @@ offer_too_soon(aligntyp altaralign)
                         : "ashamed");
 }
 
+static void
+desecrate_high_altar(aligntyp altaralign)
+{
+    /*
+     * REAL BAD NEWS!!! High altars cannot be converted.  Even an attempt
+     * gets the god who owns it truly pissed off.
+     */
+    You_feel("the air around you grow charged...");
+    pline("Suddenly, you realize that %s has noticed you...", a_gname());
+    godvoice(altaralign,
+                "So, mortal!  You dare desecrate my High Temple!");
+    /* Throw everything we have at the player */
+    god_zaps_you(altaralign);
+}
+
 /* the #offer command - sacrifice something to the gods */
 int
 dosacrifice(void)
@@ -1452,8 +1482,7 @@ dosacrifice(void)
         You("are not standing on an altar.");
         return ECMD_OK;
     }
-    highaltar = ((Is_astralevel(&u.uz) || Is_sanctum(&u.uz))
-                 && (levl[u.ux][u.uy].altarmask & AM_SHRINE));
+    highaltar = (levl[u.ux][u.uy].altarmask & AM_SANCTUM);
 
     otmp = floorfood("sacrifice", 1);
     if (!otmp)
@@ -1506,7 +1535,8 @@ dosacrifice(void)
 
             if (highaltar
                 && (altaralign != A_CHAOTIC || u.ualign.type != A_CHAOTIC)) {
-                goto desecrate_high_altar;
+                desecrate_high_altar(altaralign);
+                return ECMD_TIME;
             } else if (altaralign != A_CHAOTIC && altaralign != A_NONE) {
                 /* curse the lawful/neutral altar */
                 pline_The("altar is stained with %s blood.", g.urace.adj);
@@ -1714,17 +1744,7 @@ dosacrifice(void)
     }
 
     if (altaralign != u.ualign.type && highaltar) {
- desecrate_high_altar:
-        /*
-         * REAL BAD NEWS!!! High altars cannot be converted.  Even an attempt
-         * gets the god who owns it truly pissed off.
-         */
-        You_feel("the air around you grow charged...");
-        pline("Suddenly, you realize that %s has noticed you...", a_gname());
-        godvoice(altaralign,
-                 "So, mortal!  You dare desecrate my High Temple!");
-        /* Throw everything we have at the player */
-        god_zaps_you(altaralign);
+        desecrate_high_altar(altaralign);
     } else if (value < 0) { /* don't think the gods are gonna like this... */
         gods_upset(altaralign);
     } else {
@@ -1891,7 +1911,7 @@ dosacrifice(void)
                     u.ublesscnt = rnz(300 + (50 * nartifacts));
                     exercise(A_WIS, TRUE);
                     livelog_printf (LL_DIVINEGIFT | LL_ARTIFACT,
-                                    "bestowed with %s by %s",
+                                    "was bestowed with %s by %s",
                                     artiname(otmp->oartifact),
                                     align_gname(u.ualign.type));
                     /* make sure we can use this weapon */
@@ -1973,6 +1993,23 @@ can_pray(boolean praying) /* false means no messages should be given */
        This case should be uncommon enough to live with... */
 
     return !praying ? (boolean) (g.p_type == 3 && !Inhell) : TRUE;
+}
+
+/* return TRUE if praying revived a pet corpse */
+static boolean
+pray_revive(void)
+{
+    struct obj *otmp;
+
+    for (otmp = g.level.objects[u.ux][u.uy]; otmp; otmp = otmp->nexthere)
+        if (otmp->otyp == CORPSE && has_omonst(otmp)
+            && OMONST(otmp)->mtame && !OMONST(otmp)->isminion)
+            break;
+
+    if (!otmp)
+        return FALSE;
+
+    return (revive(otmp, TRUE) != NULL);
 }
 
 /* #pray commmand */
@@ -2083,8 +2120,10 @@ prayer_done(void) /* M. Stephenson (1.0.3b) */
             pleased(alignment);
     } else {
         /* coaligned */
-        if (on_altar())
+        if (on_altar()) {
+            (void) pray_revive();
             (void) water_prayer(TRUE);
+        }
         pleased(alignment); /* nice */
     }
     return 1;
@@ -2227,7 +2266,7 @@ doturn(void)
 }
 
 int
-altarmask_at(int x, int y)
+altarmask_at(coordxy x, coordxy y)
 {
     int res = 0;
 
@@ -2251,7 +2290,7 @@ a_gname(void)
 
 /* returns the name of an altar's deity */
 const char *
-a_gname_at(xchar x, xchar y)
+a_gname_at(coordxy x, coordxy y)
 {
     if (!IS_ALTAR(levl[x][y].typ))
         return (char *) 0;
@@ -2389,7 +2428,7 @@ align_gtitle(aligntyp alignment)
 }
 
 void
-altar_wrath(int x, int y)
+altar_wrath(coordxy x, coordxy y)
 {
     aligntyp altaralign = a_align(x, y);
 

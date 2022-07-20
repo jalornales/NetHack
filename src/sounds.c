@@ -1441,7 +1441,7 @@ add_sound_mapping(const char* mapping)
         if (strlen(sounddir) + 1 + strlen(filename) >= sizeof filespec) {
             raw_print("sound file name too long");
             return 0;
-	}
+        }
         Snprintf(filespec, sizeof filespec, "%s/%s", sounddir, filename);
 
         if (idx >= 0 || can_read_file(filespec)) {
@@ -1453,7 +1453,8 @@ add_sound_mapping(const char* mapping)
             new_map->next = soundmap;
 
             if (!regex_compile(text, new_map->regex)) {
-                const char *re_error_desc = regex_error_desc(new_map->regex);
+                char errbuf[BUFSZ];
+                char *re_error_desc = regex_error_desc(new_map->regex, errbuf);
 
                 regex_free(new_map->regex);
                 free((genericptr_t) new_map->filename);
@@ -1516,16 +1517,16 @@ maybe_play_sound(const char* msg)
         && !iflags.vt_sounddata
 #endif
 #if defined(QT_GRAPHICS)
-        && WINDOWPORT("Qt")
+        && WINDOWPORT(Qt)
 #endif
 #if defined(WIN32)
-        && (WINDOWPORT("tty") || WINDOWPORT("mswin") || WINDOWPORT("curses"))
+        && (WINDOWPORT(tty) || WINDOWPORT(mswin) || WINDOWPORT(curses))
 #endif
 #endif /* WIN32 || QT_GRAPHICS */
         )
         play_usersound(snd->filename, snd->volume);
 #if defined(TTY_GRAPHICS) && defined(TTY_SOUND_ESCCODES)
-    else if (snd && iflags.vt_sounddata && snd->idx >= 0 && WINDOWPORT("tty"))
+    else if (snd && iflags.vt_sounddata && snd->idx >= 0 && WINDOWPORT(tty))
         play_usersound_via_idx(snd->idx, snd->volume);
 #endif  /* TTY_GRAPHICS && TTY_SOUND_ESCCODES */
 #endif  /* WIN32 || QT_GRAPHICS || TTY_SOUND_ESCCODES */

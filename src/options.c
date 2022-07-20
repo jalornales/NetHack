@@ -1,4 +1,4 @@
-/* NetHack 3.7	options.c	$NHDT-Date: 1647472681 2022/03/16 23:18:01 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.542 $ */
+/* NetHack 3.7	options.c	$NHDT-Date: 1655932898 2022/06/22 21:21:38 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.569 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2008. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -190,6 +190,14 @@ static NEARDATA const char *msgwind[][3] = { /* 'msg_window' settings */
                       " most recent first]" }
 };
 #endif
+/* autounlock settings */
+static NEARDATA const char *unlocktypes[][2] = {
+    { "none",      "" },
+    { "untrap",    "(might fail)" },
+    { "apply-key", "" },
+    { "kick",      "(doors only)" },
+    { "force",     "(chests/boxes only)" },
+};
 static NEARDATA const char *burdentype[] = {
     "unencumbered", "burdened",     "stressed",
     "strained",     "overtaxed",    "overloaded"
@@ -295,8 +303,10 @@ static int handle_add_list_remove(const char *, int);
 static void remove_autopickup_exception(struct autopickup_exception *);
 static int count_apes(void);
 static int count_cond(void);
+static void enhance_menu_text(char *, size_t, int, boolean *, struct allopt_t *);
 
 static int handler_align_misc(int);
+static int handler_autounlock(int);
 static int handler_disclose(void);
 static int handler_menu_headings(void);
 static int handler_menustyle(void);
@@ -315,6 +325,9 @@ static int handler_whatis_filter(void);
 static int handler_autopickup_exception(void);
 static int handler_menu_colors(void);
 static int handler_msgtype(void);
+#ifndef NO_VERBOSE_GRANULARITY
+static int handler_verbose(int optidx);
+#endif
 
 static boolean is_wc_option(const char *);
 static boolean wc_supported(const char *);
@@ -339,7 +352,7 @@ boolean
 parseoptions(register char *opts, boolean tinitial, boolean tfrom_file)
 {
     char *op;
-    boolean negated, got_match = FALSE;
+    boolean negated, got_match = FALSE, pfx_match = FALSE;
 #if 0
     boolean has_val = FALSE;
 #endif
@@ -399,7 +412,7 @@ parseoptions(register char *opts, boolean tinitial, boolean tfrom_file)
         if (allopt[i].pfx) {
             if (str_start_is(opts, allopt[i].name, TRUE)) {
                 matchidx = i;
-                got_match = TRUE;
+                got_match = pfx_match = TRUE;
             }
         }
 #if 0   /* this prevents "boolopt:True" &c */
@@ -496,7 +509,7 @@ parseoptions(register char *opts, boolean tinitial, boolean tfrom_file)
 
     if (!got_match) {
         /* Is it a symbol? */
-        if (strstr(opts, "S_") == opts && parsesymbols(opts, PRIMARY)) {
+        if (strstr(opts, "S_") == opts && parsesymbols(opts, PRIMARYSET)) {
             switch_symbols(TRUE);
             check_gold_symbol();
             optresult = optn_ok;
@@ -505,6 +518,17 @@ parseoptions(register char *opts, boolean tinitial, boolean tfrom_file)
 
     if (optresult == optn_silenterr)
         return FALSE;
+    if (pfx_match && optresult == optn_err) {
+        char pfxbuf[BUFSZ], *pfxp;
+
+        if (opts) {
+            Snprintf(pfxbuf, sizeof pfxbuf, "%s", opts);
+            if ((pfxp = index(pfxbuf, ':')) != 0)
+                *pfxp = '\0';
+            config_error_add("bad option suffix variation '%s'", pfxbuf);
+        }
+        return FALSE;
+    }
     if (got_match && optresult == optn_err)
         return FALSE;
     if (optresult == optn_ok)
@@ -713,6 +737,107 @@ optfn_altkeyhandling(
 }
 
 static int
+optfn_autounlock(
+    int optidx,
+    int req,
+    boolean negated,
+    char *opts,
+    char *op)
+{
+    if (req == do_init) {
+        flags.autounlock = AUTOUNLOCK_APPLY_KEY;
+        return optn_ok;
+    }
+    if (req == do_set) {
+        /* autounlock:none or autounlock:untrap+apply-key+kick+force;
+           autounlock without a value is same as autounlock:apply-key and
+           !autounlock is same as autounlock:none; multiple values can be
+           space separated or plus-sign separated but the same separation
+           must be used for each element, not mix&match */
+        char sep, *nxt;
+        unsigned newflags;
+        int i;
+
+        if ((op = string_for_opt(opts, TRUE)) == empty_optstr) {
+            flags.autounlock = negated ? 0 : AUTOUNLOCK_APPLY_KEY;
+            return optn_ok;
+        }
+        newflags = 0;
+        sep = index(op, '+') ? '+' : ' ';
+        while (op) {
+            op = trimspaces(op); /* might have leading space */
+            if ((nxt = index(op, sep)) != 0) {
+                *nxt++ = '\0';
+                op = trimspaces(op); /* might have trailing space after
+                                      * plus sign removal */
+            }
+            for (i = 0; i < SIZE(unlocktypes); ++i)
+                if (!strncmpi(op, unlocktypes[i][0], Strlen(op))
+                    /* fuzzymatch() doesn't match leading substrings but
+                       this allows "apply_key" and "applykey" to match
+                       "apply-key"; "apply key" too if part of foo+bar */
+                    || fuzzymatch(op, unlocktypes[i][0], " -_", TRUE)) {
+                    switch (*op) {
+                    case 'n':
+                        negated = TRUE;
+                        break;
+                    case 'u':
+                        newflags |= AUTOUNLOCK_UNTRAP;
+                        break;
+                    case 'a':
+                        newflags |= AUTOUNLOCK_APPLY_KEY;
+                        break;
+                    case 'k':
+                        newflags |= AUTOUNLOCK_KICK;
+                        break;
+                    case 'f':
+                        newflags |= AUTOUNLOCK_FORCE;
+                        break;
+                    default:
+                        config_error_add("Invalid value for \"%s\": \"%s\"",
+                                         allopt[optidx].name, op);
+                        return optn_silenterr;
+                    }
+                }
+            op = nxt;
+        }
+        if (negated && newflags != 0) {
+            config_error_add(
+                     "Invalid value combination for \"%s\": 'none' with some",
+                             allopt[optidx].name);
+            return optn_silenterr;
+        }
+        flags.autounlock = newflags;
+        return optn_ok;
+    }
+    if (req == get_val) {
+        if (!opts)
+            return optn_err;
+        if (!flags.autounlock) {
+            Strcpy(opts, "none");
+        } else {
+            static const char plus[] = " + ";
+            const char *p = "";
+
+            *opts = '\0';
+            if (flags.autounlock & AUTOUNLOCK_UNTRAP)
+                Sprintf(eos(opts), "%s%s", p, unlocktypes[1][0]), p = plus;
+            if (flags.autounlock & AUTOUNLOCK_APPLY_KEY)
+                Sprintf(eos(opts), "%s%s", p, unlocktypes[2][0]), p = plus;
+            if (flags.autounlock & AUTOUNLOCK_KICK)
+                Sprintf(eos(opts), "%s%s", p, unlocktypes[3][0]), p = plus;
+            if (flags.autounlock & AUTOUNLOCK_FORCE)
+                Sprintf(eos(opts), "%s%s", p, unlocktypes[4][0]); /*no more p*/
+        }
+        return optn_ok;
+    }
+    if (req == do_handler) {
+        return handler_autounlock(optidx);
+    }
+    return optn_ok;
+}
+
+static int
 optfn_boulder(int optidx UNUSED, int req, boolean negated UNUSED,
               char *opts, char *op UNUSED)
 {
@@ -762,7 +887,7 @@ optfn_boulder(int optidx UNUSED, int req, boolean negated UNUSED,
             if (!g.opt_initial) {
                 nhsym sym = get_othersym(SYM_BOULDER,
                                          Is_rogue_level(&u.uz) ? ROGUESET
-                                                               : PRIMARY);
+                                                               : PRIMARYSET);
 
                 if (sym)
                     g.showsyms[SYM_BOULDER + SYM_OFF_X] = sym;
@@ -836,13 +961,13 @@ optfn_cursesgraphics(int optidx, int req, boolean negated,
 #ifdef BACKWARD_COMPAT
         if (!negated) {
             /* There is no rogue level cursesgraphics-specific set */
-            if (g.symset[PRIMARY].name) {
+            if (g.symset[PRIMARYSET].name) {
                 badflag = TRUE;
             } else {
-                g.symset[PRIMARY].name = dupstr(allopt[optidx].name);
-                if (!read_sym_file(PRIMARY)) {
+                g.symset[PRIMARYSET].name = dupstr(allopt[optidx].name);
+                if (!read_sym_file(PRIMARYSET)) {
                     badflag = TRUE;
-                    clear_symsetentry(PRIMARY, TRUE);
+                    clear_symsetentry(PRIMARYSET, TRUE);
                 } else
                     switch_symbols(TRUE);
             }
@@ -886,13 +1011,13 @@ optfn_DECgraphics(int optidx, int req, boolean negated,
 #ifdef BACKWARD_COMPAT
         if (!negated) {
             /* There is no rogue level DECgraphics-specific set */
-            if (g.symset[PRIMARY].name) {
+            if (g.symset[PRIMARYSET].name) {
                 badflag = TRUE;
             } else {
-                g.symset[PRIMARY].name = dupstr(allopt[optidx].name);
-                if (!read_sym_file(PRIMARY)) {
+                g.symset[PRIMARYSET].name = dupstr(allopt[optidx].name);
+                if (!read_sym_file(PRIMARYSET)) {
                     badflag = TRUE;
-                    clear_symsetentry(PRIMARY, TRUE);
+                    clear_symsetentry(PRIMARYSET, TRUE);
                 } else
                     switch_symbols(TRUE);
             }
@@ -1281,6 +1406,43 @@ optfn_gender(int optidx, int req, boolean negated, char *opts, char *op)
 }
 
 static int
+optfn_glyph(int optidx UNUSED, int req, boolean negated, char *opts, char *op)
+{
+#ifdef ENHANCED_SYMBOLS
+    int glyph;
+#endif
+
+    if (req == do_init) {
+        return optn_ok;
+    }
+    if (req == do_set) {
+        /* OPTION=glyph:G_glyph/U+NNNN/r-g-b */
+        if (negated) {
+            if (op != empty_optstr) {
+                bad_negation("glyph", TRUE);
+                return optn_err;
+            }
+        }
+        if (op == empty_optstr)
+            return optn_err;
+        /* strip leading/trailing spaces, condense internal ones (3.6.2) */
+        mungspaces(op);
+#ifdef ENHANCED_SYMBOLS
+        if (!glyphrep_to_custom_map_entries(op, &glyph))
+            return optn_err;
+#endif
+        return optn_ok;
+    }
+    if (req == get_val) {
+        if (!opts)
+            return optn_err;
+        Sprintf(opts, "%s", to_be_done);
+        return optn_ok;
+    }
+    return optn_ok;
+}
+
+static int
 optfn_hilite_status(
     int optidx UNUSED,
     int req,
@@ -1424,13 +1586,13 @@ optfn_MACgraphics(int optidx, int req, boolean negated, char *opts, char *op)
     if (req == do_set) {
         /* "MACgraphics" */
         if (!negated) {
-            if (g.symset[PRIMARY].name) {
+            if (g.symset[PRIMARYSET].name) {
                 badflag = TRUE;
             } else {
-                g.symset[PRIMARY].name = dupstr(allopt[optidx].name);
-                if (!read_sym_file(PRIMARY)) {
+                g.symset[PRIMARYSET].name = dupstr(allopt[optidx].name);
+                if (!read_sym_file(PRIMARYSET)) {
                     badflag = TRUE;
-                    clear_symsetentry(PRIMARY, TRUE);
+                    clear_symsetentry(PRIMARYSET, TRUE);
                 }
             }
             if (badflag) {
@@ -1901,7 +2063,7 @@ optfn_msg_window(int optidx, int req, boolean negated, char *opts, char *op)
         opts[0] = '\0';
 #if PREV_MSGS
         tmp = iflags.prevmsg_window;
-        if (WINDOWPORT("curses")) {
+        if (WINDOWPORT(curses)) {
             if (tmp == 's' || tmp == 'c')
                 tmp = iflags.prevmsg_window = 'r';
         }
@@ -2330,7 +2492,7 @@ optfn_petattr(int optidx, int req, boolean negated, char *opts, char *op)
             return optn_err;
 
 #ifdef CURSES_GRAPHICS
-        if (WINDOWPORT("curses")) {
+        if (WINDOWPORT(curses)) {
             char tmpbuf[QBUFSZ];
 
             Strcpy(opts, curses_fmt_attrs(tmpbuf));
@@ -3193,25 +3355,37 @@ optfn_suppress_alert(int optidx, int req, boolean negated,
     return optn_ok;
 }
 
+extern const char *known_handling[];     /* symbols.c */
+extern const char *known_restrictions[]; /* symbols.c */
+
 static int
-optfn_symset(int optidx UNUSED, int req, boolean negated UNUSED,
-             char *opts, char *op)
+optfn_symset(int optidx UNUSED, int req, boolean negated UNUSED, char *opts,
+             char *op)
 {
     if (req == do_init) {
         return optn_ok;
     }
     if (req == do_set) {
         if (op != empty_optstr) {
-            g.symset[PRIMARY].name = dupstr(op);
-            if (!read_sym_file(PRIMARY)) {
-                clear_symsetentry(PRIMARY, TRUE);
+            g.symset[PRIMARYSET].name = dupstr(op);
+            if (!read_sym_file(PRIMARYSET)) {
+                clear_symsetentry(PRIMARYSET, TRUE);
                 config_error_add(
                     "Unable to load symbol set \"%s\" from \"%s\"", op,
                     SYMBOLS);
                 return optn_err;
             } else {
-                switch_symbols(g.symset[PRIMARY].name != (char *) 0);
-                g.opt_need_redraw = TRUE;
+                if (g.symset[PRIMARYSET].handling) {
+#ifndef ENHANCED_SYMBOLS
+                    if (g.symset[PRIMARYSET].handling == H_UTF8) {
+                        config_error_add("Unavailable symset handler \"%s\" for %s",
+                                         known_handling[H_UTF8], op);
+                        load_symset("default", PRIMARYSET);
+                    }
+#endif
+                    switch_symbols(g.symset[PRIMARYSET].name != (char *) 0);
+                    g.opt_need_redraw = g.opt_need_glyph_reset = TRUE;
+                }
             }
         } else
             return optn_err;
@@ -3221,13 +3395,32 @@ optfn_symset(int optidx UNUSED, int req, boolean negated UNUSED,
         if (!opts)
             return optn_err;
         Sprintf(opts, "%s",
-                g.symset[PRIMARY].name ? g.symset[PRIMARY].name : "default");
-        if (g.currentgraphics == PRIMARY && g.symset[PRIMARY].name)
+                g.symset[PRIMARYSET].name ? g.symset[PRIMARYSET].name : "default");
+        if (g.currentgraphics == PRIMARYSET && g.symset[PRIMARYSET].name)
             Strcat(opts, ", active");
+        if (g.symset[PRIMARYSET].handling) {
+            Sprintf(eos(opts), ", handler=%s",
+                    known_handling[g.symset[PRIMARYSET].handling]);
+        }
         return optn_ok;
     }
     if (req == do_handler) {
-        return handler_symset(optidx);
+        int reslt;
+
+        if (g.symset[PRIMARYSET].handling == H_UTF8) {
+#ifdef ENHANCED_SYMBOLS
+            if (!glyphid_cache_status())
+                fill_glyphid_cache();
+#endif
+        }
+        reslt = handler_symset(optidx);
+        if (g.symset[PRIMARYSET].handling == H_UTF8) {
+#ifdef ENHANCED_SYMBOLS
+            if (glyphid_cache_status())
+                free_glyphid_cache();
+#endif
+        }
+        return reslt;
     }
     return optn_ok;
 }
@@ -4078,6 +4271,63 @@ pfxfn_IBM_(int optidx UNUSED, int req, boolean negated UNUSED,
 }
 #endif
 
+#ifndef NO_VERBOSE_GRANULARITY
+int pfxfn_verbose(int optidx UNUSED, int req, boolean negated,
+           char *opts, char *op)
+{
+    long ltmp = 0;
+    int reslt;
+    char *p;
+    boolean param_optional = FALSE;
+
+    if (req == do_init) {
+        flags.verbose = allopt[optidx].opt_in_out;
+        return optn_ok;
+    }
+    if (req == do_set) {
+        if (opts) {
+            if (!strncmp(opts, "verbose", 7)) {
+                p = index("01234", *(opts + 7));
+                if (p && *p == '\0')  /* plain verbose, not verboseN */
+                    param_optional = TRUE;
+                if ((op = string_for_opt(opts, param_optional)) != empty_optstr) {
+                    ltmp = atol(op);
+                    int idx;
+
+                    if (p && (*p != '\0')) {
+                        idx = *p - '0';
+                        if (idx >= 0 && idx < vb_elements)
+                            verbosity_suppressions[idx] = ltmp;
+                        return optn_ok;
+                    }
+                } else {
+                    if (param_optional) {
+                        /* indicates plain verbose, not verboseN */
+                        flags.verbose = (negated ? 0 : 1);
+                        return optn_ok;
+                    }
+                }
+            }
+        }
+        return optn_err;
+    }
+    if (req == get_val) {
+        if (!opts)
+            return optn_err;
+        Sprintf(opts, "%s,%ld,%ld,%ld,%ld,%ld", flags.verbose ? "On" : "Off",
+                verbosity_suppressions[0], verbosity_suppressions[1],
+                verbosity_suppressions[2], verbosity_suppressions[3],
+                verbosity_suppressions[4]);
+        return optn_ok;
+    }
+    if (req == do_handler) {
+        reslt = handler_verbose(optidx);
+        return reslt;
+    }
+    return optn_ok;
+}
+#endif
+
 /*
  *    General boolean option handler
  *    (Use optidx to reference the specific option)
@@ -4128,7 +4378,8 @@ optfn_boolean(int optidx, int req, boolean negated, char *opts, char *op)
         }
         if (iflags.debug_fuzzer && !g.opt_initial) {
             /* don't randomly toggle this/these */
-            if (optidx == opt_silent)
+            if ((optidx == opt_silent)
+                || (optidx == opt_perm_invent))
                 return optn_ok;
         }
         /* Before the change */
@@ -4150,6 +4401,26 @@ optfn_boolean(int optidx, int req, boolean negated, char *opts, char *op)
                     return optn_ok;
                 }
             }
+            break;
+        case opt_perm_invent:
+#ifdef TTY_PERM_INVENT
+            /* if attempting to enable perm_invent fails, say so and return
+               before "'perm_invent' option toggled on" would be given below;
+               perm_invent_toggled() and routines it calls don't check
+               iflags.perm_invent so it doesn't matter that 'SET IT HERE'
+               hasn't been executed yet */
+            if (WINDOWPORT(tty) && !g.opt_initial && !negated) {
+                perm_invent_toggled(FALSE);
+                /* perm_invent_toggled()
+                   -> sync_perminvent()
+                          -> tty_create_nhwindow(NHW_PERMINVENT)
+                   gives feedback for failure (terminal too small) */
+                if (WIN_INVEN == WIN_ERR)
+                    return optn_silenterr;
+            }
+#endif
+            break; /* from opt_perm_invent */
+        default:
             break;
         }
         /* this dates from when 'O' prompted for a line of options text
@@ -4175,6 +4446,8 @@ optfn_boolean(int optidx, int req, boolean negated, char *opts, char *op)
             break;
         case opt_tiled_map:
             iflags.wc_ascii_map = negated;
+            break;
+        default:
             break;
         }
 
@@ -4226,7 +4499,7 @@ optfn_boolean(int optidx, int req, boolean negated, char *opts, char *op)
             break;
         case opt_hilite_pet:
 #ifdef CURSES_GRAPHICS
-            if (WINDOWPORT("curses")) {
+            if (WINDOWPORT(curses)) {
                 /* if we're enabling hilite_pet and petattr isn't set,
                    set it to Inverse; if we're disabling, leave petattr
                    alone so that re-enabling will get current value back
@@ -4243,7 +4516,7 @@ optfn_boolean(int optidx, int req, boolean negated, char *opts, char *op)
                 status_initialize(REASSESS_ONLY);
                 g.opt_need_redraw = TRUE;
 #ifdef QT_GRAPHICS
-            } else if (WINDOWPORT("Qt")) {
+            } else if (WINDOWPORT(Qt)) {
                 /* Qt doesn't support HILITE_STATUS or FLUSH_STATUS so fails
                    VIA_WINDOWPORT(), but it does support WC2_HITPOINTBAR */
                 g.context.botlx = TRUE;
@@ -4271,6 +4544,8 @@ optfn_boolean(int optidx, int req, boolean negated, char *opts, char *op)
             break;
         case opt_rest_on_space:
             update_rest_on_space();
+            break;
+        default:
             break;
         }
 
@@ -4337,6 +4612,7 @@ handler_menustyle(void)
     int i, n, old_menu_style = flags.menu_style;
     char buf[BUFSZ], sep = iflags.menu_tab_sep ? '\t' : ' ';
     menu_item *style_pick = (menu_item *) 0;
+    int clr = 0;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -4344,13 +4620,13 @@ handler_menustyle(void)
     for (i = 0; i < SIZE(menutype); i++) {
         Sprintf(buf, "%-12.12s%c%.60s", menutype[i][0], sep, menutype[i][1]);
         any.a_int = i + 1;
-        add_menu(tmpwin, &nul_glyphinfo, &any, *buf, 0, ATR_NONE, buf,
+        add_menu(tmpwin, &nul_glyphinfo, &any, *buf, 0, ATR_NONE, clr, buf,
                  (i == flags.menu_style) ? MENU_ITEMFLAGS_SELECTED
                                          : MENU_ITEMFLAGS_NONE);
         /* second line is prefixed by spaces that "c - " would use */
         Sprintf(buf, "%4s%-12.12s%c%.60s", "", "", sep, menutype[i][2]);
         any.a_int = 0;
-        add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, buf,
+        add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr, buf,
                  MENU_ITEMFLAGS_NONE);
     }
     end_menu(tmpwin, "Select menustyle:");
@@ -4365,7 +4641,7 @@ handler_menustyle(void)
     }
     destroy_nhwindow(tmpwin);
     chngd = (flags.menu_style != old_menu_style);
-    if (chngd || flags.verbose)
+    if (chngd || Verbose(2, handler_menustyle))
         pline("'menustyle' %s \"%s\".", chngd ? "changed to" : "is still",
               menutype[(int) flags.menu_style][0]);
     return optn_ok;
@@ -4378,21 +4654,22 @@ handler_align_misc(int optidx)
     anything any;
     menu_item *window_pick = (menu_item *) 0;
     char abuf[BUFSZ];
+    int clr = 0;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
     any = cg.zeroany;
     any.a_int = ALIGN_TOP;
-    add_menu(tmpwin, &nul_glyphinfo, &any, 't', 0, ATR_NONE, "top",
+    add_menu(tmpwin, &nul_glyphinfo, &any, 't', 0, ATR_NONE, clr, "top",
              MENU_ITEMFLAGS_NONE);
     any.a_int = ALIGN_BOTTOM;
-    add_menu(tmpwin, &nul_glyphinfo, &any, 'b', 0, ATR_NONE, "bottom",
+    add_menu(tmpwin, &nul_glyphinfo, &any, 'b', 0, ATR_NONE, clr, "bottom",
              MENU_ITEMFLAGS_NONE);
     any.a_int = ALIGN_LEFT;
-    add_menu(tmpwin, &nul_glyphinfo, &any, 'l', 0, ATR_NONE, "left",
+    add_menu(tmpwin, &nul_glyphinfo, &any, 'l', 0, ATR_NONE, clr, "left",
              MENU_ITEMFLAGS_NONE);
     any.a_int = ALIGN_RIGHT;
-    add_menu(tmpwin, &nul_glyphinfo, &any, 'r', 0, ATR_NONE, "right",
+    add_menu(tmpwin, &nul_glyphinfo, &any, 'r', 0, ATR_NONE, clr, "right",
              MENU_ITEMFLAGS_NONE);
     Sprintf(abuf, "Select %s window placement relative to the map:",
             (optidx == opt_align_message) ? "message" : "status");
@@ -4406,6 +4683,74 @@ handler_align_misc(int optidx)
     }
     destroy_nhwindow(tmpwin);
     return optn_ok;
+}
+
+static int
+handler_autounlock(int optidx)
+{
+    winid tmpwin;
+    anything any;
+    boolean chngd;
+    unsigned oldflags = flags.autounlock;
+    const char *optname = allopt[optidx].name;
+    char buf[BUFSZ], sep = iflags.menu_tab_sep ? '\t' : ' ';
+    menu_item *window_pick = (menu_item *) 0;
+    int i, n, presel, res = optn_ok;
+    int clr = 0;
+
+    tmpwin = create_nhwindow(NHW_MENU);
+    start_menu(tmpwin, MENU_BEHAVE_STANDARD);
+    any = cg.zeroany;
+    for (i = 0; i < SIZE(unlocktypes); ++i) {
+        Sprintf(buf, "%-10.10s%c%.40s",
+                unlocktypes[i][0], sep, unlocktypes[i][1]);
+        presel = !i ? !flags.autounlock : (flags.autounlock & (1 << (i - 1)));
+        any.a_int = i + 1;
+        add_menu(tmpwin, &nul_glyphinfo, &any, *unlocktypes[i][0], 0,
+                 ATR_NONE, clr, buf,
+                 ((presel ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE)
+                  | (!i ? MENU_ITEMFLAGS_SKIPINVERT : 0)));
+    }
+    Sprintf(buf, "Select '%.20s' actions:", optname);
+    end_menu(tmpwin, buf);
+    n = select_menu(tmpwin, PICK_ANY, &window_pick);
+    if (n > 0) {
+        int k;
+        boolean wasnone = !flags.autounlock;
+        unsigned newflags = 0, noflags = 0;
+
+        for (i = 0; i < n; ++i) {
+            k = window_pick[i].item.a_int - 1;
+            if (k)
+                newflags |= (1 << (k - 1));
+            else
+                noflags = 1;
+        }
+        /* wasnone: 'none' is preselected;
+           !wasnone: don't force it to be unselected */
+        if (newflags && noflags && !wasnone) {
+            config_error_add(
+                     "Invalid value combination for \"%s\": 'none' with some",
+                             optname);
+            res = optn_silenterr;
+        } else {
+            flags.autounlock = newflags;
+        }
+        free((genericptr_t) window_pick);
+    } else if (n == 0) { /* nothing was picked but menu wasn't cancelled */
+        /* something that was preselected got unselected, leaving nothing;
+           treat that as picking 'none' (even though 'none' might be what
+           got unselected) */
+        flags.autounlock = 0;
+    }
+    destroy_nhwindow(tmpwin);
+    chngd = (flags.autounlock != oldflags);
+    if (chngd || Verbose(2, handler_autounlock)) {
+        optfn_autounlock(optidx, get_val, FALSE, buf, (char *) NULL);
+        pline("'%s' %s '%s'.", optname,
+              chngd ? "changed to" : "is still", buf);
+    }
+    return res;
 }
 
 static int
@@ -4425,6 +4770,7 @@ handler_disclose(void)
     int pick_cnt, pick_idx, opt_idx;
     char c;
     menu_item *disclosure_pick = (menu_item *) 0;
+    int clr = 0;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -4434,7 +4780,7 @@ handler_disclose(void)
                 flags.end_disclose[i], disclosure_options[i]);
         any.a_int = i + 1;
         add_menu(tmpwin, &nul_glyphinfo, &any, disclosure_options[i],
-                 0, ATR_NONE, buf, MENU_ITEMFLAGS_NONE);
+                 0, ATR_NONE, clr, buf, MENU_ITEMFLAGS_NONE);
         disc_cat[i] = 0;
     }
     end_menu(tmpwin, "Change which disclosure options categories:");
@@ -4460,40 +4806,40 @@ handler_disclose(void)
             /* 'y','n',and '+' work as alternate selectors; '-' doesn't */
             any.a_char = DISCLOSE_NO_WITHOUT_PROMPT;
             add_menu(tmpwin, &nul_glyphinfo, &any, 0,
-                     any.a_char, ATR_NONE,
+                     any.a_char, ATR_NONE, clr,
                      "Never disclose, without prompting",
                      (c == any.a_char) ? MENU_ITEMFLAGS_SELECTED
                                        : MENU_ITEMFLAGS_NONE);
             any.a_char = DISCLOSE_YES_WITHOUT_PROMPT;
             add_menu(tmpwin, &nul_glyphinfo, &any, 0,
-                     any.a_char, ATR_NONE,
+                     any.a_char, ATR_NONE, clr,
                      "Always disclose, without prompting",
                      (c == any.a_char) ? MENU_ITEMFLAGS_SELECTED
                                        : MENU_ITEMFLAGS_NONE);
             if (*disclosure_names[i] == 'v') {
                 any.a_char = DISCLOSE_SPECIAL_WITHOUT_PROMPT; /* '#' */
                 add_menu(tmpwin, &nul_glyphinfo, &any, 0,
-                         any.a_char, ATR_NONE,
+                         any.a_char, ATR_NONE, clr,
                          "Always disclose, pick sort order from menu",
                          (c == any.a_char) ? MENU_ITEMFLAGS_SELECTED
                                            : MENU_ITEMFLAGS_NONE);
             }
             any.a_char = DISCLOSE_PROMPT_DEFAULT_NO;
             add_menu(tmpwin, &nul_glyphinfo, &any, 0,
-                     any.a_char, ATR_NONE,
+                     any.a_char, ATR_NONE, clr,
                      "Prompt, with default answer of \"No\"",
                      (c == any.a_char) ? MENU_ITEMFLAGS_SELECTED
                                        : MENU_ITEMFLAGS_NONE);
             any.a_char = DISCLOSE_PROMPT_DEFAULT_YES;
             add_menu(tmpwin, &nul_glyphinfo, &any, 0,
-                     any.a_char, ATR_NONE,
+                     any.a_char, ATR_NONE, clr,
                      "Prompt, with default answer of \"Yes\"",
                      (c == any.a_char) ? MENU_ITEMFLAGS_SELECTED
                                        : MENU_ITEMFLAGS_NONE);
             if (*disclosure_names[i] == 'v') {
                 any.a_char = DISCLOSE_PROMPT_DEFAULT_SPECIAL; /* '?' */
                 add_menu(tmpwin, &nul_glyphinfo, &any, 0,
-                         any.a_char, ATR_NONE,
+                         any.a_char, ATR_NONE, clr,
             "Prompt, with default answer of \"Ask\" to request sort menu",
                          (c == any.a_char) ? MENU_ITEMFLAGS_SELECTED
                                            : MENU_ITEMFLAGS_NONE);
@@ -4532,7 +4878,8 @@ handler_msg_window(void)
 #if PREV_MSGS /* tty or curses */
     winid tmpwin;
     anything any;
-    boolean is_tty = WINDOWPORT("tty"), is_curses = WINDOWPORT("curses");
+    boolean is_tty = WINDOWPORT(tty), is_curses = WINDOWPORT(curses);
+    int clr = 0;
 
     if (is_tty || is_curses) {
         /* by Christian W. Cooper */
@@ -4552,13 +4899,13 @@ handler_msg_window(void)
                 continue;
             Sprintf(buf, "%-12.12s%c%.60s", msgwind[i][0], sep, msgwind[i][1]);
             any.a_char = c = *msgwind[i][0];
-            add_menu(tmpwin, &nul_glyphinfo, &any, *buf, 0, ATR_NONE, buf,
+            add_menu(tmpwin, &nul_glyphinfo, &any, *buf, 0, ATR_NONE, clr, buf,
                      (c == iflags.prevmsg_window) ? MENU_ITEMFLAGS_SELECTED
                                                   : MENU_ITEMFLAGS_NONE);
             /* second line is prefixed by spaces that "c - " would use */
             Sprintf(buf, "%4s%-12.12s%c%.60s", "", "", sep, msgwind[i][2]);
             any.a_char = '\0';
-            add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, buf,
+            add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr, buf,
                      MENU_ITEMFLAGS_NONE);
         }
         end_menu(tmpwin, "Select message history display type:");
@@ -4573,7 +4920,7 @@ handler_msg_window(void)
         }
         destroy_nhwindow(tmpwin);
         chngd = (iflags.prevmsg_window != old_prevmsg_window);
-        if (chngd || flags.verbose) {
+        if (chngd || Verbose(2, handler_msg_window)) {
             (void) optfn_msg_window(opt_msg_window, get_val,
                                     FALSE, buf, empty_optstr);
             pline("'msg_window' %.20s \"%.20s\".",
@@ -4599,6 +4946,7 @@ handler_number_pad(void)
         "-1 (off, 'z' to move upper-left, 'y' to zap wands)"
     };
     menu_item *mode_pick = (menu_item *) 0;
+    int clr = 0;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -4606,7 +4954,7 @@ handler_number_pad(void)
     for (i = 0; i < SIZE(npchoices); i++) {
         any.a_int = i + 1;
         add_menu(tmpwin, &nul_glyphinfo, &any, 'a' + i, '0' + i,
-                 ATR_NONE, npchoices[i], MENU_ITEMFLAGS_NONE);
+                 ATR_NONE, clr, npchoices[i], MENU_ITEMFLAGS_NONE);
     }
     end_menu(tmpwin, "Select number_pad mode:");
     if (select_menu(tmpwin, PICK_ONE, &mode_pick) > 0) {
@@ -4652,6 +5000,7 @@ handler_paranoid_confirmation(void)
     anything any;
     int i;
     menu_item *paranoia_picks = (menu_item *) 0;
+    int clr = 0;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -4661,7 +5010,7 @@ handler_paranoid_confirmation(void)
             continue;
         any.a_int = paranoia[i].flagmask;
         add_menu(tmpwin, &nul_glyphinfo, &any, *paranoia[i].argname,
-                 0, ATR_NONE, paranoia[i].explain,
+                 0, ATR_NONE, clr, paranoia[i].explain,
                  (flags.paranoia_bits & paranoia[i].flagmask)
                      ? MENU_ITEMFLAGS_SELECTED
                      : MENU_ITEMFLAGS_NONE);
@@ -4692,6 +5041,7 @@ handler_pickup_burden(void)
     int i;
     const char *burden_name, *burden_letters = "ubsntl";
     menu_item *burden_pick = (menu_item *) 0;
+    int clr = 0;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -4700,7 +5050,7 @@ handler_pickup_burden(void)
         burden_name = burdentype[i];
         any.a_int = i + 1;
         add_menu(tmpwin, &nul_glyphinfo, &any, burden_letters[i],
-                 0, ATR_NONE, burden_name, MENU_ITEMFLAGS_NONE);
+                 0, ATR_NONE, clr, burden_name, MENU_ITEMFLAGS_NONE);
     }
     end_menu(tmpwin, "Select encumbrance level:");
     if (select_menu(tmpwin, PICK_ONE, &burden_pick) > 0) {
@@ -4729,6 +5079,7 @@ handler_runmode(void)
     int i;
     const char *mode_name;
     menu_item *mode_pick = (menu_item *) 0;
+    int clr = 0;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -4737,7 +5088,7 @@ handler_runmode(void)
         mode_name = runmodes[i];
         any.a_int = i + 1;
         add_menu(tmpwin, &nul_glyphinfo, &any, *mode_name,
-                 0, ATR_NONE, mode_name, MENU_ITEMFLAGS_NONE);
+                 0, ATR_NONE, clr, mode_name, MENU_ITEMFLAGS_NONE);
     }
     end_menu(tmpwin, "Select run/travel display mode:");
     if (select_menu(tmpwin, PICK_ONE, &mode_pick) > 0) {
@@ -4756,6 +5107,7 @@ handler_sortloot(void)
     int i, n;
     const char *sortl_name;
     menu_item *sortl_pick = (menu_item *) 0;
+    int clr = 0;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -4764,7 +5116,7 @@ handler_sortloot(void)
         sortl_name = sortltype[i];
         any.a_char = *sortl_name;
         add_menu(tmpwin, &nul_glyphinfo, &any, *sortl_name,
-                 0, ATR_NONE,
+                 0, ATR_NONE, clr,
                  sortl_name, (flags.sortloot == *sortl_name)
                                 ? MENU_ITEMFLAGS_SELECTED
                                 : MENU_ITEMFLAGS_NONE);
@@ -4795,60 +5147,62 @@ handler_whatis_coord(void)
     menu_item *window_pick = (menu_item *) 0;
     int pick_cnt;
     char gp = iflags.getpos_coords;
+    int clr = 0;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
     any = cg.zeroany;
     any.a_char = GPCOORDS_COMPASS;
     add_menu(tmpwin, &nul_glyphinfo, &any, GPCOORDS_COMPASS,
-             0, ATR_NONE,
+             0, ATR_NONE, clr,
              "compass ('east' or '3s' or '2n,4w')",
              (gp == GPCOORDS_COMPASS)
                 ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE);
     any.a_char = GPCOORDS_COMFULL;
     add_menu(tmpwin, &nul_glyphinfo, &any, GPCOORDS_COMFULL,
-             0, ATR_NONE,
+             0, ATR_NONE, clr,
              "full compass ('east' or '3south' or '2north,4west')",
              (gp == GPCOORDS_COMFULL)
                 ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE);
     any.a_char = GPCOORDS_MAP;
     add_menu(tmpwin, &nul_glyphinfo, &any, GPCOORDS_MAP,
-             0, ATR_NONE, "map <x,y>",
+             0, ATR_NONE, clr, "map <x,y>",
              (gp == GPCOORDS_MAP)
                 ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE);
     any.a_char = GPCOORDS_SCREEN;
     add_menu(tmpwin, &nul_glyphinfo, &any, GPCOORDS_SCREEN,
-             0, ATR_NONE, "screen [row,column]",
+             0, ATR_NONE, clr, "screen [row,column]",
              (gp == GPCOORDS_SCREEN)
                 ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE);
     any.a_char = GPCOORDS_NONE;
     add_menu(tmpwin, &nul_glyphinfo, &any, GPCOORDS_NONE,
-             0, ATR_NONE, "none (no coordinates displayed)",
+             0, ATR_NONE, clr, "none (no coordinates displayed)",
              (gp == GPCOORDS_NONE)
                 ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE);
     any.a_long = 0L;
-    add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
+    add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr,
              "", MENU_ITEMFLAGS_NONE);
     Sprintf(buf, "map: upper-left: <%d,%d>, lower-right: <%d,%d>%s",
             1, 0, COLNO - 1, ROWNO - 1,
-            flags.verbose ? "; column 0 unused, off left edge" : "");
+            Verbose(2, handler_whatis_coord1)
+                ? "; column 0 unused, off left edge" : "");
     add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-             ATR_NONE, buf, MENU_ITEMFLAGS_NONE);
+             ATR_NONE, clr, buf, MENU_ITEMFLAGS_NONE);
     if (strcmp(windowprocs.name, "tty")) /* only show for non-tty */
-        add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
+        add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr,
    "screen: row is offset to accommodate tty interface's use of top line",
                  MENU_ITEMFLAGS_NONE);
 #if COLNO == 80
-#define COL80ARG flags.verbose ? "; column 80 is not used" : ""
+#define COL80ARG Verbose(2, handler_whatis_coord2) ? "; column 80 is not used" : ""
 #else
 #define COL80ARG ""
 #endif
     Sprintf(buf, "screen: upper-left: [%02d,%02d], lower-right: [%d,%d]%s",
             0 + 2, 1, ROWNO - 1 + 2, COLNO - 1, COL80ARG);
 #undef COL80ARG
-    add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
+    add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr,
              buf, MENU_ITEMFLAGS_NONE);
-    add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
+    add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr,
              "", MENU_ITEMFLAGS_NONE);
     end_menu(tmpwin,
         "Select coordinate display when auto-describing a map position:");
@@ -4872,23 +5226,24 @@ handler_whatis_filter(void)
     menu_item *window_pick = (menu_item *) 0;
     int pick_cnt;
     char gf = iflags.getloc_filter;
+    int clr = 0;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
     any = cg.zeroany;
     any.a_char = (GFILTER_NONE + 1);
     add_menu(tmpwin, &nul_glyphinfo, &any, 'n',
-             0, ATR_NONE, "no filtering",
+             0, ATR_NONE, clr, "no filtering",
              (gf == GFILTER_NONE)
                 ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE);
     any.a_char = (GFILTER_VIEW + 1);
     add_menu(tmpwin, &nul_glyphinfo, &any, 'v',
-             0, ATR_NONE, "in view only",
+             0, ATR_NONE, clr, "in view only",
              (gf == GFILTER_VIEW)
                 ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE);
     any.a_char = (GFILTER_AREA + 1);
     add_menu(tmpwin, &nul_glyphinfo, &any, 'a',
-             0, ATR_NONE, "in same area",
+             0, ATR_NONE, clr, "in same area",
              (gf == GFILTER_AREA)
                 ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE);
     end_menu(tmpwin,
@@ -4905,186 +5260,15 @@ handler_whatis_filter(void)
     return optn_ok;
 }
 
-DISABLE_WARNING_FORMAT_NONLITERAL
-
 static int
 handler_symset(int optidx)
 {
-    winid tmpwin;
-    anything any;
-    int n;
-    char buf[BUFSZ];
-    menu_item *symset_pick = (menu_item *) 0;
-    boolean rogueflag = (optidx == opt_roguesymset),
-            ready_to_switch = FALSE,
-            nothing_to_do = FALSE;
-    char *symset_name, fmtstr[20];
-    struct symsetentry *sl;
-    int res, which_set, setcount = 0, chosen = -2, defindx = 0;
+    int reslt;
 
-    which_set = rogueflag ? ROGUESET : PRIMARY;
-    g.symset_list = (struct symsetentry *) 0;
-    /* clear symset[].name as a flag to read_sym_file() to build list */
-    symset_name = g.symset[which_set].name;
-    g.symset[which_set].name = (char *) 0;
-
-    res = read_sym_file(which_set);
-    /* put symset name back */
-    g.symset[which_set].name = symset_name;
-
-    if (res && g.symset_list) {
-        int thissize,
-            biggest = (int) (sizeof "Default Symbols" - sizeof ""),
-            big_desc = 0;
-
-        for (sl = g.symset_list; sl; sl = sl->next) {
-            /* check restrictions */
-            if (rogueflag ? sl->primary : sl->rogue)
-                continue;
-#ifndef MAC_GRAPHICS_ENV
-            if (sl->handling == H_MAC)
-                continue;
-#endif
-
-            setcount++;
-            /* find biggest name */
-            thissize = sl->name ? (int) strlen(sl->name) : 0;
-            if (thissize > biggest)
-                biggest = thissize;
-            thissize = sl->desc ? (int) strlen(sl->desc) : 0;
-            if (thissize > big_desc)
-                big_desc = thissize;
-        }
-        if (!setcount) {
-            pline("There are no appropriate %s symbol sets available.",
-                  rogueflag ? "rogue level" : "primary");
-            return TRUE;
-        }
-
-        Sprintf(fmtstr, "%%-%ds %%s", biggest + 2);
-        tmpwin = create_nhwindow(NHW_MENU);
-        start_menu(tmpwin, MENU_BEHAVE_STANDARD);
-        any = cg.zeroany;
-        any.a_int = 1; /* -1 + 2 [see 'if (sl->name) {' below]*/
-        if (!symset_name)
-            defindx = any.a_int;
-        add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-                 "Default Symbols",
-                 (any.a_int == defindx) ? MENU_ITEMFLAGS_SELECTED
-                                        : MENU_ITEMFLAGS_NONE);
-
-        for (sl = g.symset_list; sl; sl = sl->next) {
-            /* check restrictions */
-            if (rogueflag ? sl->primary : sl->rogue)
-                continue;
-#ifndef MAC_GRAPHICS_ENV
-            if (sl->handling == H_MAC)
-                continue;
-#endif
-            if (sl->name) {
-                /* +2: sl->idx runs from 0 to N-1 for N symsets;
-                   +1 because Defaults are implicitly in slot [0];
-                   +1 again so that valid data is never 0 */
-                any.a_int = sl->idx + 2;
-                if (symset_name && !strcmpi(sl->name, symset_name))
-                    defindx = any.a_int;
-                Sprintf(buf, fmtstr, sl->name, sl->desc ? sl->desc : "");
-                add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-                         ATR_NONE, buf,
-                         (any.a_int == defindx) ? MENU_ITEMFLAGS_SELECTED
-                                                : MENU_ITEMFLAGS_NONE);
-            }
-        }
-        Sprintf(buf, "Select %ssymbol set:",
-                rogueflag ? "rogue level " : "");
-        end_menu(tmpwin, buf);
-        n = select_menu(tmpwin, PICK_ONE, &symset_pick);
-        if (n > 0) {
-            chosen = symset_pick[0].item.a_int;
-            /* if picking non-preselected entry yields 2, make sure
-               that we're going with the non-preselected one */
-            if (n == 2 && chosen == defindx)
-                chosen = symset_pick[1].item.a_int;
-            chosen -= 2; /* convert menu index to symset index;
-                          * "Default symbols" have index -1 */
-            free((genericptr_t) symset_pick);
-        } else if (n == 0 && defindx > 0) {
-            chosen = defindx - 2;
-        }
-        destroy_nhwindow(tmpwin);
-
-        if (chosen > -1) {
-            /* chose an actual symset name from file */
-            for (sl = g.symset_list; sl; sl = sl->next)
-                if (sl->idx == chosen)
-                    break;
-            if (sl) {
-                /* free the now stale attributes */
-                clear_symsetentry(which_set, TRUE);
-
-                /* transfer only the name of the symbol set */
-                g.symset[which_set].name = dupstr(sl->name);
-                ready_to_switch = TRUE;
-            }
-        } else if (chosen == -1) {
-            /* explicit selection of defaults */
-            /* free the now stale symset attributes */
-            clear_symsetentry(which_set, TRUE);
-        } else
-            nothing_to_do = TRUE;
-    } else if (!res) {
-        /* The symbols file could not be accessed */
-        pline("Unable to access \"%s\" file.", SYMBOLS);
-        return TRUE;
-    } else if (!g.symset_list) {
-        /* The symbols file was empty */
-        pline("There were no symbol sets found in \"%s\".", SYMBOLS);
-        return TRUE;
-    }
-
-    /* clean up */
-    while ((sl = g.symset_list) != 0) {
-        g.symset_list = sl->next;
-        if (sl->name)
-            free((genericptr_t) sl->name), sl->name = (char *) 0;
-        if (sl->desc)
-            free((genericptr_t) sl->desc), sl->desc = (char *) 0;
-        free((genericptr_t) sl);
-    }
-
-    if (nothing_to_do)
-        return TRUE;
-
-    /* Set default symbols and clear the handling value */
-    if (rogueflag)
-        init_rogue_symbols();
-    else
-        init_primary_symbols();
-
-    if (g.symset[which_set].name) {
-        /* non-default symbols */
-        if (read_sym_file(which_set)) {
-            ready_to_switch = TRUE;
-        } else {
-            clear_symsetentry(which_set, TRUE);
-            return TRUE;
-        }
-    }
-
-    if (ready_to_switch)
-        switch_symbols(TRUE);
-
-    if (Is_rogue_level(&u.uz)) {
-        if (rogueflag)
-            assign_graphics(ROGUESET);
-    } else if (!rogueflag)
-        assign_graphics(PRIMARY);
-    preference_update("symset");
+    reslt = do_symset(optidx == opt_roguesymset);   /* symbols.c */
     g.opt_need_redraw = TRUE;
-    return optidx;
+    return reslt;
 }
-
-RESTORE_WARNING_FORMAT_NONLITERAL
 
 static int
 handler_autopickup_exception(void)
@@ -5095,6 +5279,7 @@ handler_autopickup_exception(void)
     int opt_idx, numapes = 0;
     char apebuf[2 + BUFSZ]; /* so &apebuf[1] is BUFSZ long for getlin() */
     struct autopickup_exception *ape;
+    int clr = 0;
 
  ape_again:
     numapes = count_apes();
@@ -5129,7 +5314,7 @@ handler_autopickup_exception(void)
             ape = g.apelist;
             any = cg.zeroany;
             add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-                     iflags.menu_headings,
+                     iflags.menu_headings, clr,
                      "Always pickup '<'; never pickup '>'",
                      MENU_ITEMFLAGS_NONE);
             for (i = 0; i < numapes && ape; i++) {
@@ -5139,7 +5324,7 @@ handler_autopickup_exception(void)
                 Sprintf(apebuf, "\"%c%s\"", ape->grab ? '<' : '>',
                         ape->pattern);
                 add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-                         ATR_NONE, apebuf, MENU_ITEMFLAGS_NONE);
+                         ATR_NONE, clr, apebuf, MENU_ITEMFLAGS_NONE);
                 ape = ape->next;
             }
         }
@@ -5171,6 +5356,7 @@ handler_menu_colors(void)
     char buf[BUFSZ];
     int opt_idx, nmc, mcclr, mcattr;
     char mcbuf[BUFSZ];
+    int clr = 0;
 
  menucolors_again:
     nmc = count_menucolors();
@@ -5240,7 +5426,7 @@ handler_menu_colors(void)
             /* combine main string and suffix */
             Strcat(mcbuf, &buf[1]); /* skip buf[]'s initial quote */
             add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-                     ATR_NONE, mcbuf, MENU_ITEMFLAGS_NONE);
+                     ATR_NONE, clr, mcbuf, MENU_ITEMFLAGS_NONE);
             tmp = tmp->next;
         }
         Sprintf(mcbuf, "%s menu colors",
@@ -5295,6 +5481,7 @@ handler_msgtype(void)
         const char *mtype;
         menu_item *pick_list = (menu_item *) 0;
         struct plinemsg_type *tmp = g.plinemsg_types;
+        int clr = 0;
 
         tmpwin = create_nhwindow(NHW_MENU);
         start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -5310,7 +5497,7 @@ handler_msgtype(void)
             else
                 Strcat(strcat(mtbuf, tmp->pattern), "\"");
             add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-                     ATR_NONE, mtbuf, MENU_ITEMFLAGS_NONE);
+                     ATR_NONE, clr, mtbuf, MENU_ITEMFLAGS_NONE);
             tmp = tmp->next;
         }
         Sprintf(mtbuf, "%s message types",
@@ -5332,6 +5519,75 @@ handler_msgtype(void)
     return optn_ok;
 }
 
+#ifndef NO_VERBOSE_GRANULARITY
+
+DISABLE_WARNING_FORMAT_NONLITERAL
+
+static int
+handler_verbose(int optidx)
+{
+    winid tmpwin;
+    anything any;
+    char buf[BUFSZ];
+    int pick_cnt;
+    int i;
+    menu_item *picks = (menu_item *) 0;
+    static const char *const vbstrings[] = {
+        " verbose toggle (currently %s)",
+        " verbose_suppressor[%d] =%08X",
+    };
+    char vbbuf[QBUFSZ];
+    int clr = 0;
+
+    tmpwin = create_nhwindow(NHW_MENU);
+    start_menu(tmpwin, MENU_BEHAVE_STANDARD);
+    any = cg.zeroany;
+    Snprintf(vbbuf, sizeof vbbuf, vbstrings[0], flags.verbose ? "On" : "Off");
+    any.a_int = 1;
+    add_menu(tmpwin, &nul_glyphinfo, &any, 'a', 0, ATR_NONE, clr,
+             vbbuf, MENU_ITEMFLAGS_NONE);
+    for (i = 0; i < vb_elements; i++) {
+        Snprintf(vbbuf, sizeof vbbuf, vbstrings[1], i,
+                 verbosity_suppressions[i]);
+        any.a_int = i + 2;
+        add_menu(tmpwin, &nul_glyphinfo, &any, 'b' + i, 0,
+                 ATR_NONE, clr, vbbuf, MENU_ITEMFLAGS_NONE);
+    }
+    end_menu(tmpwin, "Select verbosity choices:");
+
+    pick_cnt = select_menu(tmpwin, PICK_ANY, &picks);
+    destroy_nhwindow(tmpwin);
+    if (pick_cnt > 0) {
+        int j;
+        /* PICK_ANY, with one preselected entry (ATR_NONE) which
+           should be excluded if any other choices were picked */
+        for (i = 0; i < pick_cnt; ++i) {
+            char abuf[BUFSZ];
+            j = picks[i].item.a_int - 2;
+            if (j < 0) {
+                flags.verbose = !flags.verbose;
+            } else {
+                Sprintf(buf,
+                    "Set verbose_suppressor[%d] (%ld) to what new decimal value ?",
+                    j, verbosity_suppressions[j]);
+                abuf[0] = '\0';
+                getlin(buf, abuf);
+                if (abuf[0] == '\033')
+                    continue;
+                Sprintf(buf, "%s%d:", allopt[optidx].name, j);
+                (void) strncat(eos(buf), abuf, (sizeof buf - 1 - strlen(buf)));
+                /* pass the buck */
+                (void) parseoptions(buf, TRUE, TRUE);
+            }
+        }
+        free((genericptr_t) picks), picks = (menu_item *) 0;
+    }
+    return optn_ok;
+}
+
+RESTORE_WARNING_FORMAT_NONLITERAL
+
+#endif
 
 /*
  **********************************
@@ -5808,6 +6064,12 @@ initoptions_init(void)
     memcpy(allopt, allopt_init, sizeof(allopt));
     determine_ambiguities();
 
+#ifdef ENHANCED_SYMBOLS
+    /* make any symbol parsing quicker */
+    if (!glyphid_cache_status())
+        fill_glyphid_cache();
+#endif
+
     /* set up the command parsing */
     reset_commands(TRUE); /* init */
 
@@ -5871,8 +6133,8 @@ initoptions_init(void)
      */
     /* this detects the IBM-compatible console on most 386 boxes */
     if ((opts = nh_getenv("TERM")) && !strncmp(opts, "AT", 2)) {
-        if (!g.symset[PRIMARY].explicitly)
-            load_symset("IBMGraphics", PRIMARY);
+        if (!g.symset[PRIMARYSET].explicitly)
+            load_symset("IBMGraphics", PRIMARYSET);
         if (!g.symset[ROGUESET].explicitly)
             load_symset("RogueIBM", ROGUESET);
         switch_symbols(TRUE);
@@ -5888,8 +6150,8 @@ initoptions_init(void)
         /* [could also check "xterm" which emulates vtXXX by default] */
         && !strncmpi(opts, "vt", 2)
         && AS && AE && index(AS, '\016') && index(AE, '\017')) {
-        if (!g.symset[PRIMARY].explicitly)
-            load_symset("DECGraphics", PRIMARY);
+        if (!g.symset[PRIMARYSET].explicitly)
+            load_symset("DECGraphics", PRIMARYSET);
         switch_symbols(TRUE);
     }
 #endif
@@ -5897,14 +6159,14 @@ initoptions_init(void)
 
 #if defined(MSDOS) || defined(WIN32)
     /* Use IBM defaults. Can be overridden via config file */
-    if (!g.symset[PRIMARY].explicitly)
-        load_symset("IBMGraphics_2", PRIMARY);
+    if (!g.symset[PRIMARYSET].explicitly)
+        load_symset("IBMGraphics_2", PRIMARYSET);
     if (!g.symset[ROGUESET].explicitly)
         load_symset("RogueEpyx", ROGUESET);
 #endif
 #ifdef MAC_GRAPHICS_ENV
-    if (!g.symset[PRIMARY].explicitly)
-        load_symset("MACGraphics", PRIMARY);
+    if (!g.symset[PRIMARYSET].explicitly)
+        load_symset("MACGraphics", PRIMARYSET);
     switch_symbols(TRUE);
 #endif /* MAC_GRAPHICS_ENV */
     flags.menu_style = MENU_FULL;
@@ -6029,7 +6291,7 @@ initoptions_finish(void)
     obj_descr[SLIME_MOLD].oc_name = "fruit";
 
     sym = get_othersym(SYM_BOULDER,
-                Is_rogue_level(&u.uz) ? ROGUESET : PRIMARY);
+                Is_rogue_level(&u.uz) ? ROGUESET : PRIMARYSET);
     if (sym)
         g.showsyms[SYM_BOULDER + SYM_OFF_X] = sym;
     reglyph_darkroom();
@@ -6043,7 +6305,7 @@ initoptions_finish(void)
      * Option processing can take place before a user-decided WindowPort
      * is even initialized, so check for that too.
      */
-    if (!WINDOWPORT("safe-startup")) {
+    if (!WINDOWPORT(safestartup)) {
         if (iflags.hilite_delta && !wc2_supported("statushilites")) {
             raw_printf("Status highlighting not supported for %s interface.",
                        windowprocs.name);
@@ -6052,6 +6314,11 @@ initoptions_finish(void)
     }
 #endif
     update_rest_on_space();
+#ifdef ENHANCED_SYMBOLS
+    if (glyphid_cache_status())
+        free_glyphid_cache();
+    apply_customizations_to_symset(g.currentgraphics);
+#endif
     g.opt_initial = FALSE;
     return;
 }
@@ -6461,6 +6728,7 @@ query_color(const char *prompt)
     anything any;
     int i, pick_cnt;
     menu_item *picks = (menu_item *) 0;
+    int clr = 0;
 
     /* replace user patterns with color name ones and force 'menucolors' On */
     basic_menu_colors(TRUE);
@@ -6473,7 +6741,7 @@ query_color(const char *prompt)
             break;
         any.a_int = i + 1;
         add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-                 ATR_NONE, colornames[i].name,
+                 ATR_NONE, clr, colornames[i].name,
                  (colornames[i].color == NO_COLOR) ? MENU_ITEMFLAGS_SELECTED
                                                    : MENU_ITEMFLAGS_NONE);
     }
@@ -6513,6 +6781,7 @@ query_attr(const char *prompt)
     menu_item *picks = (menu_item *) 0;
     boolean allow_many = (prompt && !strncmpi(prompt, "Choose", 6));
     int default_attr = ATR_NONE;
+    int clr = 0;
 
     if (prompt && strstri(prompt, "menu headings"))
         default_attr = iflags.menu_headings;
@@ -6524,7 +6793,7 @@ query_attr(const char *prompt)
             break;
         any.a_int = i + 1;
         add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-                 attrnames[i].attr, attrnames[i].name,
+                 attrnames[i].attr, clr, attrnames[i].name,
                  (attrnames[i].attr == default_attr) ? MENU_ITEMFLAGS_SELECTED
                                                      : MENU_ITEMFLAGS_NONE);
     }
@@ -6584,7 +6853,7 @@ query_attr(const char *prompt)
 
 static const struct {
     const char *name;
-    xchar msgtyp;
+    xint8 msgtyp;
     const char *descr;
 } msgtype_names[] = {
     { "show", MSGTYP_NORMAL, "Show message normally" },
@@ -6613,6 +6882,7 @@ query_msgtype(void)
     anything any;
     int i, pick_cnt;
     menu_item *picks = (menu_item *) 0;
+    int clr = 0;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -6621,7 +6891,8 @@ query_msgtype(void)
         if (msgtype_names[i].descr) {
             any.a_int = msgtype_names[i].msgtyp + 1;
             add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-                     ATR_NONE, msgtype_names[i].descr, MENU_ITEMFLAGS_NONE);
+                     ATR_NONE, clr,
+                     msgtype_names[i].descr, MENU_ITEMFLAGS_NONE);
         }
     end_menu(tmpwin, "How to show the message");
     pick_cnt = select_menu(tmpwin, PICK_ONE, &picks);
@@ -6645,7 +6916,8 @@ msgtype_add(int typ, char *pattern)
     /* test_regex_pattern() has already validated this regexp but parsing
        it again could conceivably run out of memory */
     if (!regex_compile(pattern, tmp->regex)) {
-        const char *re_error_desc = regex_error_desc(tmp->regex);
+        char errbuf[BUFSZ];
+        char *re_error_desc = regex_error_desc(tmp->regex, errbuf);
 
         /* free first in case reason for failure was insufficient memory */
         regex_free(tmp->regex);
@@ -6777,7 +7049,7 @@ test_regex_pattern(const char *str, const char *errmsg)
 {
     static const char def_errmsg[] = "NHregex error";
     struct nhregex *match;
-    const char *re_error_desc;
+    char *re_error_desc, errbuf[BUFSZ];
     boolean retval;
 
     if (!str)
@@ -6795,7 +7067,7 @@ test_regex_pattern(const char *str, const char *errmsg)
     /* get potential error message before freeing regexp and free regexp
        before issuing message in case the error is "ran out of memory"
        since message delivery might need to allocate some memory */
-    re_error_desc = !retval ? regex_error_desc(match) : 0;
+    re_error_desc = !retval ? regex_error_desc(match, errbuf) : 0;
     /* discard regexp; caller will re-parse it after validating other stuff */
     regex_free(match);
     /* if returning failure, tell player */
@@ -6818,7 +7090,8 @@ add_menu_coloring_parsed(const char *str, int c, int a)
     /* test_regex_pattern() has already validated this regexp but parsing
        it again could conceivably run out of memory */
     if (!regex_compile(str, tmp->match)) {
-        const char *re_error_desc = regex_error_desc(tmp->match);
+        char errbuf[BUFSZ];
+        char *re_error_desc = regex_error_desc(tmp->match, errbuf);
 
         /* free first in case reason for regcomp failure was out-of-memory */
         regex_free(tmp->match);
@@ -7145,8 +7418,6 @@ fruitadd(char *str, struct fruit *replace_fruit)
            str==pl_fruit but makesingular() creates a copy
            so we need to copy that back into pl_fruit */
         nmcpy(g.pl_fruit, makesingular(str), PL_FSIZ);
-        /* (assertion doesn't matter; we use 'g.pl_fruit' from here on out) */
-        /* assert( str == g.pl_fruit ); */
 
         /* disallow naming after other foods (since it'd be impossible
          * to tell the difference); globs might have a size prefix which
@@ -7154,8 +7425,9 @@ fruitadd(char *str, struct fruit *replace_fruit)
          */
         globpfx = (!strncmp(g.pl_fruit, "small ", 6)
                    || !strncmp(g.pl_fruit, "large ", 6)) ? 6
-                  : (!strncmp(g.pl_fruit, "very large ", 11)) ? 11
-                    : 0;
+                  : (!strncmp(g.pl_fruit, "medium ", 7)) ? 7
+                    : (!strncmp(g.pl_fruit, "very large ", 11)) ? 11
+                      : 0;
         for (i = g.bases[FOOD_CLASS]; objects[i].oc_class == FOOD_CLASS; i++) {
             if (!strcmp(OBJ_NAME(objects[i]), g.pl_fruit)
                 || (globpfx > 0
@@ -7453,6 +7725,7 @@ doset(void) /* changing options via menu by Per Liboriussen */
     int indexoffset, startpass, endpass;
     boolean setinitial = FALSE, fromfile = FALSE,
             gavehelp = FALSE, skiphelp = !iflags.cmdassist;
+    int clr = 0;
 
     /* if we offer '?' as a choice and it is the only thing chosen,
        we'll end up coming back here after showing the explanatory text */
@@ -7475,12 +7748,12 @@ doset(void) /* changing options via menu by Per Liboriussen */
             if (helptext[i]) {
                 Sprintf(buf, "%4s%.75s", "", helptext[i]);
                 any.a_int = 0;
-                add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, FALSE,
+                add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, FALSE, clr,
                          buf, MENU_ITEMFLAGS_NONE);
             } else {
                 any.a_int = '?' + 1; /* processing pick_list subtracts 1 */
                 add_menu(tmpwin, &nul_glyphinfo, &any, '?', '?', ATR_NONE,
-                         "view help for options menu",
+                         clr, "view help for options menu",
                          MENU_ITEMFLAGS_SKIPINVERT);
             }
         }
@@ -7504,7 +7777,7 @@ doset(void) /* changing options via menu by Per Liboriussen */
 
     indexoffset = 1;
     any = cg.zeroany;
-    add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, iflags.menu_headings,
+    add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, iflags.menu_headings, clr,
              "Booleans (selecting will toggle value):", MENU_ITEMFLAGS_NONE);
     any.a_int = 0;
     /* first list any other non-modifiable booleans, then modifiable ones */
@@ -7529,14 +7802,15 @@ doset(void) /* changing options via menu by Per Liboriussen */
                 else
                     Sprintf(buf, fmtstr_doset_tab,
                             name, *bool_p ? "true" : "false");
+                if (pass == 0)
+                    enhance_menu_text(buf, sizeof buf, pass, bool_p, &allopt[i]);
                 add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-                         ATR_NONE, buf, MENU_ITEMFLAGS_NONE);
+                         ATR_NONE, clr, buf, MENU_ITEMFLAGS_NONE);
             }
-
     any = cg.zeroany;
     add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-             ATR_NONE, "", MENU_ITEMFLAGS_NONE);
-    add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, iflags.menu_headings,
+             ATR_NONE, clr, "", MENU_ITEMFLAGS_NONE);
+    add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, iflags.menu_headings, clr,
              "Compounds (selecting will prompt for new value):",
              MENU_ITEMFLAGS_NONE);
 
@@ -7568,9 +7842,10 @@ doset(void) /* changing options via menu by Per Liboriussen */
 
     any = cg.zeroany;
     add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-             ATR_NONE, "", MENU_ITEMFLAGS_NONE);
+             ATR_NONE, clr, "", MENU_ITEMFLAGS_NONE);
     add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-             iflags.menu_headings, "Other settings:", MENU_ITEMFLAGS_NONE);
+             iflags.menu_headings, clr,
+             "Other settings:", MENU_ITEMFLAGS_NONE);
 
     for (pass = startpass; pass <= endpass; pass++)
         for (i = 0; (name = allopt[i].name) != 0; i++) {
@@ -7589,9 +7864,9 @@ doset(void) /* changing options via menu by Per Liboriussen */
 #ifdef PREFIXES_IN_USE
     any = cg.zeroany;
     add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-             ATR_NONE, "", MENU_ITEMFLAGS_NONE);
+             ATR_NONE, clr, "", MENU_ITEMFLAGS_NONE);
     add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-             iflags.menu_headings,
+             iflags.menu_headings, clr,
              "Variable playground locations:", MENU_ITEMFLAGS_NONE);
     for (i = 0; i < PREFIX_COUNT; i++)
         doset_add_menu(tmpwin, fqn_prefix_names[i], -1, 0);
@@ -7690,6 +7965,7 @@ doset_add_menu(winid win,          /* window to add to */
 #ifdef PREFIXES_IN_USE
     int j;
 #endif
+    int clr = 0;
 
     buf2[0] = '\0';  /* per opt functs may not guarantee this, so do it */
     any = cg.zeroany;
@@ -7722,7 +7998,7 @@ doset_add_menu(winid win,          /* window to add to */
     else
         Sprintf(buf, fmtstr_doset_tab, option, value);
     add_menu(win, &nul_glyphinfo, &any, 0, 0,
-             ATR_NONE, buf, MENU_ITEMFLAGS_NONE);
+             ATR_NONE, clr, buf, MENU_ITEMFLAGS_NONE);
 }
 
 
@@ -7881,6 +8157,7 @@ handle_add_list_remove(const char *optname, int numtotal)
         { 'r', "remove existing %s" }, /* [2] */
         { 'x', "exit this menu" },     /* [3] */
     };
+    int clr = 0;
 
     opt_idx = 0;
     tmpwin = create_nhwindow(NHW_MENU);
@@ -7896,7 +8173,7 @@ handle_add_list_remove(const char *optname, int numtotal)
         Sprintf(tmpbuf, action_titles[i].desc,
                 (i == 1) ? makeplural(optname) : optname);
         add_menu(tmpwin, &nul_glyphinfo,&any, action_titles[i].letr,
-                 0, ATR_NONE, tmpbuf,
+                 0, ATR_NONE, clr, tmpbuf,
                  (i == 3) ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE);
     }
     end_menu(tmpwin, "Do what?");
@@ -7967,7 +8244,8 @@ add_autopickup_exception(const char *mapping)
     ape = (struct autopickup_exception *) alloc(sizeof *ape);
     ape->regex = regex_init();
     if (!regex_compile(text, ape->regex)) {
-        const char *re_error_desc = regex_error_desc(ape->regex);
+        char errbuf[BUFSZ];
+        char *re_error_desc = regex_error_desc(ape->regex, errbuf);
 
         /* free first in case reason for failure was insufficient memory */
         regex_free(ape->regex);
@@ -8016,128 +8294,6 @@ free_autopickup_exceptions(void)
         g.apelist = ape->next;
         free((genericptr_t) ape);
     }
-}
-
-/* bundle some common usage into one easy-to-use routine */
-int
-load_symset(const char *s, int which_set)
-{
-    clear_symsetentry(which_set, TRUE);
-
-    if (g.symset[which_set].name)
-        free((genericptr_t) g.symset[which_set].name);
-    g.symset[which_set].name = dupstr(s);
-
-    if (read_sym_file(which_set)) {
-        switch_symbols(TRUE);
-    } else {
-        clear_symsetentry(which_set, TRUE);
-        return 0;
-    }
-    return 1;
-}
-
-void
-free_symsets(void)
-{
-    clear_symsetentry(PRIMARY, TRUE);
-    clear_symsetentry(ROGUESET, TRUE);
-
-    /* symset_list is cleaned up as soon as it's used, so we shouldn't
-       have to anything about it here */
-    /* assert( symset_list == NULL ); */
-}
-
-/* Parse the value of a SYMBOLS line from a config file */
-boolean
-parsesymbols(register char *opts, int which_set)
-{
-    int val;
-    char *op, *symname, *strval;
-    struct symparse *symp;
-
-    if ((op = index(opts, ',')) != 0) {
-        *op++ = 0;
-        if (!parsesymbols(op, which_set))
-            return FALSE;
-    }
-
-    /* S_sample:string */
-    symname = opts;
-    strval = index(opts, ':');
-    if (!strval)
-        strval = index(opts, '=');
-    if (!strval)
-        return FALSE;
-    *strval++ = '\0';
-
-    /* strip leading and trailing white space from symname and strval */
-    mungspaces(symname);
-    mungspaces(strval);
-
-    symp = match_sym(symname);
-    if (!symp)
-        return FALSE;
-
-    if (symp->range && symp->range != SYM_CONTROL) {
-        val = sym_val(strval);
-        if (which_set == ROGUESET)
-            update_ov_rogue_symset(symp, val);
-        else
-            update_ov_primary_symset(symp, val);
-    }
-    return TRUE;
-}
-
-struct symparse *
-match_sym(char *buf)
-{
-    int i;
-    struct alternate_parse {
-        const char *altnm;
-        const char *nm;
-    } alternates[] = {
-        { "S_armour" , "S_armor" },
-        { "S_explode1" , "S_expl_tl" },
-        { "S_explode2" , "S_expl_tc" },
-        { "S_explode3" , "S_expl_tr" },
-        { "S_explode4" , "S_expl_ml" },
-        { "S_explode5" , "S_expl_mc" },
-        { "S_explode6" , "S_expl_mr" },
-        { "S_explode7" , "S_expl_bl" },
-        { "S_explode8" , "S_expl_bc" },
-        { "S_explode9" , "S_expl_br" },
-    };
-    unsigned len = Strlen(buf);
-    const char *p = index(buf, ':'), *q = index(buf, '=');
-    struct symparse *sp = loadsyms;
-
-    if (!p || (q && q < p))
-        p = q;
-    if (p) {
-        /* note: there will be at most one space before the '='
-           because caller has condensed buf[] with mungspaces() */
-        if (p > buf && p[-1] == ' ')
-            p--;
-        len = (int) (p - buf);
-    }
-    while (sp->range) {
-        if ((len >= Strlen(sp->name)) && !strncmpi(buf, sp->name, len))
-            return sp;
-        sp++;
-    }
-    for (i = 0; i < SIZE(alternates); ++i) {
-        if ((len >= strlen(alternates[i].altnm))
-            && !strncmpi(buf, alternates[i].altnm, len)) {
-            sp = loadsyms;
-            while (sp->range) {
-                if (!strcmp(alternates[i].nm, sp->name))
-                    return sp;
-                sp++;
-            }
-        }
-    }
-    return (struct symparse *) 0;
 }
 
 int
@@ -8373,6 +8529,7 @@ choose_classes_menu(const char *prompt,
     int i, n;
     int ret;
     int next_accelerator, accelerator;
+    int clr = 0;
 
     if (class_list == (char *) 0 || class_select == (char *) 0)
         return 0;
@@ -8408,7 +8565,7 @@ choose_classes_menu(const char *prompt,
         }
         any.a_int = *class_list;
         add_menu(win, &nul_glyphinfo, &any, accelerator,
-                 category ? *class_list : 0, ATR_NONE, buf,
+                 category ? *class_list : 0, ATR_NONE, clr, buf,
                  selected ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE);
         ++class_list;
         if (category > 0) {
@@ -8423,14 +8580,14 @@ choose_classes_menu(const char *prompt,
         /* for objects, add "A - ' '  all classes", after a separator */
         any = cg.zeroany;
         add_menu(win, &nul_glyphinfo, &any, 0, 0,
-                 ATR_NONE, "", MENU_ITEMFLAGS_NONE);
+                 ATR_NONE, clr, "", MENU_ITEMFLAGS_NONE);
         any.a_int = (int) ' ';
         Sprintf(buf, "%c  %s", (char) any.a_int, "all classes of objects");
         /* we won't preselect this even if the incoming list is empty;
            having it selected means that it would have to be explicitly
            de-selected in order to select anything else */
         add_menu(win, &nul_glyphinfo, &any, 'A', 0,
-                 ATR_NONE, buf, MENU_ITEMFLAGS_NONE);
+                 ATR_NONE, clr, buf, MENU_ITEMFLAGS_NONE);
     }
     end_menu(win, prompt);
     n = select_menu(win, way ? PICK_ANY : PICK_ONE, &pick_list);
@@ -8787,6 +8944,34 @@ set_playmode(void)
     }
     /* don't need to do anything special for explore mode or normal play */
 }
+void
+enhance_menu_text(
+    char *buf,
+    size_t sz,
+    int whichpass UNUSED,
+    boolean *bool_p,
+    struct allopt_t *thisopt)
+{
+    size_t nowsz, availsz;
+
+    if (!buf)
+        return;
+    nowsz = strlen(buf) + 1;
+    availsz = sz - nowsz;
+
+#ifdef TTY_PERM_INVENT
+    if (bool_p == &iflags.perm_invent && WINDOWPORT(tty)) {
+        if (thisopt->setwhere == set_gameview)
+            Snprintf(eos(buf), availsz, " *terminal size is too small");
+    }
+#else
+    nhUse(availsz);
+    nhUse(bool_p);
+    nhUse(thisopt);
+#endif
+    return;
+}
+
 
 #endif /* OPTION_LISTS_ONLY */
 

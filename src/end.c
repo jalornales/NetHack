@@ -110,7 +110,7 @@ panictrace_handler(int sig_unused UNUSED)
     int f2;
 
 #ifdef CURSES_GRAPHICS
-    if (iflags.window_inited && WINDOWPORT("curses")) {
+    if (iflags.window_inited && WINDOWPORT(curses)) {
         extern void curses_uncurse_terminal(void); /* wincurs.h */
 
         /* it is risky calling this during a program-terminating signal,
@@ -762,7 +762,7 @@ dump_everything(
        it's conceivable that the game started with a different
        build date+time or even with an older nethack version,
        but we only have access to the one it finished under */
-    putstr(0, 0, getversionstring(pbuf));
+    putstr(0, 0, getversionstring(pbuf, sizeof pbuf));
     putstr(0, 0, "");
 
     /* game start and end date+time to disambiguate version date+time */
@@ -1871,7 +1871,7 @@ save_killers(NHFILE *nhfp)
     if (perform_bwrite(nhfp)) {
         for (kptr = &g.killer; kptr != (struct kinfo *) 0; kptr = kptr->next) {
             if (nhfp->structlevel)
-	        bwrite(nhfp->fd, (genericptr_t)kptr, sizeof(struct kinfo));
+                bwrite(nhfp->fd, (genericptr_t)kptr, sizeof(struct kinfo));
         }
     }
     if (release_data(nhfp)) {
@@ -1890,7 +1890,7 @@ restore_killers(NHFILE *nhfp)
 
     for (kptr = &g.killer; kptr != (struct kinfo *) 0; kptr = kptr->next) {
         if (nhfp->structlevel)
-	    mread(nhfp->fd, (genericptr_t)kptr, sizeof(struct kinfo));
+            mread(nhfp->fd, (genericptr_t)kptr, sizeof(struct kinfo));
         if (kptr->next) {
             kptr->next = (struct kinfo *) alloc(sizeof (struct kinfo));
         }

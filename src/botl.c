@@ -887,23 +887,30 @@ bot_via_windowport(void)
                                        && !condtests[bl_tethered].test);
     }
     condtests[bl_grab].test = condtests[bl_held].test
+#if 0
+        = condtests[bl_engulfed].test
+#endif
         = condtests[bl_holding].test = FALSE;
     if (u.ustuck) {
-        if (Upolyd && sticks(g.youmonst.data)) {
+        /* it is possible for a hero in sticks() form to be swallowed,
+           so swallowed needs to be checked first; it is not possible for
+           a hero in sticks() form to be held--sticky hero does the holding
+           even if u.ustuck is also a holder */
+        if (u.uswallow) {
+            /* engulfed/swallowed isn't currently a tracked status condition;
+               "held" might look odd for it but seems better than blank */
+#if 0
+            test_if_enabled(bl_engulfed) = TRUE;
+#else
+            test_if_enabled(bl_held) = TRUE;
+#endif
+        } else if (Upolyd && sticks(g.youmonst.data)) {
             test_if_enabled(bl_holding) = TRUE;
         } else {
+            /* grab == hero is held by sea monster and about to be drowned;
+               held == hero is held by something else and can't move away */
             test_if_enabled(bl_grab) = (u.ustuck->data->mlet == S_EEL);
-#if 0
-            test_if_enabled(bl_engulfed) = u.uswallow ? TRUE : FALSE;
-            test_if_enabled(bl_held) = (!condtests[bl_grab].test
-                                        && !condtests[bl_engulfed].test);
-#else
-            test_if_enabled(bl_held) = (!condtests[bl_grab].test
-                /* engulfed/swallowed isn't currently a tracked condition
-                   and showing "held" when in that state looks a bit odd,
-                   so suppress "held" if swallowed */
-                                        && !u.uswallow);
-#endif
+            test_if_enabled(bl_held) = !condtests[bl_grab].test;
         }
     }
     condtests[bl_blind].test     = (Blind) ? TRUE : FALSE;
@@ -1067,6 +1074,7 @@ cond_menu(void)
     menu_item *picks = (menu_item *) 0;
     char mbuf[QBUFSZ];
     boolean showmenu = TRUE;
+    int clr = 0;
 
     do {
         for (i = 0; i < CONDITION_COUNT; ++i) {
@@ -1085,11 +1093,11 @@ cond_menu(void)
                 menutitle[g.condmenu_sortorder],
                 menutitle[1 - g.condmenu_sortorder]);
         add_menu(tmpwin, &nul_glyphinfo, &any, 'S', 0, ATR_NONE,
-                 mbuf, MENU_ITEMFLAGS_NONE);
+                 clr, mbuf, MENU_ITEMFLAGS_NONE);
         any = cg.zeroany;
         Sprintf(mbuf, "sorted %s", menutitle[g.condmenu_sortorder]);
         add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-                 iflags.menu_headings, mbuf, MENU_ITEMFLAGS_NONE);
+                 iflags.menu_headings, clr, mbuf, MENU_ITEMFLAGS_NONE);
         for (i = 0; i < SIZE(condtests); i++) {
             idx = sequence[i];
             Sprintf(mbuf, "cond_%-14s", condtests[idx].useroption);
@@ -1097,7 +1105,7 @@ cond_menu(void)
             any.a_int = idx + 2; /* avoid zero and the sort change pick */
             condtests[idx].choice = FALSE;
             add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-                     mbuf,
+                     clr, mbuf,
                      condtests[idx].enabled
                         ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE);
         }
@@ -2325,6 +2333,7 @@ query_arrayvalue(
     anything any;
     menu_item *picks = (menu_item *) 0;
     int adj = (arrmin > 0) ? 1 : arrmax;
+    int clr = 0;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -2333,7 +2342,7 @@ query_arrayvalue(
         any = cg.zeroany;
         any.a_int = i + adj;
         add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-                 arr[i], MENU_ITEMFLAGS_NONE);
+                 clr, arr[i], MENU_ITEMFLAGS_NONE);
     }
 
     end_menu(tmpwin, querystr);
@@ -2676,6 +2685,7 @@ query_conditions(void)
     winid tmpwin;
     anything any;
     menu_item *picks = (menu_item *) 0;
+    int clr = 0;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -2684,7 +2694,7 @@ query_conditions(void)
         any = cg.zeroany;
         any.a_ulong = conditions[i].mask;
         add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-                 conditions[i].text[0], MENU_ITEMFLAGS_NONE);
+                 clr, conditions[i].text[0], MENU_ITEMFLAGS_NONE);
     }
 
     end_menu(tmpwin, "Choose status conditions");
@@ -3230,6 +3240,7 @@ status_hilite_menu_choose_field(void)
     int i, res, fld = BL_FLUSH;
     anything any;
     menu_item *picks = (menu_item *) 0;
+    int clr = 0;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -3243,7 +3254,7 @@ status_hilite_menu_choose_field(void)
         any = cg.zeroany;
         any.a_int = (i + 1);
         add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-                 initblstats[i].fldname, MENU_ITEMFLAGS_NONE);
+                 clr, initblstats[i].fldname, MENU_ITEMFLAGS_NONE);
     }
 
     end_menu(tmpwin, "Select a hilite field:");
@@ -3267,6 +3278,7 @@ status_hilite_menu_choose_behavior(int fld)
     char buf[BUFSZ];
     int at;
     int onlybeh = BL_TH_NONE, nopts = 0;
+    int clr = 0;
 
     if (fld < 0 || fld >= MAXBLSTATS)
         return BL_TH_NONE;
@@ -3281,7 +3293,7 @@ status_hilite_menu_choose_behavior(int fld)
         any.a_int = onlybeh = BL_TH_ALWAYS_HILITE;
         Sprintf(buf, "Always highlight %s", initblstats[fld].fldname);
         add_menu(tmpwin, &nul_glyphinfo, &any, 'a', 0, ATR_NONE,
-                 buf, MENU_ITEMFLAGS_NONE);
+                 clr, buf, MENU_ITEMFLAGS_NONE);
         nopts++;
     }
 
@@ -3289,7 +3301,7 @@ status_hilite_menu_choose_behavior(int fld)
         any = cg.zeroany;
         any.a_int = onlybeh = BL_TH_CONDITION;
         add_menu(tmpwin, &nul_glyphinfo, &any, 'b', 0, ATR_NONE,
-                 "Bitmask of conditions", MENU_ITEMFLAGS_NONE);
+                 clr, "Bitmask of conditions", MENU_ITEMFLAGS_NONE);
         nopts++;
     }
 
@@ -3298,7 +3310,7 @@ status_hilite_menu_choose_behavior(int fld)
         any.a_int = onlybeh = BL_TH_UPDOWN;
         Sprintf(buf, "%s value changes", initblstats[fld].fldname);
         add_menu(tmpwin, &nul_glyphinfo, &any, 'c', 0, ATR_NONE,
-                 buf, MENU_ITEMFLAGS_NONE);
+                 clr, buf, MENU_ITEMFLAGS_NONE);
         nopts++;
     }
 
@@ -3307,7 +3319,7 @@ status_hilite_menu_choose_behavior(int fld)
         any = cg.zeroany;
         any.a_int = onlybeh = BL_TH_VAL_ABSOLUTE;
         add_menu(tmpwin, &nul_glyphinfo, &any, 'n', 0, ATR_NONE,
-                 "Number threshold", MENU_ITEMFLAGS_NONE);
+                 clr, "Number threshold", MENU_ITEMFLAGS_NONE);
         nopts++;
     }
 
@@ -3315,7 +3327,7 @@ status_hilite_menu_choose_behavior(int fld)
         any = cg.zeroany;
         any.a_int = onlybeh = BL_TH_VAL_PERCENTAGE;
         add_menu(tmpwin, &nul_glyphinfo, &any, 'p', 0, ATR_NONE,
-                 "Percentage threshold", MENU_ITEMFLAGS_NONE);
+                 clr, "Percentage threshold", MENU_ITEMFLAGS_NONE);
         nopts++;
     }
 
@@ -3325,7 +3337,7 @@ status_hilite_menu_choose_behavior(int fld)
         any.a_int = onlybeh = BL_TH_TEXTMATCH;
         Sprintf(buf, "%s text match", initblstats[fld].fldname);
         add_menu(tmpwin, &nul_glyphinfo, &any, 't', 0, ATR_NONE,
-                 buf, MENU_ITEMFLAGS_NONE);
+                 clr, buf, MENU_ITEMFLAGS_NONE);
         nopts++;
     }
 
@@ -3358,6 +3370,7 @@ status_hilite_menu_choose_updownboth(int fld, const char *str,
     char buf[BUFSZ];
     anything any;
     menu_item *picks = (menu_item *) 0;
+    int clr = 0;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -3371,7 +3384,7 @@ status_hilite_menu_choose_updownboth(int fld, const char *str,
         any = cg.zeroany;
         any.a_int = 10 + LT_VALUE;
         add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-                 buf, MENU_ITEMFLAGS_NONE);
+                 clr, buf, MENU_ITEMFLAGS_NONE);
 
         if (str) {
             Sprintf(buf, "%s or %s",
@@ -3379,7 +3392,7 @@ status_hilite_menu_choose_updownboth(int fld, const char *str,
             any = cg.zeroany;
             any.a_int = 10 + LE_VALUE;
             add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-                     buf, MENU_ITEMFLAGS_NONE);
+                     clr, buf, MENU_ITEMFLAGS_NONE);
         }
     }
 
@@ -3390,7 +3403,7 @@ status_hilite_menu_choose_updownboth(int fld, const char *str,
     any = cg.zeroany;
     any.a_int = 10 + EQ_VALUE;
     add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-             buf, MENU_ITEMFLAGS_NONE);
+             clr, buf, MENU_ITEMFLAGS_NONE);
 
     if (gtok) {
         if (str) {
@@ -3399,7 +3412,7 @@ status_hilite_menu_choose_updownboth(int fld, const char *str,
             any = cg.zeroany;
             any.a_int = 10 + GE_VALUE;
             add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-                     buf, MENU_ITEMFLAGS_NONE);
+                     clr, buf, MENU_ITEMFLAGS_NONE);
         }
 
         if (str)
@@ -3410,7 +3423,7 @@ status_hilite_menu_choose_updownboth(int fld, const char *str,
         any = cg.zeroany;
         any.a_int = 10 + GT_VALUE;
         add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-             buf, MENU_ITEMFLAGS_NONE);
+             clr, buf, MENU_ITEMFLAGS_NONE);
     }
     Sprintf(buf, "Select field %s value:", initblstats[fld].fldname);
     end_menu(tmpwin, buf);
@@ -3894,6 +3907,7 @@ status_hilite_menu_fld(int fld)
     struct _status_hilite_line_str *hlstr;
     char buf[BUFSZ];
     boolean acted;
+    int clr = 0;
 
     if (!count) {
         if (status_hilite_menu_add(fld)) {
@@ -3914,27 +3928,27 @@ status_hilite_menu_fld(int fld)
                 any = cg.zeroany;
                 any.a_int = hlstr->id;
                 add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-                         hlstr->str, MENU_ITEMFLAGS_NONE);
+                         clr, hlstr->str, MENU_ITEMFLAGS_NONE);
             }
             hlstr = hlstr->next;
         }
     } else {
         any = cg.zeroany;
         Sprintf(buf, "No current hilites for %s", initblstats[fld].fldname);
-        add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, buf,
+        add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr, buf,
                  MENU_ITEMFLAGS_NONE);
     }
 
     /* separator line */
     any = cg.zeroany;
-    add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, "",
+    add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr, "",
              MENU_ITEMFLAGS_NONE);
 
     if (count) {
         any = cg.zeroany;
         any.a_int = -1;
         add_menu(tmpwin, &nul_glyphinfo, &any, 'X', 0, ATR_NONE,
-                 "Remove selected hilites",
+                 clr, "Remove selected hilites",
                  MENU_ITEMFLAGS_NONE);
     }
 
@@ -3951,7 +3965,7 @@ status_hilite_menu_fld(int fld)
         any = cg.zeroany;
         any.a_int = -2;
         add_menu(tmpwin, &nul_glyphinfo, &any, 'Z', 0, ATR_NONE,
-                 "Add new hilites", MENU_ITEMFLAGS_NONE);
+                 clr, "Add new hilites", MENU_ITEMFLAGS_NONE);
     }
 
     Sprintf(buf, "Current %s hilites:", initblstats[fld].fldname);
@@ -4016,6 +4030,7 @@ status_hilite_menu(void)
     anything any;
     boolean redo;
     int countall;
+    int clr = 0;
 
  shlmenu_redo:
     redo = FALSE;
@@ -4029,12 +4044,12 @@ status_hilite_menu(void)
         any = cg.zeroany;
         any.a_int = -1;
         add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-                 "View all hilites in config format",
+                 clr, "View all hilites in config format",
                  MENU_ITEMFLAGS_NONE);
 
         any = cg.zeroany;
-        add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, "",
-                 MENU_ITEMFLAGS_NONE);
+        add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
+                 clr, "", MENU_ITEMFLAGS_NONE);
     }
 
     for (i = 0; i < MAXBLSTATS; i++) {
@@ -4055,7 +4070,7 @@ status_hilite_menu(void)
         if (count)
             Sprintf(eos(buf), " (%d defined)", count);
         add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-                 buf, MENU_ITEMFLAGS_NONE);
+                 clr, buf, MENU_ITEMFLAGS_NONE);
     }
 
     end_menu(tmpwin, "Status hilites:");

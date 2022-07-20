@@ -1,4 +1,4 @@
-/* NetHack 3.7	decl.c	$NHDT-Date: 1645000574 2022/02/16 08:36:14 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.248 $ */
+/* NetHack 3.7	decl.c	$NHDT-Date: 1654070576 2022/06/01 08:02:56 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.255 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2009. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -373,9 +373,12 @@ const struct instance_globals g_init = {
     UNDEFINED_VALUES, /* nowhere */
     UNDEFINED_PTR, /* gate_str */
 
-    /* drawing.c */
+    /* symbols.c */
     DUMMY, /* symset */
-    0, /* currentgraphics */
+#ifdef ENHANCED_SYMBOLS
+    DUMMY, /* symset_customizations */
+#endif
+    0,     /* currentgraphics */
     DUMMY, /* showsyms */
     DUMMY, /* primary_syms */
     DUMMY, /* rogue_syms */
@@ -432,6 +435,10 @@ const struct instance_globals g_init = {
     NULL, /* invbuf */
     0, /* inbufsize */
     WIN_ERR, /* cached_pickinv_win */
+    0,       /* core_invent_state */
+    0,       /* in_sync_perminvent */
+    0,       /* perm_invent_toggling_direction */
+    0L,      /* glyph_reset_timestamp */
     0, /* this_type */
     NULL, /* this_title */
     UNDEFINED_VALUES, /* only (coord) */
@@ -508,6 +515,7 @@ const struct instance_globals g_init = {
 
     /* nhlua.c */
     UNDEFINED_VALUE, /* luacore */
+    DUMMY, /* lua_warnbuf[] */
 
     /* o_init.c */
     DUMMY, /* disco */
@@ -615,6 +623,7 @@ const struct instance_globals g_init = {
     0, /* usteed_id */
     (struct obj *) 0, /* looseball */
     (struct obj *) 0, /* loosechain */
+    { 0, 0 }, /* uz_save */
 
     /* shk.c */
     'a', /* sell_response */
@@ -670,6 +679,7 @@ const struct instance_globals g_init = {
     NULL, /* viz_rmin */
     NULL, /* viz_rmax */
     FALSE, /* vision_full_recalc */
+    0, /* seethru */
 
     /* weapon.c */
     UNDEFINED_PTR, /* propellor */
@@ -687,6 +697,7 @@ const struct instance_globals g_init = {
 
     /* per-level glyph mapping flags */
     0L,     /* glyphmap_perlevel_flags */
+    0,      /* early_raw_messages */
 
     IVMAGIC  /* used to validate that structure layout has been preserved */
 };
@@ -745,5 +756,9 @@ decl_globals_init(void)
     g.urole = urole_init_data;
     g.urace = urace_init_data;
 }
+
+#ifndef NO_VERBOSE_GRANULARITY
+long verbosity_suppressions[vb_elements] = { 0L, 0L, 0L, 0L, 0L, };
+#endif
 
 /*decl.c*/

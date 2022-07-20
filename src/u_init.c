@@ -150,7 +150,7 @@ static struct trobj Tourist[] = {
     { 0, 0, 0, 0, 0 }
 };
 static struct trobj Valkyrie[] = {
-    { LONG_SWORD, 1, WEAPON_CLASS, 1, UNDEF_BLESS },
+    { SPEAR, 1, WEAPON_CLASS, 1, UNDEF_BLESS },
     { DAGGER, 0, WEAPON_CLASS, 1, UNDEF_BLESS },
     { SMALL_SHIELD, 3, ARMOR_CLASS, 1, UNDEF_BLESS },
     { FOOD_RATION, 0, FOOD_CLASS, 1, 0 },
@@ -520,7 +520,7 @@ static const struct def_skill Skill_V[] = {
     { P_HAMMER, P_EXPERT },
     { P_QUARTERSTAFF, P_BASIC },
     { P_POLEARMS, P_SKILLED },
-    { P_SPEAR, P_SKILLED },
+    { P_SPEAR, P_EXPERT },
     { P_TRIDENT, P_BASIC },
     { P_LANCE, P_SKILLED },
     { P_SLING, P_BASIC },
@@ -1007,7 +1007,7 @@ ini_inv(struct trobj *trop)
     int otyp, i;
     boolean got_sp1 = FALSE; /* got a level 1 spellbook? */
 
-	while (trop->trclass) {
+    while (trop->trclass) {
         otyp = (int) trop->trotyp;
         if (otyp != UNDEF_TYP) {
             obj = mksobj(otyp, TRUE, FALSE);
@@ -1082,9 +1082,6 @@ ini_inv(struct trobj *trop)
             /* Don't have 2 of the same ring or spellbook */
             if (obj->oclass == RING_CLASS || obj->oclass == SPBOOK_CLASS)
                 g.nocreate4 = otyp;
-            /* First spellbook should be level 1 - did we get it? */
-            if (obj->oclass == SPBOOK_CLASS && objects[obj->otyp].oc_level == 1)
-                got_sp1 = TRUE;
         }
 
         if (g.urace.mnum != PM_HUMAN) {
@@ -1182,6 +1179,10 @@ ini_inv(struct trobj *trop)
         }
         if (obj->oclass == SPBOOK_CLASS && obj->otyp != SPE_BLANK_PAPER)
             initialspell(obj);
+
+        /* First spellbook should be level 1 - did we get it? */
+        if (obj->oclass == SPBOOK_CLASS && objects[obj->otyp].oc_level == 1)
+            got_sp1 = TRUE;
 
         if (--trop->trquan)
             continue; /* make a similar object */

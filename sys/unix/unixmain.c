@@ -115,7 +115,10 @@ main(int argc, char *argv[])
 #endif /* CHDIR */
     /* handle -dalthackdir, -s <score stuff>, --version, --showpaths */
     early_options(&argc, &argv, &dir);
-
+#ifdef ENHANCED_SYMBOLS
+    if (argcheck(argc, argv, ARG_DUMPGLYPHIDS) == 2)
+        exit(EXIT_SUCCESS);
+#endif
 #ifdef CHDIR
     /*
      * Change directories before we initialize the window system so
@@ -232,7 +235,12 @@ main(int argc, char *argv[])
             iflags.news = FALSE; /* in case dorecover() fails */
         }
 #endif
-        pline("Restoring save file...");
+        /* if there are early trouble-messages issued, let's
+         * not go overtop of them with a pline just yet */
+        if (g.early_raw_messages)
+            raw_print("Restoring save file...");
+        else
+            pline("Restoring save file...");
         mark_synch(); /* flush output */
         if (dorecover(nhfp)) {
             resuming = TRUE; /* not starting new game */
@@ -405,7 +413,7 @@ process_options(int argc, char *argv[])
             if ((arg[1] == 'D' && !arg[2]) || !strcmpi(arg, "-debug")) {
                 wizard = TRUE, discover = FALSE;
             } else if (!strncmpi(arg, "-DECgraphics", l)) {
-                load_symset("DECGraphics", PRIMARY);
+                load_symset("DECGraphics", PRIMARYSET);
                 switch_symbols(TRUE);
             } else {
                 config_error_add("Unknown option: %.60s", origarg);
@@ -442,7 +450,7 @@ process_options(int argc, char *argv[])
         case 'I':
         case 'i':
             if (!strncmpi(arg, "-IBMgraphics", l)) {
-                load_symset("IBMGraphics", PRIMARY);
+                load_symset("IBMGraphics", PRIMARYSET);
                 load_symset("RogueIBM", ROGUESET);
                 switch_symbols(TRUE);
             } else {

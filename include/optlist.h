@@ -124,8 +124,11 @@ opt_##a,
            set_in_game, No, Yes, No, NoAlias, "edit autopickup exceptions")
     NHOPTB(autoquiver, 0, opt_in, set_in_game, Off, Yes, No, No, NoAlias,
                 &flags.autoquiver)
-    NHOPTB(autounlock, 0, opt_out, set_in_game, On, Yes, No, No, NoAlias,
-                &flags.autounlock)
+    NHOPTC(autounlock,
+                (sizeof "none" + sizeof "untrap" + sizeof "apply-key"
+                 + sizeof "kick" + sizeof "force" + 20),
+                opt_out, set_in_game, Yes, Yes, No, Yes, NoAlias,
+                "action to take when encountering locked door or chest")
 #if defined(MICRO) && !defined(AMIGA)
     NHOPTB(BIOS, 0, opt_in, set_in_config, Off, Yes, No, No, NoAlias,
                 &iflags.BIOS)
@@ -215,6 +218,8 @@ opt_##a,
                 &iflags.wc2_fullscreen)
     NHOPTC(gender, 8, opt_in, set_gameview, No, Yes, No, No, NoAlias,
                 "your starting gender (male or female)")
+    NHOPTC(glyph, 40, opt_in, set_in_game, No, Yes, Yes, No, NoAlias,
+                "set representation of a glyph to a unicode value and color")
     NHOPTB(goldX, 0, opt_in, set_in_game, Off, Yes, No, No, NoAlias,
                 &flags.goldX)
     NHOPTB(guicolor, 0, opt_out, set_in_game, On, Yes, No, No,  NoAlias,
@@ -518,10 +523,14 @@ opt_##a,
                 &iflags.wc2_darkgray)
     NHOPTB(use_inverse, 0, opt_out, set_in_game, On, Yes, No, No, NoAlias,
                 &iflags.wc_inverse)
+    NHOPTB(use_truecolor, 0, opt_in, set_in_config, Off, Yes, No, No,
+                "use_truecolour", &iflags.use_truecolor)
     NHOPTC(vary_msgcount, 20, opt_in, set_gameview, No, Yes, No, No, NoAlias,
                 "show more old messages at a time")
+#if defined(NO_VERBOSE_GRANULARITY)
     NHOPTB(verbose, 0, opt_out, set_in_game, On, Yes, No, No, NoAlias,
                 &flags.verbose)
+#endif
 #ifdef MSDOS
     NHOPTC(video, 20, opt_in, set_in_config, No, Yes, No, No, NoAlias,
                 "method of video updating")
@@ -592,7 +601,10 @@ opt_##a,
     NHOPTP(IBM_, 0, opt_in, set_hidden, No, No, Yes, No, NoAlias,
                 "prefix for old micro IBM_ options")
 #endif /* MICRO */
-
+#if !defined(NO_VERBOSE_GRANULARITY)
+    NHOPTP(verbose, 0, opt_out, set_in_game, Yes, Yes, Yes, Yes, NoAlias,
+                "suppress verbose messages")
+#endif
 #undef NoAlias
 #undef NHOPTB
 #undef NHOPTC

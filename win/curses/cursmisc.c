@@ -650,6 +650,7 @@ curses_view_file(const char *filename, boolean must_exist)
     char buf[BUFSZ];
     menu_item *selected = NULL;
     dlb *fp = dlb_fopen(filename, "r");
+    int clr = 0;
 
     if (fp == NULL) {
         if (must_exist)
@@ -663,7 +664,7 @@ curses_view_file(const char *filename, boolean must_exist)
 
     while (dlb_fgets(buf, BUFSZ, fp) != NULL) {
         curses_add_menu(wid, &nul_glyphinfo, &Id, 0, 0,
-                        A_NORMAL, buf, FALSE);
+                        A_NORMAL, clr, buf, FALSE);
     }
 
     dlb_fclose(fp);
@@ -973,7 +974,7 @@ event, or the first non-mouse key event in the case of mouse
 movement. */
 
 int
-curses_get_mouse(int *mousex, int *mousey, int *mod)
+curses_get_mouse(coordxy *mousex, coordxy *mousey, int *mod)
 {
     int key = '\033';
 

@@ -681,9 +681,9 @@ rounddiv(long x, int y)
 
 /* distance between two points, in moves */
 int
-distmin(int x0, int y0, int x1, int y1)
+distmin(coordxy x0, coordxy y0, coordxy x1, coordxy y1)
 {
-    register int dx = x0 - x1, dy = y0 - y1;
+    coordxy dx = x0 - x1, dy = y0 - y1;
 
     if (dx < 0)
         dx = -dx;
@@ -697,9 +697,9 @@ distmin(int x0, int y0, int x1, int y1)
 
 /* square of euclidean distance between pair of pts */
 int
-dist2(int x0, int y0, int x1, int y1)
+dist2(coordxy x0, coordxy y0, coordxy x1, coordxy y1)
 {
-    register int dx = x0 - x1, dy = y0 - y1;
+    coordxy dx = x0 - x1, dy = y0 - y1;
 
     return dx * dx + dy * dy;
 }
@@ -1361,21 +1361,49 @@ nh_snprintf(
 
 RESTORE_WARNING_FORMAT_NONLITERAL
 
-/* cast to int or panic on overflow; use via macro */
-int
-FITSint_(lua_Integer i, const char *file, int line){
-    int ret = (int)i;
-    if (ret != i)
-        panic("Overflow at %s:%d", file, line);
-    return (int)i;
-}
+#ifdef ENHANCED_SYMBOLS
 
-unsigned
-FITSuint_(unsigned long long i, const char *file, int line){
-    unsigned ret = (unsigned)i;
-    if (ret != i)
-        panic("Overflow at %s:%d", file, line);
-    return (unsigned)i;
+/* Unicode routines */
+
+int
+unicodeval_to_utf8str(int uval, uint8 *buffer, size_t bufsz)
+{
+    //    static uint8 buffer[7];
+    uint8 *b = buffer;
+
+    if (bufsz < 5)
+        return 0;
+    /*
+     *   Binary   Hex        Comments
+     *   0xxxxxxx 0x00..0x7F Only byte of a 1-byte character encoding
+     *   10xxxxxx 0x80..0xBF Continuation byte : one of 1-3 bytes following
+     * first 110xxxxx 0xC0..0xDF First byte of a 2-byte character encoding
+     *   1110xxxx 0xE0..0xEF First byte of a 3-byte character encoding
+     *   11110xxx 0xF0..0xF7 First byte of a 4-byte character encoding
+     */
+    *b = '\0';
+    if (uval < 0x80) {
+        *b++ = uval;
+    } else if (uval < 0x800) {
+        *b++ = 192 + uval / 64;
+        *b++ = 128 + uval % 64;
+    } else if (uval - 0xd800u < 0x800) {
+        return 0;
+    } else if (uval < 0x10000) {
+        *b++ = 224 + uval / 4096;
+        *b++ = 128 + uval / 64 % 64;
+        *b++ = 128 + uval % 64;
+    } else if (uval < 0x110000) {
+        *b++ = 240 + uval / 262144;
+        *b++ = 128 + uval / 4096 % 64;
+        *b++ = 128 + uval / 64 % 64;
+        *b++ = 128 + uval % 64;
+    } else {
+        return 0;
+    }
+    *b = '\0'; /* NUL terminate */
+    return 1;
 }
+#endif /* ENHANCED_SYMBOLS */
 
 /*hacklib.c*/
