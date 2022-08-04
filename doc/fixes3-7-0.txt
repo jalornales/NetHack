@@ -975,6 +975,21 @@ some large monsters can knock back smaller monsters with a hit
 change Demonbane to a mace, make it the first sac gift for priests,
 	and give it an invoke ability to banish demons
 wielding Giantslayer prevents knockback from larger monsters
+scared hostile monster which cannot move away will attack
+prevent a fog cloud that has engulfed the hero from moving under closed doors
+allow cutting a known spider web with wielded weapon by force-fighting the web
+holes and trapdoors have a fixed exit level
+recent changes to losedogs() could result in an infinite loop when migrating
+	monsters try to arrive as hero moves to a different level
+when invisible without see invisible you could see your hands glowing red
+	after reading a scroll of confuse monster and delivering melee hits
+greased saddle makes it impossible to mount the steed
+if an item-using monster zaps a wand of digging downward on a level that
+	doesn't allow holes but does allow pits, create a pit and trigger it
+no longer override the effect of a new moon by simply carring a lizard corpse
+make explosions burn monster's armor just like they do hero's armor
+make healing and extra healing better by upping the average amount healed
+lifesaving healing amount depends on the consitution
 
 
 Fixes to 3.7.0-x Problems that Were Exposed Via git Repository
@@ -1316,6 +1331,9 @@ when one monster swallowed/engulfed another and killed it, impossible
 	"placing <mon> over itself ..." could be given by place_monster()
 if the game crashed or the process was killed, recovering a save file ended
 	up with incorrect stairway connections between levels
+when using --nethackrc=file on the command line (currently only implemented
+	for ports that use unixmain.c), options parsing freed the string
+	containing 'file' before using it as the RC file name
 
 curses: 'msg_window' option wasn't functional for curses unless the binary
 	also included tty support
@@ -1744,6 +1762,8 @@ if built with DEBUG enabled and running in wizard mode, starting play with
 add wizard mode #wizkill command to remove monster(s) from play
 some quest nemeses release a cloud of poisonous gas when they die
 taming magic acting on an already tame creature might make it become tamer
+eliminate scimitar skill and have scimitars use saber skill
+simplified configuration options menu
 
 
 Platform- and/or Interface-Specific New Features

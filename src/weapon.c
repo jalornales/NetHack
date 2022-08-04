@@ -35,12 +35,15 @@ static void skill_advance(int);
 #define PN_MATTER_SPELL (-14)
 
 static NEARDATA const short skill_names_indices[P_NUM_SKILLS] = {
+    /* Weapon */
     0, DAGGER, KNIFE, AXE, PICK_AXE, SHORT_SWORD, BROADSWORD, LONG_SWORD,
-    TWO_HANDED_SWORD, SCIMITAR, PN_SABER, CLUB, MACE, MORNING_STAR, FLAIL,
-    PN_HAMMER, QUARTERSTAFF, PN_POLEARMS, SPEAR, TRIDENT, LANCE, BOW, SLING,
-    CROSSBOW, DART, SHURIKEN, BOOMERANG, PN_WHIP, UNICORN_HORN,
+    TWO_HANDED_SWORD, PN_SABER, CLUB, MACE, MORNING_STAR, FLAIL, PN_HAMMER,
+    QUARTERSTAFF, PN_POLEARMS, SPEAR, TRIDENT, LANCE, BOW, SLING, CROSSBOW,
+    DART, SHURIKEN, BOOMERANG, PN_WHIP, UNICORN_HORN,
+    /* Spell */
     PN_ATTACK_SPELL, PN_HEALING_SPELL, PN_DIVINATION_SPELL,
     PN_ENCHANTMENT_SPELL, PN_CLERIC_SPELL, PN_ESCAPE_SPELL, PN_MATTER_SPELL,
+    /* Other */
     PN_BARE_HANDED, PN_TWO_WEAPONS, PN_RIDING
 };
 
@@ -743,6 +746,7 @@ int
 mon_wield_item(struct monst *mon)
 {
     struct obj *obj;
+    boolean exclaim = TRUE; /* assume mon is planning to attack */
 
     /* This case actually should never happen */
     if (mon->weapon_check == NO_WEAPON_WANTED)
@@ -760,12 +764,14 @@ mon_wield_item(struct monst *mon)
         /* KMH -- allow other picks */
         if (!obj && !which_armor(mon, W_ARMS))
             obj = m_carrying(mon, DWARVISH_MATTOCK);
+        exclaim = FALSE; /* mon is just planning to dig */
         break;
     case NEED_AXE:
         /* currently, only 2 types of axe */
         obj = m_carrying(mon, BATTLE_AXE);
         if (!obj || which_armor(mon, W_ARMS))
             obj = m_carrying(mon, AXE);
+        exclaim = FALSE;
         break;
     case NEED_PICK_OR_AXE:
         /* prefer pick for fewer switches on most levels */
@@ -777,6 +783,7 @@ mon_wield_item(struct monst *mon)
             if (!obj)
                 obj = m_carrying(mon, AXE);
         }
+        exclaim = FALSE;
         break;
     default:
         impossible("weapon_check %d for %s?", mon->weapon_check,
@@ -826,7 +833,8 @@ mon_wield_item(struct monst *mon)
         if (canseemon(mon)) {
             boolean newly_welded;
 
-            pline("%s wields %s!", Monnam(mon), doname(obj));
+            pline("%s wields %s%c", Monnam(mon), doname(obj),
+                  exclaim ? '!' : '.');
             /* 3.6.3: mwelded() predicate expects the object to have its
                W_WEP bit set in owormmask, but the pline here and for
                artifact_light don't want that because they'd have '(weapon

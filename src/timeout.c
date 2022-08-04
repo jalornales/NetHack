@@ -1,4 +1,4 @@
-/* NetHack 3.7	timeout.c	$NHDT-Date: 1653507043 2022/05/25 19:30:43 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.139 $ */
+/* NetHack 3.7	timeout.c	$NHDT-Date: 1658390077 2022/07/21 07:54:37 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.142 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2018. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -1240,12 +1240,18 @@ burn_object(anything *arg, long timeout)
                 obj->spe = 0; /* no more candles */
                 obj->owt = weight(obj);
             } else if (Is_candle(obj) || obj->otyp == POT_OIL) {
+                struct monst *mtmp = NULL;
+
+                if (obj->where == OBJ_FLOOR)
+                    mtmp = m_at(obj->ox, obj->oy);
                 /* get rid of candles and burning oil potions;
                    we know this object isn't carried by hero,
                    nor is it migrating */
                 obj_extract_self(obj);
                 obfree(obj, (struct obj *) 0);
                 obj = (struct obj *) 0;
+                if (mtmp)
+                    maybe_unhide_at(mtmp->mx, mtmp->my);
             }
 
         } else {
@@ -1906,6 +1912,18 @@ wiz_timeout_queue(void)
                 putstr(win, 0, buf);
             }
         }
+    }
+    if (u.uswldtim) {
+        putstr(win, 0, "");
+        /* decremented when engulfer makes a move, so can last longer than
+           the number of turns reported if engulfer is slow */
+        Sprintf(buf, "Swallow countdown is %u.", u.uswldtim);
+        putstr(win, 0, buf);
+    }
+    if (u.uinvault) {
+        putstr(win, 0, "");
+        Sprintf(buf, "Vault counter is %d.", u.uinvault);
+        putstr(win, 0, buf);
     }
     display_nhwindow(win, FALSE);
     destroy_nhwindow(win);

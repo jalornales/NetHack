@@ -1114,7 +1114,6 @@ extern void delobj_core(struct obj *, boolean);
 extern struct obj *sobj_at(int, coordxy, coordxy);
 extern struct obj *nxtobj(struct obj *, int, boolean);
 extern struct obj *carrying(int);
-extern boolean have_lizard(void);
 extern struct obj *u_carried_gloves(void);
 extern struct obj *u_have_novel(void);
 extern struct obj *o_on(unsigned int, struct obj *);
@@ -1955,6 +1954,7 @@ extern void initoptions_init(void);
 extern void initoptions_finish(void);
 extern boolean parseoptions(char *, boolean, boolean);
 extern char *get_option_value(const char *);
+extern int doset_simple(void);
 extern int doset(void);
 extern int dotogglepickup(void);
 extern void option_help(void);
@@ -2539,6 +2539,7 @@ extern void release_sound_mappings(void);
 
 #if !defined(CROSSCOMPILE) || defined(CROSSCOMPILE_TARGET)
 extern void create_des_coder(void);
+extern void reset_xystart_size(void);
 extern struct mapfragment *mapfrag_fromstr(char *);
 extern void mapfrag_free(struct mapfragment **);
 extern schar mapfrag_get(struct mapfragment *, int, int);
