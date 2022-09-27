@@ -83,34 +83,36 @@ E NEARDATA char tune[6];
 
 #define MAXLINFO (MAXDUNGEON * MAXLEVEL)
 
+/* structure for 'program_state'; not saved and restored */
 struct sinfo {
-    int gameover;  /* self explanatory? */
-    int stopprint; /* inhibit further end of game disclosure */
+    int gameover;               /* self explanatory? */
+    int stopprint;              /* inhibit further end of game disclosure */
 #ifdef HANGUPHANDLING
-    volatile int done_hup; /* SIGHUP or moral equivalent received
-                            * -- no more screen output */
-    int preserve_locks;    /* don't remove level files prior to exit */
+    volatile int done_hup;      /* SIGHUP or moral equivalent received
+                                 * -- no more screen output */
+    int preserve_locks;         /* don't remove level files prior to exit */
 #endif
     int something_worth_saving; /* in case of panic */
     int panicking;              /* `panic' is in progress */
     int exiting;                /* an exit handler is executing */
-    int saving;
-    int restoring;
-    int in_moveloop;
-    int in_impossible;
-    int in_docrt;               /* in docrt() */
-    int in_self_recover;
+    int saving;                 /* creating a save file */
+    int restoring;              /* reloading a save file */
+    int in_moveloop;            /* normal gameplay in progress */
+    int in_impossible;          /* reportig a warning */
+    int in_docrt;               /* in docrt(): redrawing the whole screen */
+    int in_self_recover;        /* processsing orphaned level files */
+    int in_checkpoint;          /* saving insurance checkpoint */
     int in_parseoptions;        /* in parseoptions */
     int config_error_ready;     /* config_error_add is ready, available */
     int beyond_savefile_load;   /* set when past savefile loading */
 #ifdef PANICLOG
-    int in_paniclog;
+    int in_paniclog;            /* writing a panicloc entry */
 #endif
-    int wizkit_wishing;
+    int wizkit_wishing;         /* starting wizard mode game w/ WIZKIT file */
     /* getting_a_command:  only used for ALTMETA config to process ESC, but
        present and updated unconditionally; set by parse() when requesting
        next command keystroke, reset by readchar() as it returns a key */
-    int getting_a_command;
+    int getting_a_command;      /* next key pressed will be entering a cmnd */
 };
 
 /* Flags for controlling uptodate */
@@ -399,6 +401,8 @@ E NEARDATA struct savefile_info sfcap, sfrestinfo, sfsaveinfo;
 
 struct selectionvar {
     int wid, hei;
+    boolean bounds_dirty;
+    NhRect bounds; /* use selection_getbounds() */
     char *map;
 };
 
@@ -506,6 +510,7 @@ struct cmd {
     const char *dirchars;      /* current movement/direction characters */
     const char *alphadirchars; /* same as dirchars if !numpad */
     const struct ext_func_tab *commands[256]; /* indexed by input character */
+    const struct ext_func_tab *mousebtn[NUM_MOUSE_BUTTONS];
     char spkeys[NUM_NHKF];
     char extcmd_char;      /* key that starts an extended command ('#') */
 };
@@ -658,7 +663,6 @@ struct _create_particular_data {
 };
 
 /* some array sizes for 'g' */
-#define BSIZE 20
 #define WIZKIT_MAX 128
 #define CVT_BUF_SIZE 64
 
@@ -677,12 +681,14 @@ enum cmdq_cmdtypes {
     CMDQ_EXTCMD,  /* extended command, cmdq_add_ec() */
     CMDQ_DIR,     /* direction, cmdq_add_dir() */
     CMDQ_USER_INPUT, /* placeholder for user input, cmdq_add_userinput() */
+    CMDQ_INT,     /* integer value, cmdq_add_int() */
 };
 
 struct _cmd_queue {
     int typ;
     char key;
     schar dirx, diry, dirz;
+    int intval;
     const struct ext_func_tab *ec_entry;
     struct _cmd_queue *next;
 };
@@ -693,6 +699,12 @@ struct enum_dump {
 };
 
 typedef long cmdcount_nht;	/* Command counts */
+
+enum {
+    CQ_CANNED = 0, /* internal canned sequence */
+    CQ_REPEAT,     /* user-inputted, if g.in_doagain, replayed */
+    NUM_CQS
+};
 
 /*
  * 'g' -- instance_globals holds engine state that does not need to be
@@ -706,7 +718,7 @@ typedef long cmdcount_nht;	/* Command counts */
  */
 struct instance_globals {
 
-    struct _cmd_queue *command_queue;
+    struct _cmd_queue *command_queue[NUM_CQS];
 
     /* apply.c */
     int jumping_is_magic; /* current jump result of magic */
@@ -740,12 +752,6 @@ struct instance_globals {
        which requires a thing and a direction), and the input prompt is
        not shown.  Also, while in_doagain is TRUE, no keystrokes can be
        saved into the saveq. */
-    char pushq[BSIZE];
-    char saveq[BSIZE];
-    int phead;
-    int ptail;
-    int shead;
-    int stail;
     coord clicklook_cc;
     winid en_win;
     boolean en_via_menu;
@@ -811,7 +817,8 @@ struct instance_globals {
     char toplines[TBUFSZ];
     coord bhitpos; /* place where throw or zap hits or stops */
     boolean in_steed_dismounting;
-    coord doors[DOORMAX];
+    int doors_alloc; /* doors-array allocated size */
+    coord *doors; /* array of door locations */
     struct menucoloring *menu_colorings;
     schar lastseentyp[COLNO][ROWNO]; /* last seen/touched dungeon typ */
     struct spell spl_book[MAXSPELL + 1];
@@ -850,7 +857,7 @@ struct instance_globals {
 #ifdef MICRO
     char levels[PATHLEN]; /* where levels are */
 #endif /* MICRO */
-    struct sinfo program_state;
+    struct sinfo program_state; /* flags describing game's current state */
 
     /* detect.c */
 
@@ -1032,6 +1039,7 @@ struct instance_globals {
     boolean zombify;
     short *animal_list; /* list of PM values for animal monsters */
     int animal_list_count;
+    boolean somebody_can_move;
 
     /* mthrowu.c */
     int mesg_given; /* for m_throw()/thitu() 'miss' message */
@@ -1082,6 +1090,7 @@ struct instance_globals {
     boolean opt_from_file;
     boolean opt_need_redraw; /* for doset() */
     boolean opt_need_glyph_reset;
+    char *cmdline_windowsys; /* set in unixmain.c */
     /* use menucolors to show colors in the pick-a-color menu */
     boolean save_menucolors; /* copy of iflags.use_menu_colors */
     struct menucoloring *save_colorings; /* copy of g.menu_colorings */

@@ -1,4 +1,4 @@
-/* NetHack 3.7	cmd.c	$NHDT-Date: 1658993634 2022/07/28 07:33:54 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.597 $ */
+/* NetHack 3.7	cmd.c	$NHDT-Date: 1661240704 2022/08/23 07:45:04 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.616 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2013. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -14,6 +14,9 @@
 #if defined(SYSV) || defined(DGUX) || defined(HPUX)
 #define NR_OF_EOFS 20
 #endif
+#endif
+#if (NH_DEVEL_STATUS != NH_STATUS_RELEASED) || defined(DEBUG)
+static int wiz_display_macros(void);
 #endif
 
 #ifdef DUMB /* stuff commented out in extern.h, but needed here */
@@ -105,6 +108,7 @@ static boolean can_do_extcmd(const struct ext_func_tab *);
 static int dotravel(void);
 static int dotravel_target(void);
 static int doclicklook(void);
+static int domouseaction(void);
 static int doterrain(void);
 static int wiz_wish(void);
 static int wiz_identify(void);
@@ -114,6 +118,7 @@ static int wiz_genesis(void);
 static int wiz_where(void);
 static int wiz_detect(void);
 static int wiz_panic(void);
+static int wiz_fuzzer(void);
 static int wiz_polyself(void);
 static int wiz_kill(void);
 static int wiz_load_lua(void);
@@ -127,9 +132,7 @@ static int wiz_intrinsic(void);
 static int wiz_show_wmodes(void);
 static int wiz_show_stats(void);
 static int wiz_rumor_check(void);
-#ifdef DEBUG_MIGRATING_MONS
 static int wiz_migrate_mons(void);
-#endif
 
 static void makemap_unmakemon(struct monst *, boolean);
 static void makemap_remove_mons(void);
@@ -152,14 +155,22 @@ static void misc_stats(winid, long *, long *);
 static void you_sanity_check(void);
 static boolean accept_menu_prefix(const struct ext_func_tab *);
 static void reset_cmd_vars(boolean);
+
 static void mcmd_addmenu(winid, int, const char *);
-static char here_cmd_menu(void);
-static char there_cmd_menu(coordxy, coordxy, int);
+static int there_cmd_menu_self(winid, coordxy, coordxy, int *);
+static int there_cmd_menu_next2u(winid, coordxy, coordxy, int, int *);
+static int there_cmd_menu_far(winid, coordxy, coordxy, int);
+static int there_cmd_menu_common(winid, coordxy, coordxy, int, int *);
 static void act_on_act(int, coordxy, coordxy);
+static char there_cmd_menu(coordxy, coordxy, int);
+static char here_cmd_menu(void);
+
 static char readchar_core(coordxy *, coordxy *, int *);
 static char *parse(void);
 static void show_direction_keys(winid, char, boolean);
 static boolean help_dir(char, uchar, const char *);
+static int QSORTCALLBACK migrsort_cmp(const genericptr, const genericptr);
+static void list_migrating_mons(d_level *);
 
 static void handler_rebind_keys_add(boolean);
 static boolean bind_key_fn(uchar, int (*)(void));
@@ -233,12 +244,34 @@ set_occupation(int (*fn)(void), const char *txt, cmdcount_nht xtime)
     return;
 }
 
+/*
+void
+cmdq_print(int q)
+{
+    struct _cmd_queue *cq = g.command_queue[q];
+    char buf[QBUFSZ];
+
+    pline("CQ:%i", q);
+    while (cq) {
+        switch (cq->typ) {
+        case CMDQ_KEY: pline("(key:%s)", key2txt(cq->key, buf)); break;
+        case CMDQ_EXTCMD: pline("(extcmd:#%s)", cq->ec_entry->ef_txt); break;
+        case CMDQ_DIR: pline("(dir:%i,%i,%i)", cq->dirx, cq->diry, cq->dirz); break;
+        case CMDQ_USER_INPUT: pline1("(userinput)"); break;
+        case CMDQ_INT: pline("(int:%i)", cq->intval); break;
+        default: pline("(ERROR:%i)",cq->typ); break;
+        }
+        cq = cq->next;
+    }
+}
+*/
+
 /* add extended command function to the command queue */
 void
-cmdq_add_ec(int (*fn)(void))
+cmdq_add_ec(int q, int (*fn)(void))
 {
     struct _cmd_queue *tmp = (struct _cmd_queue *) alloc(sizeof *tmp);
-    struct _cmd_queue *cq = g.command_queue;
+    struct _cmd_queue *cq = g.command_queue[q];
 
     tmp->typ = CMDQ_EXTCMD;
     tmp->ec_entry = ext_func_tab_from_func(fn);
@@ -250,15 +283,15 @@ cmdq_add_ec(int (*fn)(void))
     if (cq)
         cq->next = tmp;
     else
-        g.command_queue = tmp;
+        g.command_queue[q] = tmp;
 }
 
 /* add a key to the command queue */
 void
-cmdq_add_key(char key)
+cmdq_add_key(int q, char key)
 {
     struct _cmd_queue *tmp = (struct _cmd_queue *) alloc(sizeof *tmp);
-    struct _cmd_queue *cq = g.command_queue;
+    struct _cmd_queue *cq = g.command_queue[q];
 
     tmp->typ = CMDQ_KEY;
     tmp->key = key;
@@ -270,15 +303,15 @@ cmdq_add_key(char key)
     if (cq)
         cq->next = tmp;
     else
-        g.command_queue = tmp;
+        g.command_queue[q] = tmp;
 }
 
 /* add a direction to the command queue */
 void
-cmdq_add_dir(schar dx, schar dy, schar dz)
+cmdq_add_dir(int q, schar dx, schar dy, schar dz)
 {
     struct _cmd_queue *tmp = (struct _cmd_queue *) alloc(sizeof *tmp);
-    struct _cmd_queue *cq = g.command_queue;
+    struct _cmd_queue *cq = g.command_queue[q];
 
     tmp->typ = CMDQ_DIR;
     tmp->dirx = dx;
@@ -292,15 +325,15 @@ cmdq_add_dir(schar dx, schar dy, schar dz)
     if (cq)
         cq->next = tmp;
     else
-        g.command_queue = tmp;
+        g.command_queue[q] = tmp;
 }
 
 /* add placeholder to the command queue, allows user input there */
 void
-cmdq_add_userinput(void)
+cmdq_add_userinput(int q)
 {
     struct _cmd_queue *tmp = (struct _cmd_queue *) alloc(sizeof *tmp);
-    struct _cmd_queue *cq = g.command_queue;
+    struct _cmd_queue *cq = g.command_queue[q];
 
     tmp->typ = CMDQ_USER_INPUT;
     tmp->next = NULL;
@@ -311,7 +344,80 @@ cmdq_add_userinput(void)
     if (cq)
         cq->next = tmp;
     else
-        g.command_queue = tmp;
+        g.command_queue[q] = tmp;
+}
+
+/* add integer to the command queue */
+void
+cmdq_add_int(int q, int val)
+{
+    struct _cmd_queue *tmp = (struct _cmd_queue *) alloc(sizeof *tmp);
+    struct _cmd_queue *cq = g.command_queue[q];
+
+    tmp->typ = CMDQ_INT;
+    tmp->intval = val;
+    tmp->next = NULL;
+
+    while (cq && cq->next)
+        cq = cq->next;
+
+    if (cq)
+        cq->next = tmp;
+    else
+        g.command_queue[q] = tmp;
+}
+
+/* shift the last entry in command queue to first */
+void
+cmdq_shift(int q)
+{
+    struct _cmd_queue *tmp = NULL;
+    struct _cmd_queue *cq = g.command_queue[q];
+
+    while (cq && cq->next && cq->next->next)
+        cq = cq->next;
+
+    if (cq)
+        tmp = cq->next;
+    if (tmp) {
+        tmp->next = g.command_queue[q];
+        g.command_queue[q] = tmp;
+        cq->next = NULL;
+    }
+}
+
+struct _cmd_queue *
+cmdq_reverse(struct _cmd_queue *head)
+{
+    struct _cmd_queue *prev = NULL, *curr = head, *next;
+
+    while (curr) {
+        next = curr->next;
+        curr->next = prev;
+        prev = curr;
+        curr = next;
+    }
+    return prev;
+}
+
+struct _cmd_queue *
+cmdq_copy(int q)
+{
+    struct _cmd_queue *tmp = NULL;
+    struct _cmd_queue *cq = g.command_queue[q];
+
+    while (cq) {
+        struct _cmd_queue *tmp2 = (struct _cmd_queue *) alloc(sizeof *tmp2);
+
+        *tmp2 = *cq;
+        tmp2->next = tmp;
+        tmp = tmp2;
+        cq = cq->next;
+    }
+
+    tmp = cmdq_reverse(tmp);
+
+    return tmp;
 }
 
 /* pop off the topmost command from the command queue.
@@ -320,10 +426,11 @@ cmdq_add_userinput(void)
 struct _cmd_queue *
 cmdq_pop(void)
 {
-    struct _cmd_queue *tmp = g.command_queue;
+    int q = (g.in_doagain) ? CQ_REPEAT : CQ_CANNED;
+    struct _cmd_queue *tmp = g.command_queue[q];
 
     if (tmp) {
-        g.command_queue = tmp->next;
+        g.command_queue[q] = tmp->next;
         tmp->next = NULL;
     }
     return tmp;
@@ -331,16 +438,16 @@ cmdq_pop(void)
 
 /* get the top entry without popping it */
 struct _cmd_queue *
-cmdq_peek(void)
+cmdq_peek(int q)
 {
-    return g.command_queue;
+    return g.command_queue[q];
 }
 
 /* clear all commands from the command queue */
 void
-cmdq_clear(void)
+cmdq_clear(int q)
 {
-    struct _cmd_queue *tmp = g.command_queue;
+    struct _cmd_queue *tmp = g.command_queue[q];
     struct _cmd_queue *tmp2;
 
     while (tmp) {
@@ -348,94 +455,18 @@ cmdq_clear(void)
         free(tmp);
         tmp = tmp2;
     }
-    g.command_queue = NULL;
-}
-
-static char popch(void);
-
-static char
-popch(void)
-{
-    /* If occupied, return '\0', letting tgetch know a character should
-     * be read from the keyboard.  If the character read is not the
-     * ABORT character (as checked in pcmain.c), that character will be
-     * pushed back on the pushq.
-     */
-    if (g.occupation)
-        return '\0';
-    if (g.in_doagain)
-        return (char) ((g.shead != g.stail) ? g.saveq[g.stail++] : '\0');
-    else
-        return (char) ((g.phead != g.ptail) ? g.pushq[g.ptail++] : '\0');
+    g.command_queue[q] = NULL;
 }
 
 char
 pgetchar(void) /* courtesy of aeb@cwi.nl */
 {
-    register int ch;
+    register int ch = '\0';
 
     if (iflags.debug_fuzzer)
         return randomkey();
-    if (!(ch = popch()))
-        ch = nhgetch();
+    ch = nhgetch();
     return (char) ch;
-}
-
-/* A ch == 0 resets the pushq */
-void
-pushch(char ch)
-{
-    if (!ch)
-        g.phead = g.ptail = 0;
-    if (g.phead < BSIZE)
-        g.pushq[g.phead++] = ch;
-    return;
-}
-
-/* A ch == 0 resets the saveq.  Only save keystrokes when not
- * replaying a previous command.
- */
-void
-savech(char ch)
-{
-    if (!g.in_doagain) {
-        if (!ch)
-            g.phead = g.ptail = g.shead = g.stail = 0;
-        else if (g.shead < BSIZE)
-            g.saveq[g.shead++] = ch;
-    }
-    return;
-}
-
-/* perform savech() for the characters of an extended command name */
-void
-savech_extcmd(const char *str, boolean addnewline)
-{
-    unsigned j, L = Strlen(str);
-
-    /* DEBUGFILES='cmd.c' -- for tty or other one-line message 'window'
-       this debuging line could be immediately erased and need ^P to read */
-    debugpline1("savech_extcmd(\"%s\")", str);
-
-    /* 'str' might be the full command name or maybe just enough to be
-       unambiguous depending on how the interface handles that; if it is
-       "repeat" (or leading substring of that), don't save it for do-again */
-    if (!g.in_doagain && (L > 2 && strncmp(str, "repeat", L))) {
-        uchar c = (g.shead > 0) ? (uchar) (g.saveq[g.shead - 1] & 0xff) : 0;
-
-        /* reset saveq unless it holds a prefix */
-        if (!c || !g.Cmd.commands[c]
-            || (g.Cmd.commands[c]->flags & PREFIXCMD) == 0)
-            savech(0);
-
-        /* insert the '#' first because rhack() avoids doing that when
-           processing doextcmd() */
-        savech(g.Cmd.extcmd_char);
-        for (j = 0; j < L; ++j)
-            savech(str[j]);
-        if (addnewline)
-            savech('\n');
-    }
 }
 
 /* '#' or whatever has been bound to doextcmd() in its place */
@@ -871,7 +902,7 @@ domonability(void)
     char c = '\0';
 
     if (might_hide && webmaker(uptr)) {
-        c = yn_function("Hide [h] or spin a web [s]?", "hsq", 'q');
+        c = yn_function("Hide [h] or spin a web [s]?", "hsq", 'q', TRUE);
         if (c == 'q' || c == '\033')
             return ECMD_OK;
     }
@@ -1200,9 +1231,13 @@ wiz_map(void)
 static int
 wiz_genesis(void)
 {
-    if (wizard)
+    if (wizard) {
+        boolean mongen_saved = iflags.debug_mongen;
+
+        iflags.debug_mongen = FALSE;
         (void) create_particular();
-    else
+        iflags.debug_mongen = mongen_saved;
+    } else
         pline(unavailcmd, ecname_from_fn(wiz_genesis));
     return ECMD_OK;
 }
@@ -1277,12 +1312,18 @@ wiz_kill(void)
             mtmp = m_at(cc.x, cc.y);
         }
 
+        /* whether there's an unseen monster here or not, player will know
+           that there's no monster here after the kill or failed attempt;
+           let hero know too */
+        (void) unmap_invisible(cc.x, cc.y);
+
         if (mtmp) {
             /* we don't require that the monster be seen or sensed so
                we issue our own message in order to name it in case it
                isn't; note that if it triggers other kills, those might
                be referred to as "it" */
-            int tame = !!mtmp->mtame, seen = canspotmon(mtmp),
+            int tame = !!mtmp->mtame,
+                seen = (canspotmon(mtmp) || (u.uswallow && mtmp == u.ustuck)),
                 flgs = (SUPPRESS_IT | SUPPRESS_HALLUCINATION
                         | ((tame && has_mgivenname(mtmp)) ? SUPPRESS_SADDLE
                            : 0)),
@@ -1310,7 +1351,6 @@ wiz_kill(void)
             }
         } else {
             There("is no monster there.");
-            (void) unmap_invisible(cc.x, cc.y);
             break;
         }
     }
@@ -1324,7 +1364,7 @@ wiz_load_lua(void)
 {
     if (wizard) {
         char buf[BUFSZ];
-        nhl_sandbox_info sbi = {NHL_SB_SAFE, 0, 0, 0};
+        nhl_sandbox_info sbi = {NHL_SB_SAFE | NHL_SB_DEBUGGING, 0, 0, 0};
 
         buf[0] = '\0';
         getlin("Load which lua file?", buf);
@@ -1388,7 +1428,7 @@ wiz_flip_level(void)
      * as flipping is normally done only during level creation.
      */
     if (wizard) {
-        char c = yn_function(prmpt, choices, '\0');
+        char c = yn_function(prmpt, choices, '\0', TRUE);
 
         if (c && index(choices, c)) {
             c -= '0';
@@ -1504,6 +1544,19 @@ wiz_panic(void)
     if (paranoid_query(TRUE,
                        "Do you want to call panic() and end your game?"))
         panic("Crash test.");
+    return ECMD_OK;
+}
+
+/* #debugfuzzer command - fuzztest the program */
+static int
+wiz_fuzzer(void)
+{
+    if (flags.suppress_alert < FEATURE_NOTICE_VER(3,7,0)) {
+        pline("The fuzz tester will make NetHack execute random keypresses.");
+        pline("There is no conventional way out of this mode.");
+    }
+    if (paranoid_query(TRUE, "Do you want to start fuzz testing?"))
+        iflags.debug_fuzzer = TRUE; /* Thoth, take the reins */
     return ECMD_OK;
 }
 
@@ -2043,7 +2096,7 @@ wiz_intrinsic(void)
         }
         if (n >= 1)
             free((genericptr_t) pick_list);
-        doredraw();
+        docrt();
     } else
         pline(unavailcmd, ecname_from_fn(wiz_intrinsic));
     return ECMD_OK;
@@ -2409,18 +2462,18 @@ do_repeat(void)
     int res = ECMD_OK;
 
     if (!g.in_doagain) {
-        char c = g.saveq[0];
+        struct _cmd_queue *repeat_copy;
 
-        if (!c || !g.Cmd.commands[c & 0xff]) {
+        if (!cmdq_peek(CQ_REPEAT)) {
             Norep("There is no command available to repeat.");
-            if (c)
-                savech(0);
             return ECMD_FAIL;
         }
+        repeat_copy = cmdq_copy(CQ_REPEAT);
         g.in_doagain = TRUE;
-        g.stail = 0;
         rhack((char *) 0); /* read and execute command */
         g.in_doagain = FALSE;
+        cmdq_clear(CQ_REPEAT);
+        g.command_queue[CQ_REPEAT] = repeat_copy;
         iflags.menu_requested = FALSE;
         if (g.context.move)
             res = ECMD_TIME;
@@ -2461,6 +2514,8 @@ struct ext_func_tab extcmdlist[] = {
               doclose, 0, NULL },
     { M('C'), "conduct", "list voluntary challenges you have maintained",
               doconduct, IFBURIED | AUTOCOMPLETE | GENERALCMD, NULL },
+    { '\0',   "debugfuzzer", "start the fuzz tester",
+              wiz_fuzzer, IFBURIED | WIZMODECMD | NOFUZZERCMD, NULL },
     { M('d'), "dip", "dip an object into something",
               dodip, AUTOCOMPLETE | CMD_M_PREFIX, NULL },
     { '>',    "down", "go down a staircase",
@@ -2518,22 +2573,27 @@ struct ext_func_tab extcmdlist[] = {
               dolook, IFBURIED, NULL },
     { M('l'), "loot", "loot a box on the floor",
               doloot, AUTOCOMPLETE | CMD_M_PREFIX, NULL },
-#ifdef DEBUG_MIGRATING_MONS
-    { '\0',   "migratemons", "migrate N random monsters",
-              wiz_migrate_mons, IFBURIED | AUTOCOMPLETE | WIZMODECMD, NULL },
+    { '\0',   "migratemons",
+#ifdef DEBUG_MIGRATING_MONSTERS
+              "show migrating monsters and migrate N random ones",
+#else
+              "show migrating monsters",
 #endif
+              wiz_migrate_mons, IFBURIED | AUTOCOMPLETE | WIZMODECMD, NULL },
     { M('m'), "monster", "use monster's special ability",
               domonability, IFBURIED | AUTOCOMPLETE, NULL },
-    { 'N',    "name", "same as call; name a monster or object or object type",
+    { M('n'), "name", "same as call; name a monster or object or object type",
               docallcmd, IFBURIED | AUTOCOMPLETE, NULL },
     { M('o'), "offer", "offer a sacrifice to the gods",
               dosacrifice, AUTOCOMPLETE | CMD_M_PREFIX, NULL },
     { 'o',    "open", "open a door",
               doopen, 0, NULL },
+    /* 'm #options' runs doset() */
     { 'O',    "options", "show option settings",
               doset_simple, IFBURIED | GENERALCMD | CMD_M_PREFIX, NULL },
+    /* 'm #optionsfull' runs doset_simple() */
     { '\0',   "optionsfull", "show all option settings, possibly change them",
-              doset, IFBURIED | GENERALCMD, NULL },
+              doset, IFBURIED | GENERALCMD | CMD_M_PREFIX, NULL },
     /* #overview used to need autocomplete and has retained that even
        after being assigned to ^O [old wizard mode ^O is now #wizwhere] */
     { C('o'), "overview", "show a summary of the explored dungeon",
@@ -2590,7 +2650,8 @@ struct ext_func_tab extcmdlist[] = {
     { 'S',    "save", "save the game and exit",
               dosave, IFBURIED | GENERALCMD | NOFUZZERCMD, NULL },
     { '\0',   "saveoptions", "save the game configuration",
-              do_write_config_file, IFBURIED | GENERALCMD | NOFUZZERCMD, NULL },
+              do_write_config_file,
+              IFBURIED | GENERALCMD | NOFUZZERCMD, NULL },
     { 's',    "search", "search for traps and secret doors",
               dosearch, IFBURIED | CMD_M_PREFIX, "searching" },
     { '*',    "seeall", "show all equipment in use",
@@ -2644,7 +2705,7 @@ struct ext_func_tab extcmdlist[] = {
               doterrain, IFBURIED | AUTOCOMPLETE, NULL },
     { '\0',   "therecmdmenu",
               "menu of commands you can do from here to adjacent spot",
-              dotherecmdmenu, AUTOCOMPLETE | GENERALCMD, NULL },
+              dotherecmdmenu, AUTOCOMPLETE | GENERALCMD | MOUSECMD, NULL },
     { 't',    "throw", "throw something",
               dothrow, 0, NULL },
     { '\0',   "timeout", "look at timeout queue and hero's timed intrinsics",
@@ -2690,8 +2751,14 @@ struct ext_func_tab extcmdlist[] = {
               wiz_debug_cmd_bury, IFBURIED | AUTOCOMPLETE | WIZMODECMD,
               NULL },
 #endif
+    { '\0',   "wizcast", "cast any spell",
+              dowizcast, IFBURIED | WIZMODECMD, NULL },
     { C('e'), "wizdetect", "reveal hidden things within a small radius",
               wiz_detect, IFBURIED | WIZMODECMD, NULL },
+#if (NH_DEVEL_STATUS != NH_STATUS_RELEASED) || defined(DEBUG)
+    { '\0',   "wizdispmacros", "validate the display macro ranges",
+              wiz_display_macros, IFBURIED | AUTOCOMPLETE | WIZMODECMD, NULL },
+#endif
     { '\0',   "wizfliplevel", "flip the level",
               wiz_flip_level, IFBURIED | WIZMODECMD, NULL },
     { C('g'), "wizgenesis", "create a monster",
@@ -2783,7 +2850,8 @@ struct ext_func_tab extcmdlist[] = {
             do_run_southwest, MOVEMENTCMD | CMD_M_PREFIX, NULL },
 
     /* internal commands: only used by game core, not available for user */
-    { '\0', "clicklook", NULL, doclicklook, INTERNALCMD, NULL },
+    { '\0', "clicklook", NULL, doclicklook, INTERNALCMD | MOUSECMD, NULL },
+    { '\0', "mouseaction", NULL, domouseaction, INTERNALCMD | MOUSECMD, NULL },
     { '\0', "altdip", NULL, dip_into, INTERNALCMD, NULL },
     { '\0', "altadjust", NULL, adjust_split, INTERNALCMD, NULL },
     { '\0', "altunwield", NULL, remarm_swapwep, INTERNALCMD, NULL },
@@ -3122,6 +3190,43 @@ key2extcmddesc(uchar key)
 }
 
 boolean
+bind_mousebtn(int btn, const char *command)
+{
+    struct ext_func_tab *extcmd;
+
+    if (btn < 1 || btn > NUM_MOUSE_BUTTONS) {
+        config_error_add("Wrong mouse button, valid are 1-%i", NUM_MOUSE_BUTTONS);
+        return FALSE;
+    }
+    btn--;
+
+    /* special case: "nothing" is reserved for unbinding */
+    if (!strcmpi(command, "nothing")) {
+        g.Cmd.mousebtn[btn] = (struct ext_func_tab *) 0;
+        return TRUE;
+    }
+
+    for (extcmd = extcmdlist; extcmd->ef_txt; extcmd++) {
+        if (strcmpi(command, extcmd->ef_txt))
+            continue;
+        if (!(extcmd->flags & MOUSECMD))
+            continue;
+        g.Cmd.mousebtn[btn] = extcmd;
+#if 0 /* silently accept key binding for unavailable command (!SHELL,&c) */
+        if ((extcmd->flags & CMD_NOT_AVAILABLE) != 0) {
+            char buf[BUFSZ];
+
+            Sprintf(buf, cmdnotavail, extcmd->ef_txt);
+            config_error_add("%s", buf);
+        }
+#endif
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+boolean
 bind_key(uchar key, const char *command)
 {
     struct ext_func_tab *extcmd;
@@ -3180,6 +3285,9 @@ commands_init(void)
         if (extcmd->key)
             g.Cmd.commands[extcmd->key] = extcmd;
 
+    (void) bind_mousebtn(1, "therecmdmenu");
+    (void) bind_mousebtn(2, "clicklook");
+
     /* number_pad */
     (void) bind_key(C('l'), "redraw");
     (void) bind_key('h',    "help");
@@ -3187,6 +3295,7 @@ commands_init(void)
     (void) bind_key('k',    "kick");
     (void) bind_key('l',    "loot");
     (void) bind_key(C('n'), "annotate");
+    (void) bind_key('N',    "name");
     (void) bind_key('u',    "untrap");
     (void) bind_key('5',    "run");
     (void) bind_key(M('5'), "rush");
@@ -3195,7 +3304,6 @@ commands_init(void)
     /* alt keys: */
     (void) bind_key(M('O'), "overview");
     (void) bind_key(M('2'), "twoweapon");
-    (void) bind_key(M('n'), "name");
     (void) bind_key(M('N'), "name");
 #if 0
     /* don't do this until the rest_on_space option is set or cleared */
@@ -3899,6 +4007,87 @@ wiz_show_stats(void)
     return ECMD_OK;
 }
 
+#if (NH_DEVEL_STATUS != NH_STATUS_RELEASED) || defined(DEBUG)
+/* the #wizdispmacros command
+ * Verify that some display macros are returning sane values */
+static int
+wiz_display_macros(void)
+{
+    char buf[BUFSZ];
+    winid win;
+    int test, trouble = 0, no_glyph = NO_GLYPH, max_glyph = MAX_GLYPH;
+    static const char *const display_issues = "Display macro issues:";
+
+    win = create_nhwindow(NHW_TEXT);
+
+    for (int glyph = 0; glyph < MAX_GLYPH; ++glyph) {
+        /* glyph_is_cmap / glyph_to_cmap() */
+        if (glyph_is_cmap(glyph)) {
+            test = glyph_to_cmap(glyph);
+            /* check for MAX_GLYPH return */
+            if (test == no_glyph) {
+                if (!trouble++)
+                    putstr(win, 0, display_issues);
+                Sprintf(buf,
+                        "glyph_is_cmap() / glyph_to_cmap(glyph=%d)"
+                        " sync failure, returned NO_GLYPH (%d)",
+                        glyph, test);
+                 putstr(win, 0, buf);
+            }
+            if (glyph_is_cmap_zap(glyph)
+                && !(test >= S_vbeam && test <= S_rslant)) {
+                if (!trouble++)
+                    putstr(win, 0, display_issues);
+                Sprintf(buf,
+                        "glyph_is_cmap_zap(glyph=%d) returned non-zap cmap %d",
+                        glyph, test);
+                 putstr(win, 0, buf);
+            }
+            /* check against defsyms array subscripts */
+            if (test < 0 || test >= SIZE(defsyms)) {
+                if (!trouble++)
+                    putstr(win, 0, display_issues);
+                Sprintf(buf, "glyph_to_cmap(glyph=%d) returns %d"
+                        " exceeds defsyms[%d] bounds (MAX_GLYPH = %d)",
+                        glyph, test, SIZE(defsyms), max_glyph);
+                putstr(win, 0, buf);
+            }
+        }
+        /* glyph_is_monster / glyph_to_mon */
+        if (glyph_is_monster(glyph)) {
+            test = glyph_to_mon(glyph);
+            /* check against mons array subscripts */
+            if (test < 0 || test >= NUMMONS) {
+                if (!trouble++)
+                    putstr(win, 0, display_issues);
+                Sprintf(buf, "glyph_to_mon(glyph=%d) returns %d"
+                        " exceeds mons[%d] bounds",
+                        glyph, test, NUMMONS);
+                putstr(win, 0, buf);
+            }
+        }
+        /* glyph_is_object / glyph_to_obj */
+        if (glyph_is_object(glyph)) {
+            test = glyph_to_obj(glyph);
+            /* check against objects array subscripts */
+            if (test < 0 || test > NUM_OBJECTS) {
+                if (!trouble++)
+                    putstr(win, 0, display_issues);
+                Sprintf(buf, "glyph_to_obj(glyph=%d) returns %d"
+                        " exceeds objects[%d] bounds",
+                        glyph, test, NUM_OBJECTS);
+                putstr(win, 0, buf);
+            }
+        }
+    }
+    if (!trouble)
+        putstr(win, 0, "No display macro issues detected");
+    display_nhwindow(win, FALSE);
+    destroy_nhwindow(win);
+    return ECMD_OK;
+}
+#endif /* (NH_DEVEL_STATUS != NH_STATUS_RELEASED) || defined(DEBUG) */
+
 RESTORE_WARNING_FORMAT_NONLITERAL
 
 static void
@@ -3928,20 +4117,39 @@ sanity_check(void)
     trap_sanity_check();
 }
 
-#ifdef DEBUG_MIGRATING_MONS
-static void list_migrating_mons(d_level *);
+/* qsort() comparison routine for use in list_migrating_mons() */
+static int QSORTCALLBACK
+migrsort_cmp(const genericptr vptr1, const genericptr vptr2)
+{
+    const struct monst *m1 = *(const struct monst **) vptr1,
+                       *m2 = *(const struct monst **) vptr2;
+    int d1 = (int) m1->mux, l1 = (int) m1->muy,
+        d2 = (int) m2->mux, l2 = (int) m2->muy;
 
-/* called by #migratemons; might turn it into separate wizard mode command */
+    /* if different branches, sort by dungeon number */
+    if (d1 != d2)
+        return d1 - d2;
+    /* within same branch, sort by level number */
+    if (l1 != l2)
+        return l1 - l2;
+    /* same destination level:  use a tie-breaker to force stable sort;
+       monst->m_id is unsigned so we need more than just simple subtraction */
+    return (m1->m_id < m2->m_id) ? -1 : (m1->m_id > m2->m_id);
+}
+
+/* called by #migratemons; displays count of migrating monsters, optionally
+   displays them as well */
 static void
 list_migrating_mons(
     d_level *nextlevl) /* default destination for wiz_migrate_mons() */
 {
     winid win = WIN_ERR;
     boolean showit = FALSE;
-    int n, xyloc;
+    unsigned n;
+    int xyloc;
     coordxy x, y;
     char c, prmpt[10], xtra[10], buf[BUFSZ];
-    struct monst *mtmp;
+    struct monst *mtmp, **marray;
     int here = 0, nxtlv = 0, other = 0;
 
     for (mtmp = g.migrating_mons; mtmp; mtmp = mtmp->nmon) {
@@ -3965,7 +4173,7 @@ list_migrating_mons(
         Strcat(prmpt, "a q");
         if (*xtra)
             Sprintf(eos(prmpt), "%c%s", '\033', xtra);
-        c = yn_function("List which?", prmpt, 'q');
+        c = yn_function("List which?", prmpt, 'q', TRUE);
         n = (c == 'c') ? here
             : (c == 'n') ? nxtlv
               : (c == 'o') ? other
@@ -3988,8 +4196,12 @@ list_migrating_mons(
             }
             putstr(win, 0, buf);
             putstr(win, 0, "");
-            /* TODO? make multiple passes in order to show mons in
-               destination order */
+            /* collect the migrating monsters into an array; for 'o' and 'a'
+               where multiple destination levels might be present, sort by
+               the destination; 'c' and 'n' don't need to be sorted but we
+               do that anyway to get the same tie-breaker as 'o' and 'a' */
+            marray = (struct monst **) alloc((n + 1) * sizeof *marray);
+            n = 0;
             for (mtmp = g.migrating_mons; mtmp; mtmp = mtmp->nmon) {
                 if (c == 'a')
                     showit = TRUE;
@@ -3997,25 +4209,34 @@ list_migrating_mons(
                     showit = (c == 'c');
                 else if (mtmp->mux == nextlevl->dnum
                          && mtmp->muy == nextlevl->dlevel)
-                    showit = (c = 'n');
+                    showit = (c == 'n');
                 else
                     showit = (c == 'o');
 
-                if (showit) {
-                    Sprintf(buf, "  %s", minimal_monnam(mtmp, FALSE));
-                    /* minimal_monnam() appends map coordinates; strip that */
-                    (void) strsubst(buf, " <0,0>", "");
-                    if (c == 'o' || c == 'a')
-                        Sprintf(eos(buf), " to %d:%d", mtmp->mux, mtmp->muy);
-                    xyloc = mtmp->mtrack[0].x; /* (for legibility) */
-                    if (xyloc == MIGR_EXACT_XY) {
-                        x = mtmp->mtrack[1].x;
-                        y = mtmp->mtrack[1].y;
-                        Sprintf(eos(buf), " at <%d,%d>", (int) x, (int) y);
-                    }
-                    putstr(win, 0, buf);
-                }
+                if (showit)
+                    marray[n++] = mtmp;
             }
+            marray[n] = (struct monst *) 0; /* mark end for traversal loop */
+            if (n > 1)
+                qsort((genericptr_t) marray, (size_t) n, sizeof *marray,
+                      migrsort_cmp); /* sort elements [0] through [n-1] */
+            for (n = 0; (mtmp = marray[n]) != 0; ++n) {
+                Sprintf(buf, "  %s", minimal_monnam(mtmp, FALSE));
+                /* minimal_monnam() appends map coordinates; strip that */
+                (void) strsubst(buf, " <0,0>", "");
+                if (has_mgivenname(mtmp)) /* if mtmp is named, include that */
+                    Sprintf(eos(buf), " named %s", MGIVENNAME(mtmp));
+                if (c == 'o' || c == 'a')
+                    Sprintf(eos(buf), " to %d:%d", mtmp->mux, mtmp->muy);
+                xyloc = mtmp->mtrack[0].x; /* (for legibility) */
+                if (xyloc == MIGR_EXACT_XY) {
+                    x = mtmp->mtrack[1].x;
+                    y = mtmp->mtrack[1].y;
+                    Sprintf(eos(buf), " at <%d,%d>", (int) x, (int) y);
+                }
+                putstr(win, 0, buf);
+            }
+            free((genericptr_t) marray);
             display_nhwindow(win, FALSE);
             destroy_nhwindow(win);
         } else if (c != 'q') {
@@ -4025,28 +4246,43 @@ list_migrating_mons(
     }
 }
 
+/* #migratemons command */
 static int
 wiz_migrate_mons(void)
 {
+#ifdef DEBUG_MIGRATING_MONS
     int mcount;
-    char inbuf[BUFSZ] = DUMMY;
+    char inbuf[BUFSZ];
     struct permonst *ptr;
     struct monst *mtmp;
+#endif
     d_level tolevel;
 
     if (Is_stronghold(&u.uz))
         assign_level(&tolevel, &valley_level);
-    else
+    else if (!Is_botlevel(&u.uz))
         get_level(&tolevel, depth(&u.uz) + 1);
+    else
+        tolevel.dnum = 0, tolevel.dlevel = 0;
 
     list_migrating_mons(&tolevel);
 
-    getlin("How many random monsters to migrate to next level? [0]", inbuf);
+#ifdef DEBUG_MIGRATING_MONS
+    inbuf[0] = '\033', inbuf[1] = '\0';
+    if (tolevel.dnum || tolevel.dlevel)
+        getlin("How many random monsters to migrate to next level? [0]",
+               inbuf);
+    else
+        pline("Can't get there from here.");
     if (*inbuf == '\033')
         return ECMD_OK;
+
     mcount = atoi(inbuf);
-    if (mcount < 0 || mcount > (COLNO * ROWNO) || Is_botlevel(&u.uz))
-        return ECMD_OK;
+    if (mcount < 1)
+        mcount = 0;
+    else if (mcount > ((COLNO - 1) * ROWNO))
+        mcount = (COLNO - 1) * ROWNO;
+
     while (mcount > 0) {
         ptr = rndmonst();
         mtmp = makemon(ptr, 0, 0, MM_NOMSG);
@@ -4055,9 +4291,9 @@ wiz_migrate_mons(void)
                              (coord *) 0);
         mcount--;
     }
+#endif /* DEBUG_MIGRATING_MONS */
     return ECMD_OK;
 }
-#endif /* DEBUG_MIGRATING_MONS */
 
 static struct {
     int nhkf;
@@ -4188,6 +4424,24 @@ parseautocomplete(char *autocomplete, boolean condition)
     raw_printf("Bad autocomplete: invalid extended command '%s'.",
                autocomplete);
     wait_synch();
+}
+
+/* save&clear the mouse button actions, or restore the saved ones */
+void
+lock_mouse_buttons(boolean savebtns)
+{
+    static const struct ext_func_tab *mousebtn[NUM_MOUSE_BUTTONS] = { 0 };
+    int i;
+
+    if (savebtns) {
+        for (i = 0; i < NUM_MOUSE_BUTTONS; i++) {
+            mousebtn[i] = g.Cmd.mousebtn[i];
+            g.Cmd.mousebtn[i] = NULL;
+        }
+    } else {
+        for (i = 0; i < NUM_MOUSE_BUTTONS; i++)
+            g.Cmd.mousebtn[i] = mousebtn[i];
+    }
 }
 
 /* called at startup and after number_pad is twiddled */
@@ -4460,8 +4714,10 @@ reset_cmd_vars(boolean reset_cmdq)
         selection_free(g.travelmap, TRUE);
         g.travelmap = NULL;
     }
-    if (reset_cmdq)
-        cmdq_clear();
+    if (reset_cmdq) {
+        cmdq_clear(CQ_CANNED);
+        cmdq_clear(CQ_REPEAT);
+    }
 }
 
 void
@@ -4473,7 +4729,8 @@ rhack(char *cmd)
     const struct ext_func_tab *cmdq_ec = 0, *prefix_seen = 0;
     boolean was_m_prefix = FALSE;
 
-    reset_cmd_vars(FALSE);
+    iflags.menu_requested = FALSE;
+    g.context.nopick = 0;
  got_prefix_input:
 #ifdef SAFERHANGUP
     if (g.program_state.done_hup)
@@ -4494,7 +4751,7 @@ rhack(char *cmd)
     } else if (firsttime) {
         cmd = parse();
         /* parse() pushed a cmd but didn't return any key */
-        if (!*cmd && g.command_queue)
+        if (!*cmd && cmdq_peek(CQ_CANNED))
             goto got_prefix_input;
     }
 
@@ -4562,13 +4819,28 @@ rhack(char *cmd)
                 if (tlist->f_text && !g.occupation && g.multi)
                     set_occupation(func, tlist->f_text, g.multi);
                 g.ext_tlist = NULL;
+
+                if (!g.in_doagain && func != do_repeat && func != doextcmd) {
+                    if (!prefix_seen)
+                        cmdq_clear(CQ_REPEAT);
+                    cmdq_add_ec(CQ_REPEAT, ((struct ext_func_tab *) tlist)->ef_funct);
+                } else {
+                    if (func == doextcmd) {
+                        cmdq_clear(CQ_REPEAT);
+                    }
+                }
                 res = (*func)(); /* perform the command */
                 /* if 'func' is doextcmd(), 'tlist' is for Cmd.commands['#']
                    rather than for the command that doextcmd() just ran;
                    doextcmd() notifies us what that was via ext_tlist;
                    other commands leave it Null */
-                if (g.ext_tlist)
+                if (g.ext_tlist) {
                     tlist = g.ext_tlist, g.ext_tlist = NULL;
+                    /* Add the command post-execution */
+                    cmdq_add_ec(CQ_REPEAT, ((struct ext_func_tab *) tlist)->ef_funct);
+                    /* shift the command to first */
+                    cmdq_shift(CQ_REPEAT);
+                }
 
                 if ((tlist->flags & PREFIXCMD) != 0) {
                     /* it was a prefix command, mark and get another cmd */
@@ -4653,8 +4925,8 @@ rhack(char *cmd)
             || !help_dir(c1, prefix_seen->key, "Invalid direction key!"))
 #endif
             Norep("Unknown command '%s'.", expcmd);
-        cmdq_clear();
-        savech(0); /* clear do-again queue */
+        cmdq_clear(CQ_CANNED);
+        cmdq_clear(CQ_REPEAT);
     }
     /* didn't move */
     g.context.move = FALSE;
@@ -4729,8 +5001,10 @@ dxdy_moveok(void)
 boolean
 redraw_cmd(char c)
 {
-    return (boolean) (g.Cmd.commands[(uchar)c]
-                      && g.Cmd.commands[(uchar)c]->ef_funct == doredraw);
+    uchar uc = (uchar) c;
+    const struct ext_func_tab *cmd = g.Cmd.commands[uc];
+
+    return (boolean) (cmd && cmd->ef_funct == doredraw);
 }
 
 /*
@@ -4784,8 +5058,10 @@ getdir(const char *s)
             } else {
                 dirsym = g.Cmd.dirchars[(cmdq->dirz > 0) ? DIR_DOWN : DIR_UP];
             }
+        } else if (cmdq->typ == CMDQ_KEY) {
+            dirsym = cmdq->key;
         } else {
-            cmdq_clear();
+            cmdq_clear(CQ_CANNED);
             dirsym = '\0';
             impossible("getdir: command queue had no dir?");
         }
@@ -4798,7 +5074,7 @@ getdir(const char *s)
         dirsym = readchar();
     else
         dirsym = yn_function((s && *s != '^') ? s : "In what direction?",
-                             (char *) 0, '\0');
+                             (char *) 0, '\0', FALSE);
     /* remove the prompt string so caller won't have to */
     clear_nhwindow(WIN_MESSAGE);
 
@@ -4806,7 +5082,8 @@ getdir(const char *s)
         docrt();              /* redraw */
         goto retry;
     }
-    savech(dirsym);
+    if (!g.in_doagain)
+        cmdq_add_key(CQ_REPEAT, dirsym);
 
  got_dirsym:
     if (dirsym == g.Cmd.spkeys[NHKF_GETDIR_SELF]
@@ -5132,8 +5409,20 @@ dotherecmdmenu(void)
 {
     char ch;
     int dir, click;
+    coordxy x = g.clicklook_cc.x;
+    coordxy y = g.clicklook_cc.y;
 
     iflags.getdir_click = CLICK_1 | CLICK_2; /* allow 'far' click */
+
+    if (isok(x, y)) {
+        if (x == u.ux && y == u.uy)
+            ch = here_cmd_menu();
+        else
+            ch = there_cmd_menu(x, y, iflags.getdir_click);
+        g.clicklook_cc.x = g.clicklook_cc.y = -1;
+        return (ch && ch != '\033') ? ECMD_TIME : ECMD_OK;
+    }
+
     dir = getdir((const char *) 0);
     click = iflags.getdir_click;
     iflags.getdir_click = 0;
@@ -5176,6 +5465,7 @@ enum menucmd {
     MCMD_MONABILITY,
     MCMD_PICKUP,
     MCMD_LOOT,
+    MCMD_TIP,
     MCMD_EAT,
     MCMD_DROP,
     MCMD_REST,
@@ -5214,7 +5504,7 @@ there_cmd_menu_self(winid win, coordxy x, coordxy y, int *act UNUSED)
     stairway *stway = stairway_at(x, y);
     struct trap *ttmp;
 
-    if (!u_at(x,y))
+    if (!u_at(x, y))
         return K;
 
     if ((IS_FOUNTAIN(typ) || IS_SINK(typ)) && can_reach_floor(FALSE)) {
@@ -5263,6 +5553,9 @@ there_cmd_menu_self(winid win, coordxy x, coordxy y, int *act UNUSED)
         if (Is_container(otmp)) {
             Sprintf(buf, "Loot %s", doname(otmp));
             mcmd_addmenu(win, MCMD_LOOT, buf), ++K;
+
+            Sprintf(buf, "Tip %s", doname(otmp));
+            mcmd_addmenu(win, MCMD_TIP, buf), ++K;
         }
         if (otmp->oclass == FOOD_CLASS) {
             Sprintf(buf, "Eat %s", doname(otmp));
@@ -5344,6 +5637,9 @@ there_cmd_menu_next2u(
         mcmd_addmenu(win, MCMD_MOVE_DIR, "Move on the trap"), ++K;
     }
 
+    if (levl[x][y].glyph == objnum_to_glyph(BOULDER))
+        mcmd_addmenu(win, MCMD_MOVE_DIR, "Push the boulder"), ++K;
+
     mtmp = m_at(x, y);
     if (mtmp && !canspotmon(mtmp))
         mtmp = 0;
@@ -5366,15 +5662,18 @@ there_cmd_menu_next2u(
     if (mtmp && (mtmp->mpeaceful || mtmp->mtame)) {
         Sprintf(buf, "Talk to %s", mon_nam(mtmp));
         mcmd_addmenu(win, MCMD_TALK, buf), ++K;
-    }
-    if (mtmp) {
+
+        Sprintf(buf, "Swap places with %s", mon_nam(mtmp));
+        mcmd_addmenu(win, MCMD_MOVE_DIR, buf), ++K;
+
         Sprintf(buf, "%s %s",
                 !has_mgivenname(mtmp) ? "Name" : "Rename",
                 mon_nam(mtmp));
         mcmd_addmenu(win, MCMD_NAME, buf), ++K;
     }
 
-    if (mtmp || glyph_is_invisible(glyph_at(x, y))) {
+    if ((mtmp && !(mtmp->mpeaceful || mtmp->mtame))
+        || glyph_is_invisible(glyph_at(x, y))) {
         Sprintf(buf, "Attack %s", mtmp ? mon_nam(mtmp) : "unseen creature");
         mcmd_addmenu(win, MCMD_ATTACK_NEXT2U, buf), ++K;
         /* attacking overrides any other automatic action */
@@ -5403,14 +5702,17 @@ there_cmd_menu_far(winid win, coordxy x, coordxy y, int mod)
 static int
 there_cmd_menu_common(
     winid win,
-    coordxy x UNUSED, coordxy y UNUSED,
+    coordxy x, coordxy y,
     int mod,
     int *act UNUSED)
 {
     int K = 0;
 
     if (mod == CLICK_1 || mod == CLICK_2) { /* ignore iflags.clicklook here */
-        mcmd_addmenu(win, MCMD_LOOK_AT, "Look at map symbol"), ++K;
+        /* for self, only include "look at map symbol" if it isn't the
+           ordinary hero symbol (steed, invisible w/o see invisible, ?) */
+        if (!u_at(x, y) || Upolyd || glyph_at(x, y) != hero_glyph)
+            mcmd_addmenu(win, MCMD_LOOK_AT, "Look at map symbol"), ++K;
     }
     return K;
 }
@@ -5446,16 +5748,16 @@ act_on_act(
            clicks and shouldn't inhibit explicit travel. */
         iflags.travelcc.x = u.tx = u.ux + dx;
         iflags.travelcc.y = u.ty = u.uy + dy;
-        cmdq_add_ec(dotravel_target);
+        cmdq_add_ec(CQ_CANNED, dotravel_target);
         break;
     case MCMD_THROW_OBJ:
-        cmdq_add_ec(dothrow);
-        cmdq_add_userinput();
-        cmdq_add_dir(dx, dy, 0);
+        cmdq_add_ec(CQ_CANNED, dothrow);
+        cmdq_add_userinput(CQ_CANNED);
+        cmdq_add_dir(CQ_CANNED, dx, dy, 0);
         break;
     case MCMD_OPEN_DOOR:
-        cmdq_add_ec(doopen);
-        cmdq_add_dir(dx, dy, 0);
+        cmdq_add_ec(CQ_CANNED, doopen);
+        cmdq_add_dir(CQ_CANNED, dx, dy, 0);
         break;
     case MCMD_LOCK_DOOR:
         otmp = carrying(SKELETON_KEY);
@@ -5464,131 +5766,135 @@ act_on_act(
         if (!otmp)
             otmp = carrying(CREDIT_CARD);
         if (otmp) {
-            cmdq_add_ec(doapply);
-            cmdq_add_key(otmp->invlet);
-            cmdq_add_dir(dx, dy, 0);
-            cmdq_add_key('y'); /* "Lock it?" */
+            cmdq_add_ec(CQ_CANNED, doapply);
+            cmdq_add_key(CQ_CANNED, otmp->invlet);
+            cmdq_add_dir(CQ_CANNED, dx, dy, 0);
+            cmdq_add_key(CQ_CANNED, 'y'); /* "Lock it?" */
         }
         break;
     case MCMD_UNTRAP_DOOR:
-        cmdq_add_ec(dountrap);
-        cmdq_add_dir(dx, dy, 0);
+        cmdq_add_ec(CQ_CANNED, dountrap);
+        cmdq_add_dir(CQ_CANNED, dx, dy, 0);
         break;
     case MCMD_KICK_DOOR:
-        cmdq_add_ec(dokick);
-        cmdq_add_dir(dx, dy, 0);
+        cmdq_add_ec(CQ_CANNED, dokick);
+        cmdq_add_dir(CQ_CANNED, dx, dy, 0);
         break;
     case MCMD_CLOSE_DOOR:
-        cmdq_add_ec(doclose);
-        cmdq_add_dir(dx, dy, 0);
+        cmdq_add_ec(CQ_CANNED, doclose);
+        cmdq_add_dir(CQ_CANNED, dx, dy, 0);
         break;
     case MCMD_SEARCH:
-        cmdq_add_ec(dosearch);
+        cmdq_add_ec(CQ_CANNED, dosearch);
         break;
     case MCMD_LOOK_TRAP:
-        cmdq_add_ec(doidtrap);
-        cmdq_add_dir(dx, dy, 0);
+        cmdq_add_ec(CQ_CANNED, doidtrap);
+        cmdq_add_dir(CQ_CANNED, dx, dy, 0);
         break;
     case MCMD_UNTRAP_TRAP:
-        cmdq_add_ec(dountrap);
-        cmdq_add_dir(dx, dy, 0);
+        cmdq_add_ec(CQ_CANNED, dountrap);
+        cmdq_add_dir(CQ_CANNED, dx, dy, 0);
         break;
     case MCMD_MOVE_DIR:
         dir = xytod(dx, dy);
-        cmdq_add_ec(move_funcs[dir][MV_WALK]);
+        cmdq_add_ec(CQ_CANNED, move_funcs[dir][MV_WALK]);
         break;
     case MCMD_RIDE:
-        cmdq_add_ec(doride);
-        cmdq_add_dir(dx, dy, 0);
+        cmdq_add_ec(CQ_CANNED, doride);
+        cmdq_add_dir(CQ_CANNED, dx, dy, 0);
         break;
     case MCMD_REMOVE_SADDLE:
         /* m-prefix for #loot: skip any floor containers */
-        cmdq_add_ec(do_reqmenu);
-        cmdq_add_ec(doloot);
-        cmdq_add_dir(dx, dy, 0);
-        cmdq_add_key('y'); /* "Do you want to remove the saddle ..." */
+        cmdq_add_ec(CQ_CANNED, do_reqmenu);
+        cmdq_add_ec(CQ_CANNED, doloot);
+        cmdq_add_dir(CQ_CANNED, dx, dy, 0);
+        cmdq_add_key(CQ_CANNED, 'y'); /* "Do you want to remove saddle? */
         break;
     case MCMD_APPLY_SADDLE:
         if ((otmp = carrying(SADDLE)) != 0) {
-            cmdq_add_ec(doapply);
-            cmdq_add_key(otmp->invlet);
-            cmdq_add_dir(dx, dy, 0);
+            cmdq_add_ec(CQ_CANNED, doapply);
+            cmdq_add_key(CQ_CANNED, otmp->invlet);
+            cmdq_add_dir(CQ_CANNED, dx, dy, 0);
         }
         break;
     case MCMD_ATTACK_NEXT2U:
         dir = xytod(dx, dy);
-        cmdq_add_ec(move_funcs[dir][MV_WALK]);
+        cmdq_add_ec(CQ_CANNED, move_funcs[dir][MV_WALK]);
         break;
     case MCMD_TALK:
-        cmdq_add_ec(dotalk);
-        cmdq_add_dir(dx, dy, 0);
+        cmdq_add_ec(CQ_CANNED, dotalk);
+        cmdq_add_dir(CQ_CANNED, dx, dy, 0);
         break;
     case MCMD_NAME:
-        cmdq_add_ec(docallcmd);
-        cmdq_add_key('m'); /* name a monster */
-        cmdq_add_dir(dx, dy, 0); /* getpos() will use u.ux+dx,u.uy+dy */
+        cmdq_add_ec(CQ_CANNED, docallcmd);
+        cmdq_add_key(CQ_CANNED, 'm'); /* name a monster */
+        cmdq_add_dir(CQ_CANNED, dx, dy, 0); /* getpos() uses u.ux+dx,u.uy+dy */
         break;
     case MCMD_QUAFF:
-        cmdq_add_ec(dodrink);
-        cmdq_add_key('y'); /* "Drink from the fountain?" */
+        cmdq_add_ec(CQ_CANNED, dodrink);
+        cmdq_add_key(CQ_CANNED, 'y'); /* "Drink from the fountain?" */
         break;
     case MCMD_DIP:
-        cmdq_add_ec(dodip);
-        cmdq_add_userinput();
-        cmdq_add_key('y'); /* "Dip foo into the fountain?" */
+        cmdq_add_ec(CQ_CANNED, dodip);
+        cmdq_add_userinput(CQ_CANNED);
+        cmdq_add_key(CQ_CANNED, 'y'); /* "Dip foo into the fountain?" */
         break;
     case MCMD_SIT:
-        cmdq_add_ec(dosit);
+        cmdq_add_ec(CQ_CANNED, dosit);
         break;
     case MCMD_UP:
-        cmdq_add_ec(doup);
+        cmdq_add_ec(CQ_CANNED, doup);
         break;
     case MCMD_DOWN:
-        cmdq_add_ec(dodown);
+        cmdq_add_ec(CQ_CANNED, dodown);
         break;
     case MCMD_DISMOUNT:
-        cmdq_add_ec(doride);
+        cmdq_add_ec(CQ_CANNED, doride);
         break;
     case MCMD_MONABILITY:
-        cmdq_add_ec(domonability);
+        cmdq_add_ec(CQ_CANNED, domonability);
         break;
     case MCMD_PICKUP:
-        cmdq_add_ec(dopickup);
+        cmdq_add_ec(CQ_CANNED, dopickup);
         break;
     case MCMD_LOOT:
-        cmdq_add_ec(doloot);
+        cmdq_add_ec(CQ_CANNED, doloot);
+        break;
+    case MCMD_TIP:
+        cmdq_add_ec(CQ_CANNED, dotip);
+        cmdq_add_key(CQ_CANNED, 'y'); /* "There is foo here; tip it?" */
         break;
     case MCMD_EAT:
-        cmdq_add_ec(doeat);
-        cmdq_add_key('y'); /* "There is foo here; eat it?" */
+        cmdq_add_ec(CQ_CANNED, doeat);
+        cmdq_add_key(CQ_CANNED, 'y'); /* "There is foo here; eat it?" */
         break;
     case MCMD_DROP:
-        cmdq_add_ec(dodrop);
+        cmdq_add_ec(CQ_CANNED, dodrop);
         break;
     case MCMD_INVENTORY:
-        cmdq_add_ec(ddoinv);
+        cmdq_add_ec(CQ_CANNED, ddoinv);
         break;
     case MCMD_REST:
-        cmdq_add_ec(donull);
+        cmdq_add_ec(CQ_CANNED, donull);
         break;
     case MCMD_LOOK_HERE:
-        cmdq_add_ec(dolook);
+        cmdq_add_ec(CQ_CANNED, dolook);
         break;
     case MCMD_LOOK_AT:
         g.clicklook_cc.x = u.ux + dx;
         g.clicklook_cc.y = u.uy + dy;
-        cmdq_add_ec(doclicklook);
+        cmdq_add_ec(CQ_CANNED, doclicklook);
         break;
     case MCMD_UNTRAP_HERE:
-        cmdq_add_ec(dountrap);
-        cmdq_add_dir(0, 0, 1);
+        cmdq_add_ec(CQ_CANNED, dountrap);
+        cmdq_add_dir(CQ_CANNED, 0, 0, 1);
         break;
     case MCMD_OFFER:
-        cmdq_add_ec(dosacrifice);
-        cmdq_add_userinput();
+        cmdq_add_ec(CQ_CANNED, dosacrifice);
+        cmdq_add_userinput(CQ_CANNED);
         break;
     case MCMD_CAST_SPELL:
-        cmdq_add_ec(docast);
+        cmdq_add_ec(CQ_CANNED, docast);
         break;
     default:
         break;
@@ -5624,11 +5930,11 @@ there_cmd_menu(coordxy x, coordxy y, int mod)
         if (next2u(x, y) && !test_move(u.ux, u.uy, dx, dy, TEST_MOVE)) {
             int dir = xytod(dx, dy);
 
-            cmdq_add_ec(move_funcs[dir][MV_WALK]);
+            cmdq_add_ec(CQ_CANNED, move_funcs[dir][MV_WALK]);
         } else if (flags.travelcmd) {
             iflags.travelcc.x = u.tx = x;
             iflags.travelcc.y = u.ty = y;
-            cmdq_add_ec(dotravel_target);
+            cmdq_add_ec(CQ_CANNED, dotravel_target);
         }
         npick = 0;
         ch = '\0';
@@ -5660,30 +5966,25 @@ here_cmd_menu(void)
     return '\0';
 }
 
-/*
- * convert a MAP window position into a movement key usable with movecmd()
- */
-const char *
+void
 click_to_cmd(coordxy x, coordxy y, int mod)
 {
-    static char cmd[4];
+    g.clicklook_cc.x = x;
+    g.clicklook_cc.y = y;
+
+    if (g.Cmd.mousebtn[mod-1])
+        cmdq_add_ec(CQ_CANNED, g.Cmd.mousebtn[mod-1]->ef_funct);
+}
+
+static int
+domouseaction(void)
+{
+    coordxy x, y;
     struct obj *o;
     int dir;
 
-    cmd[0] = cmd[1] = '\0';
-    if (!iflags.herecmd_menu && iflags.clicklook && mod == CLICK_2) {
-        g.clicklook_cc.x = x;
-        g.clicklook_cc.y = y;
-        cmdq_add_ec(doclicklook);
-        return cmd;
-    }
-    if (iflags.herecmd_menu && isok(x, y)) {
-        (void) there_cmd_menu(x, y, mod);
-        return cmd;
-    }
-
-    x -= u.ux;
-    y -= u.uy;
+    x = g.clicklook_cc.x - u.ux;
+    y = g.clicklook_cc.y - u.uy;
 
     if (flags.travelcmd) {
         if (abs(x) <= 1 && abs(y) <= 1) {
@@ -5691,31 +5992,31 @@ click_to_cmd(coordxy x, coordxy y, int mod)
         } else {
             iflags.travelcc.x = u.tx = u.ux + x;
             iflags.travelcc.y = u.ty = u.uy + y;
-            cmdq_add_ec(dotravel_target);
-            return cmd;
+            cmdq_add_ec(CQ_CANNED, dotravel_target);
+            return ECMD_OK;
         }
 
         if (x == 0 && y == 0) {
             /* here */
             if (IS_FOUNTAIN(levl[u.ux][u.uy].typ)
                 || IS_SINK(levl[u.ux][u.uy].typ)) {
-                cmd[0] = cmd_from_func(mod == CLICK_1 ? dodrink : dodip);
-                return cmd;
+                cmdq_add_ec(CQ_CANNED, dodrink);
+                return ECMD_OK;
             } else if (IS_THRONE(levl[u.ux][u.uy].typ)) {
-                cmd[0] = cmd_from_func(dosit);
-                return cmd;
+                cmdq_add_ec(CQ_CANNED, dosit);
+                return ECMD_OK;
             } else if (On_stairs_up(u.ux, u.uy)) {
-                cmd[0] = cmd_from_func(doup);
-                return cmd;
+                cmdq_add_ec(CQ_CANNED, doup);
+                return ECMD_OK;
             } else if (On_stairs_dn(u.ux, u.uy)) {
-                cmd[0] = cmd_from_func(dodown);
-                return cmd;
+                cmdq_add_ec(CQ_CANNED, dodown);
+                return ECMD_OK;
             } else if ((o = vobj_at(u.ux, u.uy)) != 0) {
-                cmd[0] = cmd_from_func(Is_container(o) ? doloot : dopickup);
-                return cmd;
+                cmdq_add_ec(CQ_CANNED, Is_container(o) ? doloot : dopickup);
+                return ECMD_OK;
             } else {
-                cmd[0] = cmd_from_func(donull); /* just rest */
-                return cmd;
+                cmdq_add_ec(CQ_CANNED, donull); /* just rest */
+                return ECMD_OK;
             }
         }
 
@@ -5724,25 +6025,23 @@ click_to_cmd(coordxy x, coordxy y, int mod)
         dir = xytod(x, y);
         if (!m_at(u.ux + x, u.uy + y)
             && !test_move(u.ux, u.uy, x, y, TEST_MOVE)) {
-            cmd[1] = cmd_from_func(move_funcs[dir][MV_WALK]);
-            cmd[2] = '\0';
-
             if (IS_DOOR(levl[u.ux + x][u.uy + y].typ)) {
                 /* slight assistance to player: choose kick/open for them */
                 if (levl[u.ux + x][u.uy + y].doormask & D_LOCKED) {
-                    cmd[0] = cmd_from_func(dokick);
-                    return cmd;
+                    cmdq_add_ec(CQ_CANNED, dokick);
+                    return ECMD_OK;
                 }
                 if (levl[u.ux + x][u.uy + y].doormask & D_CLOSED) {
-                    cmd[0] = cmd_from_func(doopen);
-                    return cmd;
+                    cmdq_add_ec(CQ_CANNED, doopen);
+                    return ECMD_OK;
                 }
             }
             if (levl[u.ux + x][u.uy + y].typ <= SCORR) {
-                cmd[0] = cmd_from_func(dosearch);
-                cmd[1] = 0;
-                return cmd;
+                cmdq_add_ec(CQ_CANNED, dosearch);
+                return ECMD_OK;
             }
+            cmdq_add_ec(CQ_CANNED, move_funcs[dir][MV_WALK]);
+            return ECMD_OK;
         }
     } else {
         /* convert without using floating point, allowing sloppy clicking */
@@ -5759,21 +6058,15 @@ click_to_cmd(coordxy x, coordxy y, int mod)
 
         if (x == 0 && y == 0) {
             /* map click on player to "rest" command */
-            cmd[0] = cmd_from_func(donull);
-            return cmd;
+            cmdq_add_ec(CQ_CANNED, donull);
+            return ECMD_OK;
         }
         dir = xytod(x, y);
     }
 
     /* move, attack, etc. */
-    cmd[1] = 0;
-    if (mod == CLICK_1) {
-        cmd[0] = cmd_from_func(move_funcs[dir][MV_WALK]);
-    } else {
-        cmd[0] = cmd_from_func(move_funcs[dir][MV_RUN]);
-    }
-
-    return cmd;
+    cmdq_add_ec(CQ_CANNED, move_funcs[dir][MV_WALK]);
+    return ECMD_OK;
 }
 
 /* gather typed digits into a number in *count; return the next non-digit */
@@ -5805,8 +6098,11 @@ get_count(
         if (inkey) {
             key = inkey;
             inkey = '\0';
-        } else
+        } else {
+            g.program_state.getting_a_command = 1; /* readchar altmeta
+                                                    * compatibility */
             key = readchar();
+        }
 
         if (digit(key)) {
             cnt = 10L * cnt + (long) (key - '0');
@@ -5889,15 +6185,6 @@ parse(void)
         /* g.command_count will be set again when we
            re-enter with g.in_doagain set true */
         g.command_count = g.last_command_count;
-    } else {
-        uchar c = (g.shead > 0) ? (uchar) (g.saveq[g.shead - 1] & 0xff) : 0;
-
-        g.last_command_count = g.command_count;
-        /* reset saveq unless it holds a prefix */
-        if (!c || !g.Cmd.commands[c]
-            || (g.Cmd.commands[c]->flags & PREFIXCMD) == 0)
-            savech(0);
-        savech((char) foo);
     }
 
     g.multi = g.command_count;
@@ -6012,8 +6299,8 @@ readchar_core(coordxy *x, coordxy *y, int *mod)
 #endif /*ALTMETA*/
     } else if (sym == 0) {
         /* click event */
-        readchar_queue = click_to_cmd(*x, *y, *mod);
-        sym = *readchar_queue++;
+        g.clicklook_cc.x = g.clicklook_cc.y = -1;
+        click_to_cmd(*x, *y, *mod);
     }
     g.program_state.getting_a_command = 0; /* next readchar() will be for an
                                             * ordinary char unless parse()
@@ -6118,10 +6405,10 @@ static int
 doclicklook(void)
 {
     if (!isok(g.clicklook_cc.x, g.clicklook_cc.y))
-        return 0;
+        return ECMD_OK;
 
     g.context.move = FALSE;
-    (void) do_look(2, &g.clicklook_cc);
+    auto_describe(g.clicklook_cc.x, g.clicklook_cc.y);
 
     return ECMD_OK;
 }
@@ -6132,7 +6419,7 @@ doclicklook(void)
  *   window port causing a buffer overflow there.
  */
 char
-yn_function(const char *query, const char *resp, char def)
+yn_function(const char *query, const char *resp, char def, boolean addcmdq)
 {
     char res = '\033', qbuf[QBUFSZ];
     struct _cmd_queue cq, *cmdq;
@@ -6165,9 +6452,11 @@ yn_function(const char *query, const char *resp, char def)
         if (cq.typ == CMDQ_KEY)
             res = cq.key;
         else
-            cmdq_clear(); /* 'res' is ESC */
+            cmdq_clear(CQ_CANNED); /* 'res' is ESC */
     } else {
         res = (*windowprocs.win_yn_function)(query, resp, def);
+        if (addcmdq)
+            cmdq_add_key(CQ_REPEAT, res);
     }
 
 #ifdef DUMPLOG

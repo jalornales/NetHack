@@ -55,7 +55,7 @@ static void wishcmdassist(int);
 static const char are_blinded_by_the_flash[] =
     "are blinded by the flash!";
 
-const char *const flash_types[] =       /* also used in buzzmu(mcastu.c) */
+static const char *const flash_types[] =
     {
         "magic missile", /* Wands must be 0-9 */
         "bolt of fire", "bolt of cold", "sleep ray", "death ray",
@@ -178,7 +178,8 @@ bhitm(struct monst *mtmp, struct obj *otmp)
             if (disguised_mimic)
                 seemimic(mtmp);
             mon_adjust_speed(mtmp, -1, otmp);
-            m_dowear(mtmp, FALSE); /* might want speed boots */
+            check_gear_next_turn(mtmp); /* might want speed boots */
+
             if (engulfing_u(mtmp) && is_whirly(mtmp->data)) {
                 You("disrupt %s!", mon_nam(mtmp));
                 pline("A huge hole opens up...");
@@ -191,7 +192,7 @@ bhitm(struct monst *mtmp, struct obj *otmp)
             if (disguised_mimic)
                 seemimic(mtmp);
             mon_adjust_speed(mtmp, 1, otmp);
-            m_dowear(mtmp, FALSE); /* might want speed boots */
+            check_gear_next_turn(mtmp); /* might want speed boots */
         }
         if (mtmp->mtame)
             helpful_gesture = TRUE;
@@ -490,7 +491,7 @@ release_hold(void)
     if (!mtmp) {
         impossible("release_hold when not held?");
     } else if (u.uswallow) { /* possible for sticky hero to be swallowed */
-        if (is_animal(mtmp->data)) {
+        if (digests(mtmp->data)) {
             if (!Blind)
                 pline("%s opens its mouth!", Monnam(mtmp));
             else
@@ -2633,7 +2634,10 @@ zapyourself(struct obj *obj, boolean ordinary)
             You("don't feel sleepy!");
             monstseesu(M_SEEN_SLEEP);
         } else {
-            pline_The("sleep ray hits you!");
+            if (ordinary)
+                pline_The("sleep ray hits you!");
+            else
+                You("fall alseep!");
             fall_asleep(-rnd(50), TRUE);
         }
         break;
@@ -5339,7 +5343,7 @@ destroy_item(int osym, int dmgtyp)
      * rehumanization could also drop hero onto a trap, and there's no
      * straightforward way to defer that.  Things could be improved by
      * redoing this to use two passes, first to collect a list or array
-     * of o_id and quantity of what is targetted for destruction,
+     * of o_id and quantity of what is targeted for destruction,
      * second pass to handle the destruction.]
      */
     bypass_objlist(g.invent, FALSE); /* clear bypass bit for invent */

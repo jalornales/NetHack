@@ -1868,7 +1868,7 @@ potionhit(struct monst *mon, struct obj *obj, int how)
     }
 
     /* Note: potionbreathe() does its own docall() */
-    if ((distance == 0 || (distance < 3 && rn2(5)))
+    if ((distance == 0 || (distance < 3 && !rn2((1+ACURR(A_DEX))/2)))
         && (!breathless(g.youmonst.data) || haseyes(g.youmonst.data)))
         potionbreathe(obj);
     else if (obj->dknown && cansee(tx, ty))
@@ -2299,7 +2299,7 @@ dip_into(void)
     struct obj *obj, *potion;
     char qbuf[QBUFSZ];
 
-    if (!cmdq_peek()) {
+    if (!cmdq_peek(CQ_CANNED)) {
         impossible("dip_into: where is potion?");
         return ECMD_FAIL;
     }

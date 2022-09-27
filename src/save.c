@@ -1,4 +1,4 @@
-/* NetHack 3.7	save.c	$NHDT-Date: 1654931286 2022/06/11 07:08:06 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.187 $ */
+/* NetHack 3.7	save.c	$NHDT-Date: 1661240721 2022/08/23 07:45:21 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.195 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2009. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -68,7 +68,7 @@ dosave(void)
             exit_nhwindows("Be seeing you...");
             nh_terminate(EXIT_SUCCESS);
         } else
-            (void) doredraw();
+            docrt();
     }
     return ECMD_OK;
 }
@@ -183,7 +183,7 @@ dosave0(void)
     /* these pointers are no longer valid, and at least u.usteed
      * may mislead place_monster() on other levels
      */
-    set_ustuck((struct monst *) 0);
+    set_ustuck((struct monst *) 0); /* also clears u.uswallow */
     u.usteed = (struct monst *) 0;
 
     for (ltmp = (xint8) 1; ltmp <= maxledgerno(); ltmp++) {
@@ -304,7 +304,7 @@ savegamestate(NHFILE* nhfp)
        pointers into invent (uwep, uarmg, uamul, &c) are set to Null too */
     saveobjchn(nhfp, &g.invent);
 
-    /* save ball and chain if they happen to be in an unusal state */
+    /* save ball and chain if they happen to be in an unusual state */
     save_bc(nhfp);
 
     saveobjchn(nhfp, &g.migrating_objs); /* frees objs and sets to Null */
@@ -539,7 +539,8 @@ savelev_core(NHFILE *nhfp, xint8 lev)
         bwrite(nhfp->fd, (genericptr_t) &g.updest, sizeof (dest_area));
         bwrite(nhfp->fd, (genericptr_t) &g.dndest, sizeof (dest_area));
         bwrite(nhfp->fd, (genericptr_t) &g.level.flags, sizeof g.level.flags);
-        bwrite(nhfp->fd, (genericptr_t) g.doors, sizeof g.doors);
+        bwrite(nhfp->fd, (genericptr_t) &g.doors_alloc, sizeof g.doors_alloc);
+        bwrite(nhfp->fd, (genericptr_t) g.doors, g.doors_alloc * sizeof (coord));
     }
     save_rooms(nhfp); /* no dynamic memory to reclaim */
 
@@ -728,7 +729,7 @@ save_stairs(NHFILE* nhfp)
                 bwrite(nhfp->fd, (genericptr_t) stway, sizeof *stway);
             }
             if (use_relative) {
-                /* reset staiway dlevel back to absolute */
+                /* reset stairway dlevel back to absolute */
                 stway->tolev.dlevel += u.uz.dlevel;
             }
         }
@@ -984,11 +985,17 @@ savetrapchn(NHFILE* nhfp, register struct trap* trap)
     register struct trap *trap2;
 
     while (trap) {
+        boolean use_relative = (g.program_state.restoring != REST_GSTATE
+                                && trap->dst.dnum == u.uz.dnum);
         trap2 = trap->ntrap;
+        if (use_relative)
+            trap->dst.dlevel -= u.uz.dlevel; /* make it relative */
         if (perform_bwrite(nhfp)) {
             if (nhfp->structlevel)
                 bwrite(nhfp->fd, (genericptr_t) trap, sizeof *trap);
         }
+        if (use_relative)
+            trap->dst.dlevel += u.uz.dlevel; /* reset back to absolute */
         if (release_data(nhfp))
             dealloc_trap(trap);
         trap = trap2;

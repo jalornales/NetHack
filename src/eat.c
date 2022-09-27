@@ -66,8 +66,10 @@ static int tin_ok(struct obj *);
     ((otyp) == LEMBAS_WAFER || (otyp) == CRAM_RATION)
 
 /* see hunger states in hack.h - texts used on bottom line */
-const char *hu_stat[] = { "Satiated", "        ", "Hungry  ", "Weak    ",
-                          "Fainting", "Fainted ", "Starved " };
+const char *const hu_stat[] = {
+    "Satiated", "        ", "Hungry  ", "Weak    ",
+    "Fainting", "Fainted ", "Starved "
+};
 
 /* used by getobj() callback routines eat_ok()/offer_ok()/tin_ok() to
    indicate whether player was given an opportunity to eat or offer or
@@ -637,7 +639,7 @@ eat_brains(struct monst *magr, struct monst *mdef,
             exercise(A_WIS, TRUE);
             *dmg_p += xtra_dmg;
         }
-        /* targetting another mind flayer or your own underlying species
+        /* targeting another mind flayer or your own underlying species
            is cannibalism */
         (void) maybe_cannibal(monsndx(pd), TRUE);
 
@@ -1871,8 +1873,13 @@ eatcorpse(struct obj *otmp)
                              && (rotted < 1 || !rn2((int) rotted + 1)));
         const char *pmxnam = food_xname(otmp, FALSE);
         static const char *const palatable_msgs[] = {
-            "okay", "stringy", "gamey", "fatty", "tough"
+            /* first char: T = tastes ... , I = is ... */
+            /* veggies are always just "okay" */
+            "Tokay", "Istringy", "Igamey", "Ifatty", "Itough"
         };
+        int idx = vegetarian(&mons[mnum]) ? 0 : rn2(SIZE(palatable_msgs));
+        const char *palat_msg = palatable_msgs[idx];
+        boolean use_is = (Hallucination || (palatable && *palat_msg == 'I'));
 
         if (!strncmpi(pmxnam, "the ", 4))
             pmxnam += 4;
@@ -1880,14 +1887,14 @@ eatcorpse(struct obj *otmp)
               type_is_pname(&mons[mnum])
                  ? "" : the_unique_pm(&mons[mnum]) ? "The " : "This ",
               pmxnam,
-              Hallucination ? "is" : "tastes",
+              use_is ? "is" : "tastes",
                   /* tiger reference is to TV ads for "Frosted Flakes",
                      breakfast cereal targeted at kids by "Tony the tiger" */
               Hallucination
                  ? (yummy ? ((u.umonnum == PM_TIGER) ? "gr-r-reat" : "gnarly")
                           : palatable ? "copacetic" : "grody")
               : (yummy ? "delicious" : palatable ?
-                 palatable_msgs[mnum % SIZE(palatable_msgs)] : "terrible"),
+                 &palat_msg[1] : "terrible"),
               (yummy || !palatable) ? '!' : '.');
     }
 
@@ -2576,7 +2583,7 @@ edibility_prompts(struct obj *otmp)
     if (*buf) {
         Snprintf(eos(buf), sizeof buf - strlen(buf), "  Eat %s anyway?",
                  (otmp->quan == 1L) ? "it" : "one");
-        return (yn_function(buf, ynchars, 'n') == 'n') ? 1 : 2;
+        return (yn_function(buf, ynchars, 'n', TRUE) == 'n') ? 1 : 2;
     }
     return 0;
 }
@@ -3437,7 +3444,7 @@ floorfood(
                then the trap would just get eaten on the _next_ turn... */
             Sprintf(qbuf, "There is a bear trap here (%s); eat it?",
                     u_in_beartrap ? "holding you" : "armed");
-            if ((c = yn_function(qbuf, ynqchars, 'n')) == 'y') {
+            if ((c = yn_function(qbuf, ynqchars, 'n', TRUE)) == 'y') {
                 struct obj *beartrap;
 
                 deltrap(ttmp);
@@ -3473,7 +3480,7 @@ floorfood(
                                || !on_level(&g.context.digging.level, &u.uz))
                               ? "; eat them?"
                               : "; resume eating them?"));
-                c = yn_function(qbuf, ynqchars, 'n');
+                c = yn_function(qbuf, ynqchars, 'n', TRUE);
             }
             if (c == 'y')
                 return (struct obj *) &cg.zeroobj; /* csst away 'const' */
@@ -3488,7 +3495,7 @@ floorfood(
             else
                 Sprintf(qbuf, "There are %ld gold pieces here; eat them?",
                         gold->quan);
-            if ((c = yn_function(qbuf, ynqchars, 'n')) == 'y') {
+            if ((c = yn_function(qbuf, ynqchars, 'n', TRUE)) == 'y') {
                 return gold;
             } else if (c == 'q') {
                 return (struct obj *) 0;
@@ -3523,7 +3530,7 @@ floorfood(
             Sprintf(qsfx, " here; %s %s?", verb, one ? "it" : "one");
             (void) safe_qbuf(qbuf, qbuf, qsfx, otmp, doname, ansimpleoname,
                              one ? something : (const char *) "things");
-            if ((c = yn_function(qbuf, ynqchars, 'n')) == 'y')
+            if ((c = yn_function(qbuf, ynqchars, 'n', TRUE)) == 'y')
                 return  otmp;
             else if (c == 'q')
                 return (struct obj *) 0;

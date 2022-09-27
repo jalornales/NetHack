@@ -55,9 +55,9 @@ static boolean m_bad_boulder_spot(coordxy, coordxy);
 static int pm_to_humidity(struct permonst *);
 static unsigned int sp_amask_to_amask(unsigned int sp_amask);
 static void create_monster(monster *, struct mkroom *);
-static void create_object(object *, struct mkroom *);
+static struct obj *create_object(object *, struct mkroom *);
 static void create_altar(altar *, struct mkroom *);
-static boolean search_door(struct mkroom *, coordxy *, coordxy *, coordxy, int);
+static boolean search_door(struct mkroom *, coordxy *, coordxy *, xint16, int);
 static void create_corridor(corridor *);
 static struct mkroom *build_room(room *, struct mkroom *);
 static void light_region(region *);
@@ -123,6 +123,7 @@ static const char *get_mkroom_name(int);
 static int get_table_roomtype_opt(lua_State *, const char *, int);
 static int get_table_traptype_opt(lua_State *, const char *, int);
 static int get_traptype_byname(const char *);
+static void selection_recalc_bounds(struct selectionvar *);
 static lua_Integer get_table_intarray_entry(lua_State *, int, int);
 static struct sp_coder *sp_level_coder_init(void);
 
@@ -1070,7 +1071,7 @@ shared_with_room(int x, int y, struct mkroom *droom)
 static void
 maybe_add_door(int x, int y, struct mkroom* droom)
 {
-    if (droom->hx >= 0 && g.doorindex < DOORMAX
+    if (droom->hx >= 0
         && ((!droom->irregular && inside_room(droom, x, y))
             || (int) levl[x][y].roomno == (droom - g.rooms) + ROOMOFFSET
             || shared_with_room(x, y, droom))) {
@@ -1149,11 +1150,15 @@ rndtrap(void)
 }
 
 /*
- * Coordinates in special level files are handled specially:
+ * Translate a given coordinate from a special level definition into an actual
+ * location on the map.
  *
- *      if x or y is < 0, we generate a random coordinate.
- *      The "humidity" flag is used to ensure that engravings aren't
- *      created underwater, or eels on dry land.
+ * If x or y is negative, we generate a random coordinate within the area. If
+ * not negative, they are interpreted as relative to the last defined map or
+ * room, and are output as absolute g.level.locations coordinates.
+ *
+ * The "humidity" flag is used to ensure that engravings aren't created
+ * underwater, or eels on dry land.
  */
 static void
 get_location(
@@ -1304,7 +1309,7 @@ get_location_coord(
     *y = c.y;
     get_location(x, y, c.getloc_flags | (c.is_random ? NO_LOC_WARN : 0),
                  croom);
-    
+
     if (*x == -1 && *y == -1 && c.is_random)
         get_location(x, y, humidity, croom);
 }
@@ -2120,7 +2125,7 @@ create_monster(monster* m, struct mkroom* croom)
 /*
  * Create an object in a room.
  */
-static void
+static struct obj *
 create_object(object* o, struct mkroom* croom)
 {
     struct obj *otmp;
@@ -2262,7 +2267,7 @@ create_object(object* o, struct mkroom* croom)
                     artifact_exists(otmp, safe_oname(otmp), FALSE,
                                     ONAME_NO_FLAGS); /* flags don't matter */
                 obfree(otmp, NULL);
-                return;
+                return NULL;
             }
         }
     }
@@ -2354,11 +2359,14 @@ create_object(object* o, struct mkroom* croom)
             boolean dealloced;
 
             (void) bury_an_obj(otmp, &dealloced);
-            if (dealloced && container_idx) {
-                container_obj[container_idx - 1] = NULL;
+            if (dealloced) {
+                if (container_idx)
+                    container_obj[container_idx - 1] = NULL;
+                otmp = NULL;
             }
         }
     }
+    return otmp;
 }
 
 /*
@@ -3084,6 +3092,12 @@ get_table_montype(lua_State *L, int *mgender)
     return ret;
 }
 
+/* Get x and y values from a table (which the caller has already checked for the
+ * existence of), handling both a table with x= and y= specified and a table
+ * with coord= specified.
+ * Returns absolute rather than map-relative coordinates; the caller of this
+ * function must decide if it wants to interpret the coordinates as map-relative
+ * and adjust accordingly. */
 static void
 get_table_xy_or_coord(lua_State *L, lua_Integer *x, lua_Integer *y)
 {
@@ -3428,7 +3442,20 @@ get_table_objtype(lua_State *L)
 int
 lspo_object(lua_State *L)
 {
-    static object zeroobject = { DUMMY };
+    static object zeroobject = {
+	    { 0 },   /* Str_or_len name */
+	    0,       /* corpsenm */
+	    0, 0,    /* id, spe */
+	    0,       /* coord */
+	    0, 0,    /* coordxy x,y */
+	    0, 0,    /* class, containment */
+	    0,       /* curse_state */
+	    0,       /* quan */
+	    0,       /* buried */
+	    0,       /* lit */
+	    0, 0, 0, 0, 0, 0, 0, 0, /* eroded, locked, trapped, recharged,
+				       invis, greased, broken, achievment */
+    };
 #if 0
     int nparams = 0;
 #endif
@@ -3437,6 +3464,7 @@ lspo_object(lua_State *L)
     lua_Integer ox = -1, oy = -1;
     int argc = lua_gettop(L);
     int maybe_contents = 0;
+    struct obj *otmp = NULL;
 
     create_des_coder();
 
@@ -3577,14 +3605,15 @@ lspo_object(lua_State *L)
     }
 
     do {
-        create_object(&tmpobj, g.coder->croom);
+        otmp = create_object(&tmpobj, g.coder->croom);
         quancnt--;
     } while ((quancnt > 0) && ((tmpobj.id > STRANGE_OBJECT)
                                && !objects[tmpobj.id].oc_merge));
 
     if (lua_type(L, -1) == LUA_TFUNCTION) {
         lua_remove(L, -2);
-        if (nhl_pcall(L, 0, 0)){
+        nhl_push_obj(L, otmp);
+        if (nhl_pcall(L, 1, 0)){
             impossible("Lua error: %s", lua_tostring(L, -1));
         }
     } else
@@ -3758,10 +3787,11 @@ lspo_mineralize(lua_State *L)
     create_des_coder();
 
     lcheck_param_table(L);
-    gem_prob = get_table_int_opt(L, "gem_prob", 0);
-    gold_prob = get_table_int_opt(L, "gold_prob", 0);
-    kelp_moat = get_table_int_opt(L, "kelp_moat", 0);
-    kelp_pool = get_table_int_opt(L, "kelp_pool", 0);
+    /* -1 produces default mineralize behavior */
+    gem_prob = get_table_int_opt(L, "gem_prob", -1);
+    gold_prob = get_table_int_opt(L, "gold_prob", -1);
+    kelp_moat = get_table_int_opt(L, "kelp_moat", -1);
+    kelp_pool = get_table_int_opt(L, "kelp_pool", -1);
 
     mineralize(kelp_pool, kelp_moat, gold_prob, gem_prob, TRUE);
 
@@ -4365,6 +4395,10 @@ selection_new(void)
 
     tmps->wid = COLNO;
     tmps->hei = ROWNO;
+    tmps->bounds_dirty = FALSE;
+    tmps->bounds.lx = COLNO;
+    tmps->bounds.ly = ROWNO;
+    tmps->bounds.hx = tmps->bounds.hy = 0;
     tmps->map = (char *) alloc((COLNO * ROWNO) + 1);
     (void) memset(tmps->map, 1, (COLNO * ROWNO));
     tmps->map[(COLNO * ROWNO)] = '\0';
@@ -4381,8 +4415,26 @@ selection_free(struct selectionvar* sel, boolean freesel)
         if (freesel)
             free((genericptr_t) sel);
         else
-            sel->wid = sel->hei = 0;
+            (void) memset((genericptr_t) sel, 0, sizeof *sel);
     }
+}
+
+/* clear selection, setting all locations to value val */
+void
+selection_clear(struct selectionvar *sel, int val)
+{
+    (void) memset(sel->map, 1 + val, (COLNO * ROWNO));
+    if (val) {
+        sel->bounds.lx = 0;
+        sel->bounds.ly = 0;
+        sel->bounds.hx = COLNO - 1;
+        sel->bounds.hy = ROWNO - 1;
+    } else {
+        sel->bounds.lx = COLNO;
+        sel->bounds.ly = ROWNO;
+        sel->bounds.hx = sel->bounds.hy = 0;
+    }
+    sel->bounds_dirty = FALSE;
 }
 
 struct selectionvar *
@@ -4390,11 +4442,102 @@ selection_clone(struct selectionvar* sel)
 {
     struct selectionvar *tmps = (struct selectionvar *) alloc(sizeof *tmps);
 
-    tmps->wid = sel->wid;
-    tmps->hei = sel->hei;
+    *tmps = *sel;
     tmps->map = dupstr(sel->map);
 
     return tmps;
+}
+
+/* get boundary rect of selection sel into b */
+void
+selection_getbounds(struct selectionvar *sel, NhRect *b)
+{
+    if (!sel || !b)
+        return;
+
+    selection_recalc_bounds(sel);
+
+    if (sel->bounds.lx >= sel->wid) {
+        b->lx = 0;
+        b->ly = 0;
+        b->hx = COLNO - 1;
+        b->hy = ROWNO - 1;
+    } else {
+        b->lx = sel->bounds.lx;
+        b->ly = sel->bounds.ly;
+        b->hx = sel->bounds.hx;
+        b->hy = sel->bounds.hy;
+    }
+}
+
+/* recalc the boundary of selection, if necessary */
+static void
+selection_recalc_bounds(struct selectionvar *sel)
+{
+    coordxy x, y;
+    NhRect r;
+
+    if (!sel->bounds_dirty)
+        return;
+
+    sel->bounds.lx = COLNO;
+    sel->bounds.ly = ROWNO;
+    sel->bounds.hx = sel->bounds.hy = 0;
+
+    r.lx = r.ly = r.hx = r.hy = -1;
+
+    /* left */
+    for (x = 0; x < sel->wid; x++) {
+        for (y = 0; y < sel->hei; y++) {
+            if (selection_getpoint(x, y, sel)) {
+                r.lx = x;
+                break;
+            }
+        }
+        if (r.lx > -1)
+            break;
+    }
+
+    if (r.lx > -1) {
+        /* right */
+        for (x = sel->wid-1; x >= r.lx; x--) {
+            for (y = 0; y < sel->hei; y++) {
+                if (selection_getpoint(x, y, sel)) {
+                    r.hx = x;
+                    break;
+                }
+            }
+            if (r.hx > -1)
+                break;
+        }
+
+        /* top */
+        for (y = 0; y < sel->hei; y++) {
+            for (x = r.lx; x <= r.hx; x++) {
+                if (selection_getpoint(x, y, sel)) {
+                    r.ly = y;
+                    break;
+                }
+            }
+            if (r.ly > -1)
+                break;
+        }
+
+        /* bottom */
+        for (y = sel->hei-1; y >= r.ly; y--) {
+            for (x = r.lx; x <= r.hx; x++) {
+                if (selection_getpoint(x, y, sel)) {
+                    r.hy = y;
+                    break;
+                }
+            }
+            if (r.hy > -1)
+                break;
+        }
+        sel->bounds = r;
+    }
+
+    sel->bounds_dirty = FALSE;
 }
 
 coordxy
@@ -4415,6 +4558,15 @@ selection_setpoint(coordxy x, coordxy y, struct selectionvar* sel, int c)
         return;
     if (x < 0 || y < 0 || x >= sel->wid || y >= sel->hei)
         return;
+
+    if (c && !sel->bounds_dirty) {
+        if (sel->bounds.lx > x) sel->bounds.lx = x;
+        if (sel->bounds.ly > y) sel->bounds.ly = y;
+        if (sel->bounds.hx < x) sel->bounds.hx = x;
+        if (sel->bounds.hy < y) sel->bounds.hy = y;
+    } else {
+        sel->bounds_dirty = TRUE;
+    }
 
     sel->map[sel->wid * y + x] = (char) (c + 1);
 }
@@ -4437,14 +4589,17 @@ selection_filter_mapchar(struct selectionvar* ov,  xint16 typ, int lit)
 {
     int x, y;
     struct selectionvar *ret;
+    NhRect rect;
 
     if (!ov)
         return NULL;
 
     ret = selection_new();
 
-    for (x = 1; x < ret->wid; x++)
-        for (y = 0; y < ret->hei; y++)
+    selection_getbounds(ov, &rect);
+
+    for (x = rect.lx; x <= rect.hx; x++)
+        for (y = rect.ly; y <= rect.hy; y++)
             if (selection_getpoint(x, y, ov)
                 && match_maptyps(typ, levl[x][y].typ)) {
                 switch (lit) {
@@ -4465,17 +4620,26 @@ selection_filter_mapchar(struct selectionvar* ov,  xint16 typ, int lit)
     return ret;
 }
 
-void
+struct selectionvar *
 selection_filter_percent(struct selectionvar* ov, int percent)
 {
     int x, y;
+    struct selectionvar *ret;
+    NhRect rect;
 
     if (!ov)
-        return;
-    for (x = 0; x < ov->wid; x++)
-        for (y = 0; y < ov->hei; y++)
-            if (selection_getpoint(x, y, ov) && (rn2(100) >= percent))
-                selection_setpoint(x, y, ov, 0);
+        return NULL;
+
+    ret = selection_new();
+
+    selection_getbounds(ov, &rect);
+
+    for (x = rect.lx; x <= rect.hx; x++)
+        for (y = rect.ly; y <= rect.hy; y++)
+            if (selection_getpoint(x, y, ov) && (rn2(100) < percent))
+                selection_setpoint(x, y, ret, 1);
+
+    return ret;
 }
 
 int
@@ -4484,16 +4648,19 @@ selection_rndcoord(struct selectionvar* ov, coordxy *x, coordxy *y, boolean remo
     int idx = 0;
     int c;
     int dx, dy;
+    NhRect rect;
 
-    for (dx = 1; dx < ov->wid; dx++)
-        for (dy = 0; dy < ov->hei; dy++)
+    selection_getbounds(ov, &rect);
+
+    for (dx = rect.lx; dx <= rect.hx; dx++)
+        for (dy = rect.ly; dy <= rect.hy; dy++)
             if (selection_getpoint(dx, dy, ov))
                 idx++;
 
     if (idx) {
         c = rn2(idx);
-        for (dx = 1; dx < ov->wid; dx++)
-            for (dy = 0; dy < ov->hei; dy++)
+        for (dx = rect.lx; dx <= rect.hx; dx++)
+            for (dy = rect.ly; dy <= rect.hy; dy++)
                 if (selection_getpoint(dx, dy, ov)) {
                     if (!c) {
                         *x = dx;
@@ -4522,6 +4689,7 @@ selection_do_grow(struct selectionvar* ov, int dir)
 {
     coordxy x, y;
     struct selectionvar *tmp;
+    NhRect rect;
 
     if (!ov)
         return;
@@ -4531,8 +4699,10 @@ selection_do_grow(struct selectionvar* ov, int dir)
     if (dir == W_RANDOM)
         dir = random_wdir();
 
-    for (x = 1; x < ov->wid; x++)
-        for (y = 0; y < ov->hei; y++) {
+    selection_getbounds(ov, &rect);
+
+    for (x = max(0, rect.lx-1); x <= min(COLNO-1, rect.hx+1); x++)
+        for (y = max(0, rect.ly-1); y <= min(ROWNO-1, rect.hy+1); y++) {
             /* note:  dir is a mask of multiple directions, but the only
                way to specify diagonals is by including the two adjacent
                orthogonal directions, which effectively specifies three-
@@ -4553,8 +4723,10 @@ selection_do_grow(struct selectionvar* ov, int dir)
             }
         }
 
-    for (x = 1; x < ov->wid; x++)
-        for (y = 0; y < ov->hei; y++)
+    selection_getbounds(tmp, &rect);
+
+    for (x = rect.lx; x <= rect.hx; x++)
+        for (y = rect.ly; y <= rect.hy; y++)
             if (selection_getpoint(x, y, tmp))
                 selection_setpoint(x, y, ov, 1);
 
@@ -4939,13 +5111,15 @@ selection_iterate(
     genericptr_t arg)
 {
     coordxy x, y;
+    NhRect rect;
 
     if (!ov)
         return;
 
-    /* yes, this is very naive, but it's not _that_ expensive. */
-    for (x = 0; x < ov->wid; x++)
-        for (y = 0; y < ov->hei; y++)
+    selection_getbounds(ov, &rect);
+
+    for (x = rect.lx; x <= rect.hx; x++)
+        for (y = rect.ly; y <= rect.hy; y++)
             if (isok(x,y) && selection_getpoint(x, y, ov))
                 (*func)(x, y, arg);
 }
@@ -5079,7 +5253,56 @@ l_table_getset_feature_flag(
     }
 }
 
-/* convert relative coordinate to map-absolute.
+/* guts of nhl_abs_coord; convert a coordinate relative to a map or room into an
+ * absolute coordinate in g.level.locations.
+ *
+ * If there is no enclosing map or room, the coordinates are assumed to be
+ * absolute already.
+ *
+ * Part of the reason this is a function is to make it clearer in the calling
+ * code that this conversion is what is intended.
+ *
+ * NOTE: if the coordinates are going to get passed to one of the get_location
+ * family of functions, this should NOT be called; get_location already makes
+ * an adjustment like this. (What this function supports which get_location
+ * doesn't is the input coordinates being negative. get_location will treat that
+ * as "level designer wants a random coordinate".) */
+void
+cvt_to_abscoord(coordxy *x, coordxy *y)
+{
+    /* since commit 99715e0, xstart and ystart are only relevant in mklev when
+     * maps are being used, and 0 otherwise. It is possible in the future that
+     * map positions and dimensions can be saved and retrieved outside of mklev
+     * which would reintroduce nonzero xstart/ystart/xsiz/ysiz, but this is not
+     * currently implemented, so this function can be assumed to have no effect
+     * outside of mklev.
+     */
+    if (g.coder && g.coder->croom) {
+        *x += g.coder->croom->lx;
+        *y += g.coder->croom->ly;
+    }
+    else {
+        *x += g.xstart;
+        *y += g.ystart;
+    }
+}
+
+/* inverse of cvt_to_abscoord; turn an absolute g.level.locations coordinate
+ * into one relative to the current map or room. */
+void
+cvt_to_relcoord(coordxy *x, coordxy *y)
+{
+    if (g.coder && g.coder->croom) {
+        *x -= g.coder->croom->lx;
+        *y -= g.coder->croom->ly;
+    }
+    else {
+        *x -= g.xstart;
+        *y -= g.ystart;
+    }
+}
+
+/* convert map-relative coordinate to absolute.
   local ax,ay = nh.abscoord(rx, ry);
   local pt = nh.abscoord({ x = 10, y = 5 });
  */
@@ -5092,16 +5315,14 @@ nhl_abs_coord(lua_State *L)
     if (argc == 2) {
         x = (coordxy) lua_tointeger(L, 1);
         y = (coordxy) lua_tointeger(L, 2);
-        x += g.xstart;
-        y += g.ystart;
+        cvt_to_abscoord(&x, &y);
         lua_pushinteger(L, x);
         lua_pushinteger(L, y);
         return 2;
     } else if (argc == 1 && lua_type(L, 1) == LUA_TTABLE) {
         x = (coordxy) get_table_int(L, "x");
         y = (coordxy) get_table_int(L, "y");
-        x += g.xstart;
-        y += g.ystart;
+        cvt_to_abscoord(&x, &y);
         lua_newtable(L);
         nhl_add_table_entry_int(L, "x", x);
         nhl_add_table_entry_int(L, "y", y);
@@ -5274,6 +5495,7 @@ lspo_replace_terrain(lua_State *L)
     lua_Integer x1, y1, x2, y2;
     int chance;
     int tolit;
+    NhRect rect;
 
     create_des_coder();
 
@@ -5321,7 +5543,7 @@ lspo_replace_terrain(lua_State *L)
         freesel = TRUE;
 
         if (x1 == -1 && y1 == -1 && x2 == -1 && y2 == -1) {
-            (void) selection_not(sel);
+            (void) selection_clear(sel, 1);
         } else {
             coordxy rx1, ry1, rx2, ry2;
             rx1 = x1, ry1 = y1, rx2 = x2, ry2 = y2;
@@ -5333,14 +5555,18 @@ lspo_replace_terrain(lua_State *L)
         }
     }
 
-    for (y = 0; y <= sel->hei; y++)
-        for (x = 1; x < sel->wid; x++)
+    selection_getbounds(sel, &rect);
+
+    for (x = max(1, rect.lx); x <= rect.hx; x++)
+        for (y = rect.ly; y <= rect.hy; y++)
             if (selection_getpoint(x, y,sel)) {
                 if (mf) {
                     if (mapfrag_match(mf, x, y) && (rn2(100)) < chance)
                         (void) set_levltyp_lit(x, y, totyp, tolit);
                 } else {
-                    if (levl[x][y].typ == fromtyp && rn2(100) < chance)
+                    if (((fromtyp == MATCH_WALL && IS_STWALL(levl[x][y].typ))
+                         || levl[x][y].typ == fromtyp)
+                        && rn2(100) < chance)
                         (void) set_levltyp_lit(x, y, totyp, tolit);
                 }
             }
@@ -5837,7 +6063,8 @@ lspo_region(lua_State *L)
             lua_getfield(L, 1, "contents");
             if (lua_type(L, -1) == LUA_TFUNCTION) {
                 lua_remove(L, -2);
-                if (nhl_pcall(L, 0, 0)){
+                l_push_mkroom_table(L, troom);
+                if (nhl_pcall(L, 1, 0)){
                     impossible("Lua error: %s", lua_tostring(L, -1));
                 }
             } else
@@ -6055,7 +6282,7 @@ set_wallprop_in_selection(lua_State *L, int prop)
     } else if (argc == 0) {
         freesel = TRUE;
         sel = selection_new();
-        selection_not(sel);
+        selection_clear(sel, 1);
     }
 
     if (sel) {
@@ -6430,9 +6657,6 @@ TODO: g.coder->croom needs to be updated
                 else if (splev_init_present && levl[x][y].typ == ICE)
                     levl[x][y].icedpool = icedpools ? ICED_POOL : ICED_MOAT;
             }
-        if (g.coder->lvl_is_joined && !g.in_mk_themerooms)
-            remove_rooms(g.xstart, g.ystart,
-                         g.xstart + g.xsize, g.ystart + g.ysize);
     }
 
  skipmap:
@@ -6446,6 +6670,27 @@ TODO: g.coder->croom needs to be updated
     }
 
     return 0;
+}
+
+struct selectionvar *
+selection_from_mkroom(struct mkroom *croom)
+{
+    struct selectionvar *sel = selection_new();
+    coordxy x, y;
+    unsigned rmno;
+
+    if (!croom && g.coder && g.coder->croom)
+        croom = g.coder->croom;
+    if (!croom)
+        return sel;
+
+    rmno = (unsigned)((croom - g.rooms) + ROOMOFFSET);
+    for (y = croom->ly; y <= croom->hy; y++)
+        for (x = croom->lx; x <= croom->hx; x++)
+            if (isok(x, y) && !levl[x][y].edge
+                && levl[x][y].roomno == rmno)
+                selection_setpoint(x, y, sel, 1);
+    return sel;
 }
 
 void

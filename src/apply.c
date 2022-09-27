@@ -47,6 +47,7 @@ static boolean get_valid_jump_position(coordxy, coordxy);
 static boolean get_valid_polearm_position(coordxy, coordxy);
 static boolean find_poleable_mon(coord *, int, int);
 
+static const char Nothing_seems_to_happen[] = "Nothing seems to happen.";
 static const char no_elbow_room[] =
     "don't have enough elbow-room to maneuver.";
 
@@ -395,8 +396,7 @@ use_stethoscope(struct obj *obj)
                 /* simple_typename() yields "fruit" for any named fruit;
                    we want the same thing '//' or ';' shows: "slime mold"
                    or "grape" or "slice of pizza" */
-                if (odummy->otyp == SLIME_MOLD
-                    && has_mcorpsenm(mtmp) && MCORPSENM(mtmp) != NON_PM) {
+                if (odummy->otyp == SLIME_MOLD && has_mcorpsenm(mtmp)) {
                     odummy->spe = MCORPSENM(mtmp);
                     what = simpleonames(odummy);
                 } else {
@@ -995,7 +995,7 @@ use_mirror(struct obj *obj)
         if (!Blind)
             pline_The("%s fogs up and doesn't reflect!", mirror);
         else
-            pline("Nothing seems to happen.");
+            pline("%s", Nothing_seems_to_happen);
         return ECMD_TIME;
     }
     if (!u.dx && !u.dy && !u.dz) {
@@ -1061,7 +1061,7 @@ use_mirror(struct obj *obj)
         return ECMD_TIME;
 
     /* couldsee(mtmp->mx, mtmp->my) is implied by the fact that bhit()
-       targetted it, so we can ignore possibility of X-ray vision */
+       targeted it, so we can ignore possibility of X-ray vision */
     vis = canseemon(mtmp);
     /* ways to directly see monster (excludes X-ray vision, telepathy,
        extended detection, type-specific warning) */
@@ -1567,15 +1567,25 @@ catch_lit(struct obj *obj)
     return FALSE;
 }
 
+/* light a lamp or candle */
 static void
 use_lamp(struct obj *obj)
 {
     char buf[BUFSZ];
+    const char *lamp = (obj->otyp == OIL_LAMP
+                        || obj->otyp == MAGIC_LAMP) ? "lamp"
+                       : (obj->otyp == BRASS_LANTERN) ? "lantern"
+                         : NULL;
+
+    /*
+     * When blind, lamps' and candles' on/off state can be distinguished
+     * by heat.  For brass lantern assume that there is an on/off switch
+     * that can be felt.
+     */
 
     if (obj->lamplit) {
-        if (obj->otyp == OIL_LAMP || obj->otyp == MAGIC_LAMP
-            || obj->otyp == BRASS_LANTERN)
-            pline("%slamp is now off.", Shk_Your(buf, obj));
+        if (lamp) /* lamp or lantern */
+            pline("%s%s is now off.", Shk_Your(buf, obj), lamp);
         else
             You("snuff out %s.", yname(obj));
         end_burn(obj, TRUE);
@@ -1589,10 +1599,14 @@ use_lamp(struct obj *obj)
     /* magic lamps with an spe == 0 (wished for) cannot be lit */
     if ((!Is_candle(obj) && obj->age == 0)
         || (obj->otyp == MAGIC_LAMP && obj->spe == 0)) {
-        if (obj->otyp == BRASS_LANTERN)
-            Your("lantern is out of power.");
-        else
+        if (obj->otyp == BRASS_LANTERN) {
+            if (!Blind)
+                Your("lantern is out of power.");
+            else
+                pline("%s", Nothing_seems_to_happen);
+        } else {
             pline("This %s has no oil.", xname(obj));
+        }
         return;
     }
     if (obj->cursed && !rn2(2)) {
@@ -1600,14 +1614,16 @@ use_lamp(struct obj *obj)
             pline_The("lamp spills and covers your %s with oil.",
                       fingers_or_gloves(TRUE));
             make_glib((int) (Glib & TIMEOUT) + d(2, 10));
-        } else if (!Blind)
+        } else if (!Blind) {
             pline("%s for a moment, then %s.", Tobjnam(obj, "flicker"),
                   otense(obj, "die"));
+        } else {
+            pline("%s", Nothing_seems_to_happen);
+        }
     } else {
-        if (obj->otyp == OIL_LAMP || obj->otyp == MAGIC_LAMP
-            || obj->otyp == BRASS_LANTERN) {
+        if (lamp) { /* lamp or lantern */
             check_unpaid(obj);
-            pline("%slamp is now on.", Shk_Your(buf, obj));
+            pline("%s%s is now on.", Shk_Your(buf, obj), lamp);
         } else { /* candle(s) */
             pline("%s flame%s %s%s", s_suffix(Yname2(obj)), plur(obj->quan),
                   otense(obj, "burn"), Blind ? "." : " brightly!");
@@ -1721,8 +1737,8 @@ dorub(void)
     }
     if (obj != uwep) {
         if (wield_tool(obj, "rub")) {
-            cmdq_add_ec(dorub);
-            cmdq_add_key(obj->invlet);
+            cmdq_add_ec(CQ_CANNED, dorub);
+            cmdq_add_key(CQ_CANNED, obj->invlet);
             return ECMD_TIME;
         }
         return ECMD_OK;
@@ -1906,7 +1922,7 @@ jump(int magic) /* 0=Physical, otherwise skill level */
 
     /* attempt "jumping" spell if hero has no innate jumping ability */
     if (!magic && !Jumping && known_spell(SPE_JUMPING) >= spe_Fresh)
-        return spelleffects(SPE_JUMPING, FALSE);
+        return spelleffects(SPE_JUMPING, FALSE, FALSE);
 
     if (!magic && (nolimbs(g.youmonst.data) || slithy(g.youmonst.data))) {
         /* normally (nolimbs || slithy) implies !Jumping,
@@ -2170,7 +2186,7 @@ use_unicorn_horn(struct obj **optr)
             break;
         case 6:
             if (Deaf) /* make_deaf() won't give feedback when already deaf */
-                pline("Nothing seems to happen.");
+                pline("%s", Nothing_seems_to_happen);
             make_deaf((HDeaf & TIMEOUT) + lcount, TRUE);
             break;
         }
@@ -2261,7 +2277,7 @@ use_unicorn_horn(struct obj **optr)
     if (did_prop)
         g.context.botl = TRUE;
     else
-        pline("Nothing seems to happen.");
+        pline("%s", Nothing_seems_to_happen);
 
 #undef PROP_COUNT
 #undef prop_trouble
@@ -2705,8 +2721,7 @@ use_trap(struct obj *otmp)
     else if (Stunned)
         what = "while stunned";
     else if (u.uswallow)
-        what =
-            is_animal(u.ustuck->data) ? "while swallowed" : "while engulfed";
+        what = digests(u.ustuck->data) ? "while swallowed" : "while engulfed";
     else if (Underwater)
         what = "underwater";
     else if (Levitation)
@@ -2837,8 +2852,8 @@ use_whip(struct obj *obj)
 
     if (obj != uwep) {
         if (wield_tool(obj, "lash")) {
-            cmdq_add_ec(doapply);
-            cmdq_add_key(obj->invlet);
+            cmdq_add_ec(CQ_CANNED, doapply);
+            cmdq_add_key(CQ_CANNED, obj->invlet);
             return ECMD_TIME;
         }
         return ECMD_OK;
@@ -3146,13 +3161,12 @@ static boolean
 find_poleable_mon(coord *pos, int min_range, int max_range)
 {
     struct monst *mtmp;
-    coord mpos;
+    coord mpos = { 0, 0 }; /* no candidate location yet */
     boolean impaired;
     coordxy x, y, lo_x, hi_x, lo_y, hi_y, rt;
     int glyph;
 
     impaired = (Confusion || Stunned || Hallucination);
-    mpos.x = mpos.y = 0; /* no candidate location yet */
     rt = isqrt(max_range);
     lo_x = max(u.ux - rt, 1), hi_x = min(u.ux + rt, COLNO - 1);
     lo_y = max(u.uy - rt, 0), hi_y = min(u.uy + rt, ROWNO - 1);
@@ -3232,8 +3246,8 @@ use_pole(struct obj *obj, boolean autohit)
     }
     if (obj != uwep) {
         if (wield_tool(obj, "swing")) {
-            cmdq_add_ec(doapply);
-            cmdq_add_key(obj->invlet);
+            cmdq_add_ec(CQ_CANNED, doapply);
+            cmdq_add_key(CQ_CANNED, obj->invlet);
             return ECMD_TIME;
         }
         return ECMD_OK;
@@ -3444,7 +3458,7 @@ use_royal_jelly(struct obj *obj)
         if (eobj->timed || eobj->corpsenm != oldcorpsenm)
             pline("The %s %s feebly.", xname(eobj), otense(eobj, "quiver"));
         else
-            pline("Nothing seems to happen.");
+            pline("%s", Nothing_seems_to_happen);
         kill_egg(eobj);
         goto useup_jelly;
     }
@@ -3463,7 +3477,7 @@ use_royal_jelly(struct obj *obj)
         || eobj->corpsenm != oldcorpsenm)
         pline("The %s %s briefly.", xname(eobj), otense(eobj, "quiver"));
     else
-        pline("Nothing seems to happen.");
+        pline("%s", Nothing_seems_to_happen);
 
  useup_jelly:
     /* not useup() because we've already done freeinv() */
@@ -3509,8 +3523,8 @@ use_grapple(struct obj *obj)
     }
     if (obj != uwep) {
         if (wield_tool(obj, "cast")) {
-            cmdq_add_ec(doapply);
-            cmdq_add_key(obj->invlet);
+            cmdq_add_ec(CQ_CANNED, doapply);
+            cmdq_add_key(CQ_CANNED, obj->invlet);
             return ECMD_TIME;
         }
         return ECMD_OK;
@@ -3810,7 +3824,7 @@ do_break_wand(struct obj *obj)
             continue;
         } else if (x != u.ux || y != u.uy) {
             /*
-             * Wand breakage is targetting a square adjacent to the hero,
+             * Wand breakage is targeting a square adjacent to the hero,
              * which might contain a monster or a pile of objects or both.
              * Handle objects last; avoids having undead turning raise an
              * undead's corpse and then attack resulting undead monster.
@@ -3829,7 +3843,7 @@ do_break_wand(struct obj *obj)
             }
         } else {
             /*
-             * Wand breakage is targetting the hero.  Using xdir[]+ydir[]
+             * Wand breakage is targeting the hero.  Using xdir[]+ydir[]
              * deltas for location selection causes this case to happen
              * after all the surrounding squares have been handled.
              * Process objects first, in case damage is fatal and leaves
@@ -3992,7 +4006,7 @@ doapply(void)
     case SACK:
     case BAG_OF_HOLDING:
     case OILSKIN_SACK:
-        res = use_container(&obj, 1, FALSE);
+        res = use_container(&obj, TRUE, FALSE);
         break;
     case BAG_OF_TRICKS:
         (void) bagotricks(obj, FALSE, (int *) 0);
@@ -4101,7 +4115,7 @@ doapply(void)
         res = do_play_instrument(obj);
         break;
     case HORN_OF_PLENTY: /* not a musical instrument */
-        (void) hornoplenty(obj, FALSE);
+        (void) hornoplenty(obj, FALSE, (struct obj *) 0);
         break;
     case LAND_MINE:
     case BEARTRAP:

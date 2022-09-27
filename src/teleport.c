@@ -354,6 +354,7 @@ teleok(coordxy x, coordxy y, boolean trapok)
 void
 teleds(coordxy nux, coordxy nuy, int teleds_flags)
 {
+    unsigned was_swallowed;
     boolean ball_active, ball_still_in_range = FALSE,
             allow_drag = (teleds_flags & TELEDS_ALLOW_DRAG) != 0,
             is_teleport = (teleds_flags & TELEDS_TELEPORT) != 0;
@@ -391,6 +392,7 @@ teleds(coordxy nux, coordxy nuy, int teleds_flags)
             unplacebc(); /* have to move the ball */
     }
     reset_utrap(FALSE);
+    was_swallowed = u.uswallow; /* set_ustuck(Null) clears uswallow */
     set_ustuck((struct monst *) 0);
     u.ux0 = u.ux;
     u.uy0 = u.uy;
@@ -400,9 +402,7 @@ teleds(coordxy nux, coordxy nuy, int teleds_flags)
         g.youmonst.m_ap_type = M_AP_NOTHING;
     }
 
-    if (u.uswallow) {
-        /* subset of unstuck() */
-        u.uswldtim = u.uswallow = 0;
+    if (was_swallowed) {
         if (Punished) { /* ball&chain are off map while swallowed */
             ball_active = TRUE; /* to put chain and non-carried ball on map */
             ball_still_in_range = allow_drag = FALSE; /* (redundant) */
@@ -500,7 +500,7 @@ vault_tele(void)
     register struct mkroom *croom = search_special(VAULT);
     coord c;
 
-    if (croom && somexy(croom, &c) && teleok(c.x, c.y, FALSE)) {
+    if (croom && somexyspace(croom, &c) && teleok(c.x, c.y, FALSE)) {
         teleds(c.x, c.y, TELEDS_TELEPORT);
         return;
     }
@@ -822,7 +822,7 @@ dotele(
         if (castit) {
             /* energy cost is deducted in spelleffects() */
             exercise(A_WIS, TRUE);
-            if ((spelleffects(SPE_TELEPORT_AWAY, TRUE) & ECMD_TIME))
+            if ((spelleffects(SPE_TELEPORT_AWAY, TRUE, FALSE) & ECMD_TIME))
                 return 1;
             else if (!break_the_rules)
                 return 0;
@@ -902,7 +902,7 @@ level_tele(void)
             }
             if (wizard && !strcmp(buf, "?")) {
                 schar destlev;
-                coordxy destdnum;
+                xint16 destdnum;
 
  levTport_menu:
                 destlev = 0;
@@ -1172,7 +1172,7 @@ tele_trap(struct trap *trap)
 }
 
 void
-level_tele_trap(struct trap* trap, unsigned int trflags)
+level_tele_trap(struct trap *trap, unsigned int trflags)
 {
     char verbbuf[BUFSZ];
     boolean intentional = FALSE;
@@ -1191,13 +1191,14 @@ level_tele_trap(struct trap* trap, unsigned int trflags)
         You_feel("a wrenching sensation.");
         return;
     }
-    if (!Blind)
-        You("are momentarily blinded by a flash of light.");
-    else
-        You("are momentarily disoriented.");
     deltrap(trap);
     newsym(u.ux, u.uy); /* get rid of trap symbol */
     level_tele();
+
+    if (Hallucination || Teleport_control)
+        You("briefly feel %s.", Hallucination ? "oriented" : "centered");
+    else
+        You_feel("%sdisoriented.", Confusion ? "even more " : "");
     /* magic portal traversal causes brief Stun; for level teleport, use
        confusion instead, and only when hero lacks control; do this after
        processing the level teleportation attempt because being confused
@@ -1465,7 +1466,7 @@ mvault_tele(struct monst* mtmp)
     struct mkroom *croom = search_special(VAULT);
     coord c;
 
-    if (croom && somexy(croom, &c) && goodpos(c.x, c.y, mtmp, 0)) {
+    if (croom && somexyspace(croom, &c) && goodpos(c.x, c.y, mtmp, 0)) {
         rloc_to(mtmp, c.x, c.y);
         return;
     }
@@ -1539,7 +1540,8 @@ mlevel_tele_trap(
                           (tt == HOLE) ? "hole" : "trap");
                 return Trap_Effect_Finished;
             } else {
-                get_level(&tolevel, depth(&u.uz) + 1);
+                assign_level(&tolevel, &trap->dst);
+                (void) clamp_hole_destination(&tolevel);
             }
         } else if (tt == MAGIC_PORTAL) {
             if (In_endgame(&u.uz) && (mon_has_amulet(mtmp)
@@ -1589,7 +1591,10 @@ mlevel_tele_trap(
         }
 
         if (in_sight) {
-            pline("Suddenly, %s disappears out of sight.", mon_nam(mtmp));
+            pline("Suddenly, %s %s.", mon_nam(mtmp),
+                  (tt == HOLE) ? "falls into a hole"
+                  : (tt == TRAPDOOR) ? "falls through a trap door"
+                  : "disappears out of sight");
             if (trap)
                 seetrap(trap);
         }

@@ -627,13 +627,13 @@ static int
 drop(struct obj *obj)
 {
     if (!obj)
-        return ECMD_OK;
+        return ECMD_FAIL;
     if (!canletgo(obj, "drop"))
-        return ECMD_OK;
+        return ECMD_FAIL;
     if (obj == uwep) {
         if (welded(uwep)) {
             weldmsg(obj);
-            return ECMD_OK;
+            return ECMD_FAIL;
         }
         setuwep((struct obj *) 0);
     }
@@ -647,13 +647,18 @@ drop(struct obj *obj)
     if (u.uswallow) {
         /* barrier between you and the floor */
         if (Verbose(0, drop1)) {
-            char *onam_p, monbuf[BUFSZ];
+            char *onam_p, *mnam_p, monbuf[BUFSZ];
 
+            mnam_p = mon_nam(u.ustuck);
             /* doname can call s_suffix, reusing its buffer */
-            Strcpy(monbuf, s_suffix(mon_nam(u.ustuck)));
+            if (digests(u.ustuck->data)) {
+                Sprintf(monbuf, "%s %s", s_suffix(mnam_p),
+                        mbodypart(u.ustuck, STOMACH));
+                mnam_p = monbuf;
+            }
             onam_p = is_unpaid(obj) ? yobjnam(obj, (char *) 0) : doname(obj);
-            You("drop %s into %s %s.", onam_p, monbuf,
-                mbodypart(u.ustuck, STOMACH));
+
+            You("drop %s into %s.", onam_p, mnam_p);
         }
     } else {
         if ((obj->oclass == RING_CLASS || obj->otyp == MEAT_RING)
@@ -752,9 +757,9 @@ dropz(struct obj *obj, boolean with_impact)
 static boolean
 engulfer_digests_food(struct obj *obj)
 {
-    /* animal swallower (purple worn, trapper, lurker above) eats any
+    /* animal swallower (purple worn) eats any
        corpse, glob, or meat <item> but not other types of food */
-    if (is_animal(u.ustuck->data)
+    if (digests(u.ustuck->data)
         && (obj->otyp == CORPSE || obj->globby
             || obj->otyp == MEATBALL || obj->otyp == HUGE_CHUNK_OF_MEAT
             || obj->otyp == MEAT_RING || obj->otyp == MEAT_STICK)) {
@@ -974,7 +979,8 @@ menu_drop(int retry)
                 if (!otmp2 || !otmp2->bypass)
                     continue;
                 /* found next selected invent item */
-                n_dropped += ((menudrop_split(otmp, pick_list[i].count) == ECMD_TIME) ? 1 : 0);
+                n_dropped += (menudrop_split(otmp, pick_list[i].count)
+                              == ECMD_TIME) ? 1 : 0;
             }
             bypass_objlist(g.invent, FALSE); /* reset g.invent to normal */
             free((genericptr_t) pick_list);
@@ -1070,11 +1076,18 @@ dodown(void)
     }
 
     if (u.ustuck) {
-        You("are %s, and cannot go down.",
-            !u.uswallow ? "being held" : is_animal(u.ustuck->data)
-                                             ? "swallowed"
-                                             : "engulfed");
-        return ECMD_TIME;
+        if (u.uswallow || !sticks(g.youmonst.data)) {
+            You("are %s, and cannot go down.",
+                !u.uswallow ? "being held"
+                : digests(u.ustuck->data) ? "swallowed"
+                  : "engulfed");
+            return ECMD_TIME;
+        } else {
+            struct monst *mtmp = u.ustuck;
+
+            set_ustuck((struct monst *) 0);
+            You("release %s.", mon_nam(mtmp));
+        }
     }
 
     if (!stairs_down && !ladder_down) {
@@ -1087,7 +1100,9 @@ dodown(void)
             if (flags.autodig && !g.context.nopick && uwep && is_pick(uwep)) {
                 return use_pick_axe2(uwep);
             } else {
-                You_cant("go down here.");
+                You_cant("go down here%s.",
+                         (trap && trap->ttyp == VIBRATING_SQUARE) ? " yet"
+                                                                  : "");
                 return ECMD_OK;
             }
         }
@@ -1133,8 +1148,11 @@ dodown(void)
     }
     if (trap && Is_stronghold(&u.uz)) {
         goto_hell(FALSE, TRUE);
-    } else if (trap) {
-        goto_level(&(trap->dst), FALSE, FALSE, FALSE);
+    } else if (trap && trap->dst.dlevel != -1) {
+        d_level tdst;
+        assign_level(&tdst, &(trap->dst));
+        (void) clamp_hole_destination(&tdst);
+        goto_level(&tdst, FALSE, FALSE, FALSE);
     } else {
         g.at_ladder = (boolean) (levl[u.ux][u.uy].typ == LADDER);
         next_level(!trap);
@@ -1168,11 +1186,18 @@ doup(void)
         return ECMD_OK;
     }
     if (u.ustuck) {
-        You("are %s, and cannot go up.",
-            !u.uswallow ? "being held" : is_animal(u.ustuck->data)
-                                             ? "swallowed"
-                                             : "engulfed");
-        return ECMD_TIME;
+        if (u.uswallow || !sticks(g.youmonst.data)) {
+            You("are %s, and cannot go up.",
+                !u.uswallow ? "being held"
+                : digests(u.ustuck->data) ? "swallowed"
+                  : "engulfed");
+            return ECMD_TIME;
+        } else {
+            struct monst *mtmp = u.ustuck;
+
+            set_ustuck((struct monst *) 0);
+            You("release %s.", mon_nam(mtmp));
+        }
     }
     if (near_capacity() > SLT_ENCUMBER) {
         /* No levitation check; inv_weight() already allows for it */
@@ -1229,6 +1254,7 @@ save_currentstate(void)
 {
     NHFILE *nhfp;
 
+    g.program_state.in_checkpoint++;
     if (flags.ins_chkpt) {
         /* write out just-attained level, with pets and everything */
         nhfp = currentlevel_rewrite();
@@ -1243,6 +1269,7 @@ save_currentstate(void)
 
     /* write out non-level state */
     savestateinlock();
+    g.program_state.in_checkpoint--;
 }
 #endif
 
@@ -1423,8 +1450,7 @@ goto_level(
         unplacebc();
     reset_utrap(FALSE); /* needed in level_tele */
     fill_pit(u.ux, u.uy);
-    set_ustuck((struct monst *) 0); /* idem */
-    u.uswallow = u.uswldtim = 0;
+    set_ustuck((struct monst *) 0); /* clear u.ustuck and u.uswallow */
     set_uinwater(0); /* u.uinwater = 0 */
     u.uundetected = 0; /* not hidden, even if means are available */
     keepdogs(FALSE);
@@ -1799,7 +1825,7 @@ goto_level(
 
     /* fall damage? */
     if (do_fall_dmg) {
-        int dmg = d(dist, 6);
+        int dmg = d(max(dist, 1), 6);
 
         dmg = Maybe_Half_Phys(dmg);
         losehp(dmg, "falling down a mine shaft", KILLED_BY);
@@ -1908,6 +1934,7 @@ revive_corpse(struct obj *corpse)
     struct obj *container = (struct obj *) 0;
     int container_where = 0;
     boolean is_zomb = (mons[corpse->corpsenm].mlet == S_ZOMBIE);
+    coordxy corpsex, corpsey;
 
     where = corpse->where;
     is_uwep = (corpse == uwep);
@@ -1916,6 +1943,8 @@ revive_corpse(struct obj *corpse)
                                chewed ? "bite-covered" : (const char *) 0,
                                CXN_SINGULAR));
     mcarry = (where == OBJ_MINVENT) ? corpse->ocarry : 0;
+    (void) get_obj_location(corpse, &corpsex, &corpsey,
+                            CONTAINED_TOO | BURIED_TOO);
 
     if (where == OBJ_CONTAINED) {
         struct monst *mtmp2;
@@ -1939,7 +1968,7 @@ revive_corpse(struct obj *corpse)
             break;
 
         case OBJ_FLOOR:
-            if (cansee(mtmp->mx, mtmp->my)) {
+            if (cansee(corpsex, corpsey) || canseemon(mtmp)) {
                 const char *effect = "";
 
                 if (mtmp->data == &mons[PM_DEATH])
@@ -1949,18 +1978,24 @@ revive_corpse(struct obj *corpse)
                 else if (mtmp->data == &mons[PM_FAMINE])
                     effect = " in a ring of withered crops";
 
-                pline("%s rises from the dead%s!",
-                      chewed ? Adjmonnam(mtmp, "bite-covered")
-                             : Monnam(mtmp), effect);
+                if (canseemon(mtmp)) {
+                    pline("%s rises from the dead%s!",
+                          chewed ? Adjmonnam(mtmp, "bite-covered")
+                                 : Monnam(mtmp),
+                          effect);
+                } else {
+                    pline("%s disappears%s!", The(cname), effect);
+                }
             }
             break;
 
         case OBJ_MINVENT: /* probably a nymph's */
             if (cansee(mtmp->mx, mtmp->my)) {
                 if (canseemon(mcarry))
-                    pline("Startled, %s drops %s as it revives!",
-                          mon_nam(mcarry), an(cname));
-                else
+                    pline("Startled, %s drops %s as it %s!",
+                          mon_nam(mcarry), an(cname),
+                          canspotmon(mtmp) ? "revives" : "disappears");
+                else if (canspotmon(mtmp))
                     pline("%s suddenly appears!",
                           chewed ? Adjmonnam(mtmp, "bite-covered")
                                  : Monnam(mtmp));
@@ -1968,20 +2003,23 @@ revive_corpse(struct obj *corpse)
             break;
         case OBJ_CONTAINED: {
             char sackname[BUFSZ];
+            /* Could use x_monnam(..., AUGMENT_IT) but that'd say "someone"
+               for humanoid monsters, which seems like a distinction the hero
+               doesn't have knowledge to make here. */
+            const char *mnam = canspotmon(mtmp) ? Amonnam(mtmp) : Something;
 
-            if (container_where == OBJ_MINVENT && cansee(mtmp->mx, mtmp->my)
-                && mcarry && canseemon(mcarry) && container) {
-                pline("%s writhes out of %s!", Amonnam(mtmp),
-                      yname(container));
-            } else if (container_where == OBJ_INVENT && container) {
+            if (!container) {
+                impossible("reviving corpse from non-existent container");
+            } else if (mcarry && canseemon(mcarry)) {
+                pline("%s writhes out of %s!", mnam, yname(container));
+            } else if (container_where == OBJ_INVENT) {
                 Strcpy(sackname, an(xname(container)));
-                pline("%s %s out of %s in your pack!",
-                      Blind ? Something : Amonnam(mtmp),
+                pline("%s %s out of %s in your pack!", mnam,
                       locomotion(mtmp->data, "writhes"), sackname);
-            } else if (container_where == OBJ_FLOOR && container
-                       && cansee(mtmp->mx, mtmp->my)) {
+            } else if (container_where == OBJ_FLOOR
+                       && cansee(corpsex, corpsey)) {
                 Strcpy(sackname, an(xname(container)));
-                pline("%s escapes from %s!", Amonnam(mtmp), sackname);
+                pline("%s escapes from %s!", mnam, sackname);
             }
             break;
         }
@@ -1993,7 +2031,8 @@ revive_corpse(struct obj *corpse)
 
                     ttmp = t_at(mtmp->mx, mtmp->my);
                     ttmp->tseen = TRUE;
-                    pline("%s claws itself out of the ground!", Amonnam(mtmp));
+                    pline("%s claws itself out of the ground!",
+                          canspotmon(mtmp) ? Amonnam(mtmp) : Something);
                     newsym(mtmp->mx, mtmp->my);
                 } else if (distu(mtmp->mx, mtmp->my) < 5*5)
                     You_hear("scratching noises.");

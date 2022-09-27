@@ -306,6 +306,9 @@ dog_eat(struct monst *mtmp,
         Strcpy(objnambuf, xname(obj));
         iflags.suppress_price--;
     }
+    /* some monsters that eat items could eat a container with contents */
+    if (Has_contents(obj))
+        meatbox(mtmp, obj);
     /* It's a reward if it's DOGFOOD and the player dropped/threw it.
        We know the player had it if invlet is set. -dlc */
     if (dogfood(mtmp, obj) == DOGFOOD && obj->invlet)
@@ -442,7 +445,7 @@ dog_invent(struct monst *mtmp, struct edog *edog, int udist)
     omy = mtmp->my;
 
     /* If we are carrying something then we drop it (perhaps near @).
-     * Note: if apport == 1 then our behaviour is independent of udist.
+     * Note: if apport == 1 then our behavior is independent of udist.
      * Use udist+1 so steed won't cause divide by zero.
      */
     if (droppables(mtmp)) {
@@ -499,7 +502,7 @@ dog_invent(struct monst *mtmp, struct edog *edog, int udist)
                             mtmp->weapon_check = NEED_HTH_WEAPON;
                             (void) mon_wield_item(mtmp);
                         }
-                        m_dowear(mtmp, FALSE);
+                        check_gear_next_turn(mtmp);
                     }
                 }
             }

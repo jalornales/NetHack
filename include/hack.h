@@ -128,8 +128,9 @@ enum cost_alteration_types {
 #define CXN_NOCORPSE 16 /* suppress " corpse" suffix */
 
 /* flags for look_here() */
-#define LOOKHERE_PICKED_SOME   1
-#define LOOKHERE_SKIP_DFEATURE 2
+#define LOOKHERE_NOFLAGS       0U
+#define LOOKHERE_PICKED_SOME   1U
+#define LOOKHERE_SKIP_DFEATURE 2U
 
 /* getpos() return values */
 enum getpos_retval {
@@ -407,6 +408,8 @@ typedef uint32_t mmflags_nht;     /* makemon MM_ flags */
                                   * or m_initweap() (lawful Angel) */
 /* flag congrolling potential livelog event of finding an artifact */
 #define ONAME_KNOW_ARTI  0x0100U /* hero is already aware of this artifact */
+/* flag for suppressing perm_invent update when name gets assigned */
+#define ONAME_SKIP_INVUPD 0x0200U /* don't call update_inventory() */
 
 /* Flags to control find_mid() */
 #define FM_FMON 0x01    /* search the fmon chain */
@@ -443,12 +446,12 @@ typedef uint32_t mmflags_nht;     /* makemon MM_ flags */
 #define MMOVE_NOMOVES 4 /* monster has no valid locations to move to */
 
 /*** some utility macros ***/
-#define yn(query) yn_function(query, ynchars, 'n')
-#define ynq(query) yn_function(query, ynqchars, 'q')
-#define ynaq(query) yn_function(query, ynaqchars, 'y')
-#define nyaq(query) yn_function(query, ynaqchars, 'n')
-#define nyNaq(query) yn_function(query, ynNaqchars, 'n')
-#define ynNaq(query) yn_function(query, ynNaqchars, 'y')
+#define yn(query) yn_function(query, ynchars, 'n', TRUE)
+#define ynq(query) yn_function(query, ynqchars, 'q', TRUE)
+#define ynaq(query) yn_function(query, ynaqchars, 'y', TRUE)
+#define nyaq(query) yn_function(query, ynaqchars, 'n', TRUE)
+#define nyNaq(query) yn_function(query, ynNaqchars, 'n', TRUE)
+#define ynNaq(query) yn_function(query, ynNaqchars, 'y', TRUE)
 
 /* Macros for scatter */
 #define VIS_EFFECTS 0x01 /* display visual effects */
@@ -673,9 +676,10 @@ enum optset_restrictions {
     set_gameview   = 3, /* may be set via extern program, displayed in game */
     set_in_game    = 4, /* may be set via extern program or set in the game */
     set_wizonly    = 5, /* may be set set in the game if wizmode */
-    set_hidden     = 6  /* placeholder for prefixed entries, never show it  */
+    set_wiznofuz   = 6, /* wizard-mode only, but not by fuzzer */
+    set_hidden     = 7  /* placeholder for prefixed entries, never show it  */
 };
-#define SET__IS_VALUE_VALID(s) ((s < set_in_sysconf) || (s > set_wizonly))
+#define SET__IS_VALUE_VALID(s) ((s < set_in_sysconf) || (s > set_wiznofuz))
 
 #define FEATURE_NOTICE_VER(major, minor, patch)                    \
     (((unsigned long) major << 24) | ((unsigned long) minor << 16) \

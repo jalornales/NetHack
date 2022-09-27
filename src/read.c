@@ -522,7 +522,7 @@ doread(void)
                            "became literate by reading a coin's engravings");
 
         return ECMD_TIME;
-    } else if (scroll->oartifact == ART_ORB_OF_FATE) {
+    } else if (is_art(scroll, ART_ORB_OF_FATE)) {
         if (Blind)
             You("feel the engraved signature:");
         else
@@ -2385,7 +2385,7 @@ litroom(
         if (u.uswallow) {
             if (Blind)
                 ; /* no feedback */
-            else if (is_animal(u.ustuck->data))
+            else if (digests(u.ustuck->data))
                 pline("%s %s is lit.", s_suffix(Monnam(u.ustuck)),
                       mbodypart(u.ustuck, STOMACH));
             else if (is_whirly(u.ustuck->data))
@@ -3105,7 +3105,7 @@ create_particular_creation(struct _create_particular_data* d)
             mtmp->mundetected = 1;
         if (d->sleeping)
             mtmp->msleeping = 1;
-        /* iff asking for 'hidden', show locaton of every created monster
+        /* iff asking for 'hidden', show location of every created monster
            that can't be seen--whether that's due to successfully hiding
            or vision issues (line-of-sight, invisibility, blindness) */
         if (d->hidden && !canspotmon(mtmp)) {

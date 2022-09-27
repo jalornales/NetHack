@@ -35,8 +35,8 @@ static int QSORTCALLBACK vanqsort_cmp(const genericptr, const genericptr);
 static int set_vanq_order(void);
 static int num_extinct(void);
 
-extern const char *hu_stat[];  /* hunger status from eat.c */
-extern const char *enc_stat[]; /* encumbrance status from botl.c */
+extern const char *const hu_stat[];  /* hunger status from eat.c */
+extern const char *const enc_stat[]; /* encumbrance status from botl.c */
 
 static const char You_[] = "You ", are[] = "are ", were[] = "were ",
                   have[] = "have ", had[] = "had ", can[] = "can ",
@@ -801,7 +801,7 @@ one_characteristic(int mode, int final, int attrindx)
     case A_DEX:
         break;
     case A_CON:
-        if (uwep && uwep->oartifact == ART_OGRESMASHER && uwep->cursed)
+        if (u_wield_art(ART_OGRESMASHER) && uwep->cursed)
             hide_innate_value = TRUE;
         break;
     case A_INT:
@@ -1036,7 +1036,7 @@ status_enlightenment(int mode, int final)
     }
     if (u.uswallow) { /* implies u.ustuck is non-Null */
         Snprintf(buf, sizeof buf, "%s by %s",
-                is_animal(u.ustuck->data) ? "swallowed" : "engulfed",
+                digests(u.ustuck->data) ? "swallowed" : "engulfed",
                 heldmon);
         if (dmgtype(u.ustuck->data, AD_DGST)) {
             /* if final, death via digestion can be deduced by u.uswallow
@@ -1444,7 +1444,7 @@ attributes_enlightenment(int unused_mode UNUSED, int final)
     if (Sleep_resistance)
         you_are("sleep resistant", from_what(SLEEP_RES));
     if (Disint_resistance)
-        you_are("disintegration-resistant", from_what(DISINT_RES));
+        you_are("disintegration resistant", from_what(DISINT_RES));
     if (u_adtyp_resistance_obj(AD_DISN))
         enl_msg("Your items ", "are", "were",
                 " protected from disintegration", item_what(AD_DISN));
@@ -2684,7 +2684,7 @@ list_vanquished(char defquery, boolean ask)
 
         c = ask ? yn_function(
                             "Do you want an account of creatures vanquished?",
-                              ynaqchars, defquery)
+                             ynaqchars, defquery, TRUE)
                 : defquery;
         if (c == 'q')
             done_stopprint++;
@@ -2833,7 +2833,7 @@ list_genocided(char defquery, boolean ask)
                 (nextinct && !ngenocided) ? "extinct " : "",
                 (ngenocided) ? " genocided" : "",
                 (nextinct && ngenocided) ? " and extinct" : "");
-        c = ask ? yn_function(buf, ynqchars, defquery) : defquery;
+        c = ask ? yn_function(buf, ynqchars, defquery, TRUE) : defquery;
         if (c == 'q')
             done_stopprint++;
         if (c == 'y') {
@@ -3023,13 +3023,26 @@ mstatusline(struct monst *mtmp)
                          : ", [? speed]");
     if (mtmp->minvis)
         Strcat(info, ", invisible");
-    if (mtmp == u.ustuck)
-        Strcat(info, sticks(g.youmonst.data) ? ", held by you"
-                      : !u.uswallow ? ", holding you"
-                         : attacktype_fordmg(u.ustuck->data, AT_ENGL, AD_DGST)
-                            ? ", digesting you"
-                            : is_animal(u.ustuck->data) ? ", swallowing you"
-                               : ", engulfing you");
+    if (mtmp == u.ustuck) {
+        struct permonst *pm = u.ustuck->data;
+
+        /* being swallowed/engulfed takes priority over sticks(youmonst);
+           this used to have that backwards and checked sticks() first */
+        Strcat(info, u.uswallow ? (digests(pm)
+                                   ? ", digesting you"
+                                   /* note: the "swallowing you" case won't
+                                      happen because all animal engulfers
+                                      either digest their victims (purple
+                                      worm) or enfold them (trappers and
+                                      lurkers above) */
+                                   : (is_animal(pm) && !enfolds(pm))
+                                     ? ", swallowing you"
+                                     : ", engulfing you")
+                     /* !u.uswallow; if both youmonst and ustuck are holders,
+                        youmonst wins */
+                     : (!sticks(g.youmonst.data) ? ", holding you"
+                                                 : ", held by you"));
+    }
     if (mtmp == u.usteed) {
         Strcat(info, ", carrying you");
         if (Wounded_legs) {

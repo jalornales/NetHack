@@ -36,6 +36,7 @@ struct tc_lcl_data tc_lcl_data = { 0, 0, 0, 0, 0, 0, 0, FALSE };
 static char *HO, *CL, *CE, *UP, *XD, *BC, *SO, *SE, *TI, *TE;
 static char *VS, *VE;
 static char *ME, *MR, *MB, *MH, *MD;
+static char *ZH, *ZR;
 
 #ifdef TERMLIB
 boolean dynamic_HIHE = FALSE;
@@ -256,6 +257,8 @@ tty_startup(int *wid, int *hgt)
     SE = Tgetstr("se"); /* standout end */
     nh_US = Tgetstr("us"); /* underline start */
     nh_UE = Tgetstr("ue"); /* underline end */
+    ZH = Tgetstr("ZH"); /* italic start */
+    ZR = Tgetstr("ZR"); /* italic end */
     SG = tgetnum("sg"); /* -1: not fnd; else # of spaces left by so */
     if (!SO || !SE || (SG > 0))
         SO = SE = nh_US = nh_UE = nullstr;
@@ -1296,6 +1299,11 @@ static char *
 s_atr2str(int n)
 {
     switch (n) {
+    case ATR_ITALIC:
+        /* if italic isn't available, fall through to underline */
+        if (ZH && *ZH)
+            return ZH;
+        /*FALLTHRU*/
     case ATR_BLINK:
     case ATR_ULINE:
         if (n == ATR_BLINK) {
@@ -1328,6 +1336,11 @@ static char *
 e_atr2str(int n)
 {
     switch (n) {
+    case ATR_ITALIC:
+        /* send ZR unless we didn't have ZH and substituted US */
+        if (ZR && *ZR && ZH && *ZH)
+            return ZR;
+        /*FALLTHRU*/
     case ATR_ULINE:
         if (nh_UE && *nh_UE)
             return nh_UE;
@@ -1440,7 +1453,7 @@ term_start_color(int color)
 #define tcfmtstr256 "\033[38:5:%ldm"
 #endif
 #endif
- 
+
 static void emit24bit(long mcolor);
 static void emit256(int u256coloridx);
 
@@ -1469,7 +1482,7 @@ term_start_24bitcolor(struct unicode_representation *urep)
 {
     if (urep && SYMHANDLING(H_UTF8)) {
         /* color 0 has bit 0x1000000 set */
-        long mcolor = (urep->ucolor & 0xFFFFFF); 
+        long mcolor = (urep->ucolor & 0xFFFFFF);
         if (iflags.colorcount == 256)
             emit256(urep->u256coloridx);
         else

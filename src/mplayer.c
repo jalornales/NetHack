@@ -128,7 +128,7 @@ mk_mplayer(struct permonst *ptr, coordxy x, coordxy y, boolean special)
     if (!In_endgame(&u.uz))
         special = FALSE;
 
-    if ((mtmp = makemon(ptr, x, y, NO_MM_FLAGS)) != 0) {
+    if ((mtmp = makemon(ptr, x, y, special ? MM_NOMSG : NO_MM_FLAGS)) != 0) {
         short weapon, armor, cloak, helm, shield;
         int quan;
         struct obj *otmp;
@@ -266,7 +266,7 @@ mk_mplayer(struct permonst *ptr, coordxy x, coordxy y, boolean special)
                 && monmightthrowwep(otmp))
                 otmp->quan += (long) rn2(is_spear(otmp) ? 4 : 8);
             /* mplayers knew better than to overenchant Magicbane */
-            if (otmp->oartifact == ART_MAGICBANE)
+            if (is_art(otmp, ART_MAGICBANE))
                 otmp->spe = rnd(4);
             (void) mpickobj(mtmp, otmp);
         }

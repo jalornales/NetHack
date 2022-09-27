@@ -16,7 +16,6 @@ static void gloc_filter_init(void);
 static void gloc_filter_done(void);
 static boolean gather_locs_interesting(coordxy, coordxy, int);
 static void gather_locs(coord **, int *, int);
-static void auto_describe(int, int);
 static void truncate_to_map(int *, int *, schar, schar);
 static void do_mgivenname(void);
 static boolean alreadynamed(struct monst *, char *, char *);
@@ -553,8 +552,8 @@ coord_desc(coordxy x, coordxy y, char *outbuf, char cmode)
 
 RESTORE_WARNING_FORMAT_NONLITERAL
 
-static void
-auto_describe(int cx, int cy)
+void
+auto_describe(coordxy cx, coordxy cy)
 {
     coord cc;
     int sym = 0;
@@ -711,17 +710,19 @@ getpos(coord *ccp, boolean force, const char *goal)
 
     /* temporary? if we have a queued direction, return the adjacent spot
        in that direction */
-    if ((cmdq = cmdq_pop()) != 0) {
-        cq = *cmdq;
-        free((genericptr_t) cmdq);
-        if (cq.typ == CMDQ_DIR && !cq.dirz) {
-            ccp->x = u.ux + cq.dirx;
-            ccp->y = u.uy + cq.diry;
-        } else {
-            cmdq_clear();
-            result = -1;
+    if (!g.in_doagain) {
+        if ((cmdq = cmdq_pop()) != 0) {
+            cq = *cmdq;
+            free((genericptr_t) cmdq);
+            if (cq.typ == CMDQ_DIR && !cq.dirz) {
+                ccp->x = u.ux + cq.dirx;
+                ccp->y = u.uy + cq.diry;
+            } else {
+                cmdq_clear(CQ_CANNED);
+                result = -1;
+            }
+            return result;
         }
-        return result;
     }
 
     for (i = 0; i < SIZE(pick_chars_def); i++)
@@ -749,6 +750,7 @@ getpos(coord *ccp, boolean force, const char *goal)
 #ifdef MAC
     lock_mouse_cursor(TRUE);
 #endif
+    lock_mouse_buttons(TRUE);
     for (;;) {
         if (show_goal_msg) {
             pline("Move cursor to %s:", goal);
@@ -762,7 +764,20 @@ getpos(coord *ccp, boolean force, const char *goal)
         rushrun = FALSE;
 
         g.program_state.getting_a_command = 1;
-        c = readchar_poskey(&tx, &ty, &sidx);
+        if ((cmdq = cmdq_pop()) != 0) {
+            if (cmdq->typ == CMDQ_KEY) {
+                c = cmdq->key;
+            } else {
+                cmdq_clear(CQ_CANNED);
+                result = -1;
+                goto exitgetpos;
+            }
+            free(cmdq);
+        } else {
+            c = readchar_poskey(&tx, &ty, &sidx);
+            if (!g.in_doagain)
+                cmdq_add_key(CQ_REPEAT, c);
+        }
 
         if (hilite_state) {
             (*getpos_hilitefunc)(2);
@@ -832,7 +847,7 @@ getpos(coord *ccp, boolean force, const char *goal)
                 getpos_help(force, goal);
             else /* ^R */
                 docrt(); /* redraw */
-            /* update message window to reflect that we're still targetting */
+            /* update message window to reflect that we're still targeting */
             show_goal_msg = TRUE;
             msg_given = TRUE;
         } else if (c == g.Cmd.spkeys[NHKF_GETPOS_SHOWVALID]
@@ -1022,9 +1037,11 @@ getpos(coord *ccp, boolean force, const char *goal)
         curs(WIN_MAP, cx, cy);
         flush_screen(0);
     }
+ exitgetpos:
 #ifdef MAC
     lock_mouse_cursor(FALSE);
 #endif
+    lock_mouse_buttons(FALSE);
     if (msg_given)
         clear_nhwindow(WIN_MESSAGE);
     ccp->x = cx;
@@ -1311,14 +1328,14 @@ do_oname(struct obj *obj)
            the text had been trodden upon, sometimes picking
            punctuation instead of an arbitrary letter;
            unfortunately, we have to cover the possibility of
-           it targetting spaces so failing to make any change
+           it targeting spaces so failing to make any change
            (we know that it must eventually target a nonspace
            because buf[] matches a valid artifact name) */
         Strcpy(bufcpy, buf);
         /* for "the Foo of Bar", only scuff "Foo of Bar" part */
         bufp = !strncmpi(buf, "the ", 4) ? (buf + 4) : buf;
         do {
-            wipeout_text(bufp, rn2_on_display_rng(2), (unsigned) 0);
+            wipeout_text(bufp, rnd_on_display_rng(2), (unsigned) 0);
         } while (!strcmp(buf, bufcpy));
         pline("While engraving, your %s slips.", body_part(HAND));
         display_nhwindow(WIN_MESSAGE, FALSE);
@@ -1341,11 +1358,12 @@ struct obj *
 oname(
     struct obj *obj,  /* item to assign name to */
     const char *name, /* name to assign */
-    unsigned oflgs)   /* flags for artifact creation; otherwise ignored */
+    unsigned oflgs)   /* flags, mostly for artifact creation */
 {
     int lth;
     char buf[PL_PSIZ];
-    boolean via_naming = (oflgs & ONAME_VIA_NAMING) != 0;
+    boolean via_naming = (oflgs & ONAME_VIA_NAMING) != 0,
+            skip_inv_update = (oflgs & ONAME_SKIP_INVUPD) != 0;
 
     lth = *name ? (int) (strlen(name) + 1) : 0;
     if (lth > PL_PSIZ) {
@@ -1388,7 +1406,7 @@ oname(
                                ansimpleoname(obj), bare_artifactname(obj));
         }
     }
-    if (carried(obj))
+    if (carried(obj) && !skip_inv_update)
         update_inventory();
     return obj;
 }
@@ -1472,7 +1490,7 @@ docallcmd(void)
         if (cq.typ == CMDQ_KEY)
             ch = cq.key;
         else
-            cmdq_clear();
+            cmdq_clear(CQ_CANNED);
         goto docallcmd;
     }
     win = create_nhwindow(NHW_MENU);
@@ -2274,6 +2292,7 @@ obj_pmname(struct obj *obj)
 
         return pmname(&mons[mndx], mgend);
     }
+    impossible("obj_pmname otyp:%i,corpsenm:%i", obj->otyp, obj->corpsenm);
     return "two-legged glorkum-seeker";
 }
 

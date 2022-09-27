@@ -78,6 +78,8 @@ static int optfn_##a(int, int, boolean, char *, char *);
     { m, OptS_##sec, 0, b, opt_##a, s, OthrOpt, n, v, d, No, c,         \
       (boolean *) 0, &optfn_##a, al, z, (const char *) 0, On, On, 0 },
 
+/* this is not reliable because USE_TILES might be defined in a
+   multi-interface binary but not apply to the current interface */
 #ifdef USE_TILES
 #define tiled_map_Def On
 #define ascii_map_Def Off
@@ -160,8 +162,6 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(checkpoint, Advanced, 0, opt_out, set_in_config,
                 Off, No, No, No, NoAlias, (boolean *) 0)
 #endif
-    NHOPTB(clicklook, Advanced, 0, opt_in, set_in_game,
-                Off, Yes, No, No, NoAlias, &iflags.clicklook)
     NHOPTB(cmdassist, Behavior, 0, opt_out, set_in_game,
                 On, Yes, No, No, NoAlias, &iflags.cmdassist)
     NHOPTB(color, Map, 0, opt_in, set_in_game,
@@ -180,6 +180,12 @@ static int optfn_##a(int, int, boolean, char *, char *);
                 Yes, Yes, No, No, NoAlias,
                 "load DECGraphics display symbols into symset")
 #endif
+    NHOPTB(debug_hunger, Advanced, 0, opt_in, set_wiznofuz,
+                Off, Yes, No, No, NoAlias, &iflags.debug_hunger)
+    NHOPTB(debug_mongen, Advanced, 0, opt_in, set_wiznofuz,
+                Off, Yes, No, No, NoAlias, &iflags.debug_mongen)
+    NHOPTB(debug_overwrite_stairs, Advanced, 0, opt_in, set_wiznofuz,
+                Off, Yes, No, No, NoAlias, &iflags.debug_overwrite_stairs)
     NHOPTC(disclose, Advanced, sizeof flags.end_disclose * 2,
                 opt_in, set_in_game,
                 Yes, Yes, No, Yes, NoAlias,
@@ -351,7 +357,7 @@ static int optfn_##a(int, int, boolean, char *, char *);
                 No, Yes, No, NoAlias, "edit menu colors")
     NHOPTC(menuinvertmode, Advanced, 5, opt_in, set_in_game,
                 No, Yes, No, No, NoAlias,
-                "experimental behaviour of menu inverts")
+                "experimental behavior of menu inverts")
     NHOPTC(menustyle, Advanced, MENUTYPELEN, opt_in, set_in_game,
                 Yes, Yes, No, Yes, NoAlias,
                 "user interface for object selection")
@@ -636,7 +642,7 @@ static int optfn_##a(int, int, boolean, char *, char *);
     NHOPTB(whatis_moveskip, Advanced, 0, opt_in, set_in_game,
                 Off, Yes, No, No, NoAlias, &iflags.getloc_moveskip)
     NHOPTC(windowborders, Advanced, 9, opt_in, set_in_game,
-                Yes, Yes, No, No, NoAlias, "0 (off), 1 (on), 2 (auto)")
+                Yes, Yes, No, Yes, NoAlias, "0 (off), 1 (on), 2 (auto)")
 #ifdef WINCHAIN
     NHOPTC(windowchain, Advanced, WINTYPELEN, opt_in, set_in_sysconf,
                 No, Yes, No, No, NoAlias, "window processor to use")

@@ -324,12 +324,19 @@ mkbox_cnts(struct obj *box)
 int
 rndmonnum(void)
 {
+    return rndmonnum_adj(0, 0);
+}
+
+/* select a random, common monster type, with adjusted difficulty */
+int
+rndmonnum_adj(int minadj, int maxadj)
+{
     register struct permonst *ptr;
     register int i;
     unsigned short excludeflags;
 
     /* Plan A: get a level-appropriate common monster */
-    ptr = rndmonst();
+    ptr = rndmonst_adj(minadj, maxadj);
     if (ptr)
         return monsndx(ptr);
 
@@ -352,7 +359,7 @@ copy_oextra(struct obj *obj2, struct obj *obj1)
     if (!obj2->oextra)
         obj2->oextra = newoextra();
     if (has_oname(obj1))
-        oname(obj2, ONAME(obj1), ONAME_NO_FLAGS);
+        oname(obj2, ONAME(obj1), ONAME_SKIP_INVUPD);
     if (has_omonst(obj1)) {
         if (!OMONST(obj2))
             newomonst(obj2);
@@ -416,11 +423,11 @@ splitobj(struct obj *obj, long num)
        be tracking the original */
     if (otmp->where == OBJ_LUAFREE)
         otmp->where = OBJ_FREE;
-    copy_oextra(otmp, obj);
-    if (has_omid(otmp))
-        free_omid(otmp); /* only one association with m_id*/
     if (obj->unpaid)
         splitbill(obj, otmp);
+    copy_oextra(otmp, obj);
+    if (has_omid(otmp))
+        free_omid(otmp); /* only one association with m_id */
     if (obj->timed)
         obj_split_timers(obj, otmp);
     if (obj_sheds_light(obj))
@@ -817,7 +824,7 @@ mksobj(int otyp, boolean init, boolean artif)
             if (is_poisonable(otmp) && !rn2(100))
                 otmp->opoisoned = 1;
 
-            if (artif && !rn2(20))
+            if (artif && !rn2(20 + (10 * nartifact_exist())))
                 otmp = mk_artifact(otmp, (aligntyp) A_NONE);
             break;
         case FOOD_CLASS:
@@ -965,8 +972,9 @@ mksobj(int otyp, boolean init, boolean artif)
                 break;
             case FIGURINE:
                 tryct = 0;
+                /* figurines are slightly harder monsters */
                 do
-                    otmp->corpsenm = rndmonnum();
+                    otmp->corpsenm = rndmonnum_adj(5, 10);
                 while (is_human(&mons[otmp->corpsenm]) && tryct++ < 30);
                 blessorcurse(otmp, 4);
                 break;
@@ -1020,7 +1028,7 @@ mksobj(int otyp, boolean init, boolean artif)
                 otmp->spe = rne(3);
             } else
                 blessorcurse(otmp, 10);
-            if (artif && !rn2(40))
+            if (artif && !rn2(40 + (10 * nartifact_exist())))
                 otmp = mk_artifact(otmp, (aligntyp) A_NONE);
             /* simulate lacquered armor for samurai */
             if (Role_if(PM_SAMURAI) && otmp->otyp == SPLINT_MAIL
@@ -2539,7 +2547,8 @@ dealloc_obj(struct obj *obj)
 int
 hornoplenty(
     struct obj *horn,
-    boolean tipping) /* caller emptying entire contents; affects shop mesgs */
+    boolean tipping, /* caller emptying entire contents; affects shop mesgs */
+    struct obj *targetbox) /* if non-Null, container to tip into */
 {
     int objcount = 0;
 
@@ -2547,6 +2556,10 @@ hornoplenty(
         impossible("bad horn o' plenty");
     } else if (horn->spe < 1) {
         pline1(nothing_happens);
+        if (!horn->cknown) {
+            horn->cknown = 1;
+            update_inventory();
+        }
     } else {
         struct obj *obj;
         const char *what;
@@ -2589,6 +2602,16 @@ hornoplenty(
                                           : "Oops!  %s to the floor!",
                                       The(aobjnam(obj, "slip")), (char *) 0);
             nhUse(obj);
+        } else if (targetbox) {
+            add_to_container(targetbox, obj);
+            /* add to container doesn't update the weight */
+            targetbox->owt = weight(targetbox);
+            /* item still in magic horn was weightless; when it's now in
+               a carried container, hero's encumbrance could change */
+            if (carried(targetbox)) {
+                (void) encumber_msg();
+                update_inventory(); /* for contents count or wizweight */
+            }
         } else {
             /* assumes this is taking place at hero's location */
             if (!can_reach_floor(TRUE)) {

@@ -1,4 +1,4 @@
-/* NetHack 3.7	display.c	$NHDT-Date: 1657918092 2022/07/15 20:48:12 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.190 $ */
+/* NetHack 3.7	display.c	$NHDT-Date: 1661295668 2022/08/23 23:01:08 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.192 $ */
 /* Copyright (c) Dean Luick, with acknowledgements to Kevin Darcy */
 /* and Dave Cohrs, 1990.                                          */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -1075,90 +1075,92 @@ tmp_at(coordxy x, coordxy y)
         break;
     }
 
-    if (!tglyph)
+    if (!tglyph) {
         panic("tmp_at: tglyph not initialized");
+    } else {
+        switch (x) {
+        case DISP_CHANGE:
+            tglyph->glyph = y;
+            break;
 
-    switch (x) {
-    case DISP_CHANGE:
-        tglyph->glyph = y;
-        break;
+        case DISP_END:
+            if (tglyph->style == DISP_BEAM || tglyph->style == DISP_ALL) {
+                register int i;
 
-    case DISP_END:
-        if (tglyph->style == DISP_BEAM || tglyph->style == DISP_ALL) {
-            register int i;
-
-            /* Erase (reset) from source to end */
-            for (i = 0; i < tglyph->sidx; i++)
-                newsym(tglyph->saved[i].x, tglyph->saved[i].y);
-        } else if (tglyph->style == DISP_TETHER) {
-            int i;
-
-            if (y == BACKTRACK && tglyph->sidx > 1) {
-                /* backtrack */
-                for (i = tglyph->sidx - 1; i > 0; i--) {
+                /* Erase (reset) from source to end */
+                for (i = 0; i < tglyph->sidx; i++)
                     newsym(tglyph->saved[i].x, tglyph->saved[i].y);
-                    show_glyph(tglyph->saved[i - 1].x,
-                               tglyph->saved[i - 1].y, tglyph->glyph);
-                    flush_screen(0);   /* make sure it shows up */
-                    delay_output();
+            } else if (tglyph->style == DISP_TETHER) {
+                int i;
+
+                if (y == BACKTRACK && tglyph->sidx > 1) {
+                    /* backtrack */
+                    for (i = tglyph->sidx - 1; i > 0; i--) {
+                        newsym(tglyph->saved[i].x, tglyph->saved[i].y);
+                        show_glyph(tglyph->saved[i - 1].x,
+                                   tglyph->saved[i - 1].y, tglyph->glyph);
+                        flush_screen(0); /* make sure it shows up */
+                        delay_output();
+                    }
+                    tglyph->sidx = 1;
                 }
+                for (i = 0; i < tglyph->sidx; i++)
+                    newsym(tglyph->saved[i].x, tglyph->saved[i].y);
+            } else {              /* DISP_FLASH or DISP_ALWAYS */
+                if (tglyph->sidx) /* been called at least once */
+                    newsym(tglyph->saved[0].x, tglyph->saved[0].y);
+            }
+            /* tglyph->sidx = 0; -- about to be freed, so not necessary */
+            tmp = tglyph->prev;
+            if (tglyph != &tgfirst)
+                free((genericptr_t) tglyph);
+            tglyph = tmp;
+            break;
+
+        default: /* do it */
+            if (!isok(x, y))
+                break;
+            if (tglyph->style == DISP_BEAM || tglyph->style == DISP_ALL) {
+                if (tglyph->style != DISP_ALL && !cansee(x, y))
+                    break;
+                if (tglyph->sidx >= TMP_AT_MAX_GLYPHS)
+                    break; /* too many locations */
+                /* save pos for later erasing */
+                tglyph->saved[tglyph->sidx].x = x;
+                tglyph->saved[tglyph->sidx].y = y;
+                tglyph->sidx += 1;
+            } else if (tglyph->style == DISP_TETHER) {
+                if (tglyph->sidx >= TMP_AT_MAX_GLYPHS)
+                    break; /* too many locations */
+                if (tglyph->sidx) {
+                    int px, py;
+
+                    px = tglyph->saved[tglyph->sidx - 1].x;
+                    py = tglyph->saved[tglyph->sidx - 1].y;
+                    show_glyph(px, py, tether_glyph(px, py));
+                }
+                /* save pos for later use or erasure */
+                tglyph->saved[tglyph->sidx].x = x;
+                tglyph->saved[tglyph->sidx].y = y;
+                tglyph->sidx += 1;
+            } else { /* DISP_FLASH/ALWAYS */
+                if (tglyph
+                        ->sidx) { /* not first call, so reset previous pos */
+                    newsym(tglyph->saved[0].x, tglyph->saved[0].y);
+                    tglyph->sidx = 0; /* display is presently up to date */
+                }
+                if (!cansee(x, y) && tglyph->style != DISP_ALWAYS)
+                    break;
+                tglyph->saved[0].x = x;
+                tglyph->saved[0].y = y;
                 tglyph->sidx = 1;
             }
-            for (i = 0; i < tglyph->sidx; i++)
-                newsym(tglyph->saved[i].x, tglyph->saved[i].y);
-        } else {              /* DISP_FLASH or DISP_ALWAYS */
-            if (tglyph->sidx) /* been called at least once */
-                newsym(tglyph->saved[0].x, tglyph->saved[0].y);
-        }
-        /* tglyph->sidx = 0; -- about to be freed, so not necessary */
-        tmp = tglyph->prev;
-        if (tglyph != &tgfirst)
-            free((genericptr_t) tglyph);
-        tglyph = tmp;
-        break;
 
-    default: /* do it */
-        if (!isok(x, y))
+            show_glyph(x, y, tglyph->glyph); /* show it */
+            flush_screen(0);                 /* make sure it shows up */
             break;
-        if (tglyph->style == DISP_BEAM || tglyph->style == DISP_ALL) {
-            if (tglyph->style != DISP_ALL && !cansee(x, y))
-                break;
-            if (tglyph->sidx >= TMP_AT_MAX_GLYPHS)
-                break; /* too many locations */
-            /* save pos for later erasing */
-            tglyph->saved[tglyph->sidx].x = x;
-            tglyph->saved[tglyph->sidx].y = y;
-            tglyph->sidx += 1;
-        } else if (tglyph->style == DISP_TETHER) {
-            if (tglyph->sidx >= TMP_AT_MAX_GLYPHS)
-                break; /* too many locations */
-            if (tglyph->sidx) {
-                int px, py;
-
-                px = tglyph->saved[tglyph->sidx-1].x;
-                py = tglyph->saved[tglyph->sidx-1].y;
-                show_glyph(px, py, tether_glyph(px, py));
-            }
-            /* save pos for later use or erasure */
-            tglyph->saved[tglyph->sidx].x = x;
-            tglyph->saved[tglyph->sidx].y = y;
-            tglyph->sidx += 1;
-        } else {                /* DISP_FLASH/ALWAYS */
-            if (tglyph->sidx) { /* not first call, so reset previous pos */
-                newsym(tglyph->saved[0].x, tglyph->saved[0].y);
-                tglyph->sidx = 0; /* display is presently up to date */
-            }
-            if (!cansee(x, y) && tglyph->style != DISP_ALWAYS)
-                break;
-            tglyph->saved[0].x = x;
-            tglyph->saved[0].y = y;
-            tglyph->sidx = 1;
-        }
-
-        show_glyph(x, y, tglyph->glyph); /* show it */
-        flush_screen(0);                 /* make sure it shows up */
-        break;
-    } /* end case */
+        } /* end switch */
+    }
 }
 
 /*
@@ -1605,6 +1607,16 @@ reglyph_darkroom(void)
     for (x = 1; x < COLNO; x++)
         for (y = 0; y < ROWNO; y++) {
             struct rm *lev = &levl[x][y];
+
+            if (!flags.dark_room) {
+                if (lev->glyph == cmap_to_glyph(S_corr)
+                    && lev->waslit)
+                    lev->glyph = cmap_to_glyph(S_litcorr);
+            } else {
+                if (lev->glyph == cmap_to_glyph(S_litcorr)
+                    && !cansee(x, y))
+                    lev->glyph = cmap_to_glyph(S_corr);
+            }
 
             if (!flags.dark_room || !iflags.use_color
                 || Is_rogue_level(&u.uz)) {
@@ -2469,8 +2481,8 @@ reset_glyphmap(enum glyphmap_change_triggers trigger)
 
     for (glyph = 0; glyph < MAX_GLYPH; ++glyph) {
         glyph_map *gmap = &glyphmap[glyph];
-        gmap->glyphflags = 0U;
 
+        gmap->glyphflags = 0U;
         /*
          *  Map the glyph to a character and color.
          *
@@ -2589,6 +2601,7 @@ reset_glyphmap(enum glyphmap_change_triggers trigger)
                 zap_color((offset >> 2));
         } else if ((offset = (glyph - GLYPH_CMAP_B_OFF)) >= 0) {
             int cmap = S_grave + offset;
+
             gmap->sym.symidx = cmap + SYM_OFF_P;
             cmap_color(cmap);
             if (!iflags.use_color) {
@@ -2600,14 +2613,21 @@ reset_glyphmap(enum glyphmap_change_triggers trigger)
                         || g.showsyms[gmap->sym.symidx]
                                == g.showsyms[S_water + SYM_OFF_P])) {
                     gmap->glyphflags |= MG_BW_LAVA;
+
                 /* similar for floor [what about empty doorway?] and ice */
-                } else if (offset == S_ice
+                } else if (cmap == S_ice
                            && (g.showsyms[gmap->sym.symidx]
                                    == g.showsyms[S_room + SYM_OFF_P]
                                || g.showsyms[gmap->sym.symidx]
                                       == g.showsyms[S_darkroom
                                                     + SYM_OFF_P])) {
                     gmap->glyphflags |= MG_BW_ICE;
+
+                /* and for fountain vs sink */
+                } else if (cmap == S_sink
+                           && (g.showsyms[gmap->sym.symidx]
+                               == g.showsyms[S_fountain + SYM_OFF_P])) {
+                    gmap->glyphflags |= MG_BW_SINK;
                 }
             } else if (has_rogue_color) {
                 color = cmap_to_roguecolor(cmap);

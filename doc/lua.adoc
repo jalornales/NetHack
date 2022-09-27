@@ -6,13 +6,16 @@
 
 Functions exposed from the NetHack core. They are all in the `nh` table.
 
+All core functions involving xy coordinates interpret these as relative to the
+last defined map or room.
+
 === abscoord
 
-Convert a room-relative coordinate to map-absolute.
+Convert a room- or map-relative coordinate to absolute.
 Can accept one table with x and y keys (and in that case, returns similar),
 or two integer values (and returns two integer values)
-des-routines tend to use relative coordinates, nh and obj use absolute.
-(This mess is still very much in need of improvement.)
+des, nh, and obj routines all treat inputs as relative coordinates, but this is
+here in case an absolute one is needed for some reason (debugging?).
 
 Example:
 
@@ -385,6 +388,9 @@ Example:
 
 Functions for creating special levels. They are in the `des` table.
 
+All special level functions involving xy coordinates interpret these as relative
+to the last defined map or room.
+
 === altar
 
 Create an altar of certain type and alignment.
@@ -645,6 +651,7 @@ Example:
  des.non_passwall(selection);
  des.non_passwall();
 
+
 === object
 
 Create an object. The table parameter accepts the following:
@@ -676,7 +683,7 @@ Create an object. The table parameter accepts the following:
 | male        | boolean  | Is statue male?
 | female      | boolean  | Is statue female?
 | laid_by_you | boolean  | Is an egg laid by you?
-| contents    | function | Container contents
+| contents    | function | Container contents. The container object is given as a parameter. See <<Obj>> class.
 |===
 
 Example:
@@ -688,7 +695,8 @@ Example:
  des.object("scimitar", {6, 7});
  des.object({ class = "%" });
  des.object({ id = "boulder", x = 03, y = 12});
- des.object({ id = "chest", coord = {03, 12}, locked = true, contents = function() des.object("rock"); end });
+ des.object({ id = "chest", coord = {03, 12}, locked = true, contents = function(obj) des.object("rock"); end });
+
 
 === random_corridors
 
@@ -891,6 +899,16 @@ Example:
 
 Alias for <<_fillrect>>.
 
+=== bounds
+
+Get the bounding box for the selection. Returns a table with lx, ly, hx, hy integer fields.
+
+Example:
+
+ local rect = sel:bounds();
+ local s = string.format("(%i,%i)-(%i,%i)", rect.lx, rect.ly, rect.hx, rect.hy));
+
+
 === circle
 
 Example:
@@ -1053,6 +1071,20 @@ Example:
 
  local coord = selection.rndcoord(sel);
  local coord = selection.rndcoord(sel, 1);
+
+
+=== room
+
+Create a selection of locations inside the (current) room.
+
+Example:
+
+ des.room({ type = "ordinary", contents = function(rm)
+   local sel = selection.room();
+   des.terrain(sel, "I");
+ end
+ });
+
 
 === set
 

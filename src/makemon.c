@@ -1252,13 +1252,15 @@ makemon(
     else
         mtmp->female = femaleok ? rn2(2) : 0;
 
-    if (In_sokoban(&u.uz) && !mindless(ptr)) /* know about traps here */
-        mtmp->mtrapseen = (1L << (PIT - 1)) | (1L << (HOLE - 1));
+    if (In_sokoban(&u.uz) && !mindless(ptr)) { /* know about traps here */
+        mon_learns_traps(mtmp, PIT);
+        mon_learns_traps(mtmp, HOLE);
+    }
     if (Is_stronghold(&u.uz) && !mindless(ptr)) /* know about the trap doors */
-        mtmp->mtrapseen = (1L << (TRAPDOOR - 1));
+        mon_learns_traps(mtmp, TRAPDOOR);
     /* quest leader and nemesis both know about all trap types */
     if (ptr->msound == MS_LEADER || ptr->msound == MS_NEMESIS)
-        mtmp->mtrapseen = ~0;
+        mon_learns_traps(mtmp, ALL_TRAPS);
 
     place_monster(mtmp, x, y);
     mtmp->mcansee = mtmp->mcanmove = TRUE;
@@ -1359,8 +1361,7 @@ makemon(
     if (is_dprince(ptr) && ptr->msound == MS_BRIBE) {
         mtmp->mpeaceful = mtmp->minvis = mtmp->perminvis = 1;
         mtmp->mavenge = 0;
-        if (uwep && (uwep->oartifact == ART_EXCALIBUR
-                     || uwep->oartifact == ART_DEMONBANE))
+        if (u_wield_art(ART_EXCALIBUR) || u_wield_art(ART_DEMONBANE))
             mtmp->mpeaceful = mtmp->mtame = FALSE;
     }
     if (mndx == PM_RAVEN && uwep && uwep->otyp == BEC_DE_CORBIN)
@@ -1479,7 +1480,7 @@ unmakemon(
 
     /* if count has reached the limit of 255, we don't know whether
        that just happened when creating this monster or the threshold
-       had already been reached and further incrments were suppressed;
+       had already been reached and further increments were suppressed;
        assume the latter */
     if (countbirth && g.mvitals[mndx].born > 0 && g.mvitals[mndx].born < 255)
         g.mvitals[mndx].born -= 1;
@@ -1598,6 +1599,13 @@ align_shift(register struct permonst *ptr)
 struct permonst *
 rndmonst(void)
 {
+    return rndmonst_adj(0, 0);
+}
+
+/* select a random monster type, with adjusted difficulty */
+struct permonst *
+rndmonst_adj(int minadj, int maxadj)
+{
     register struct permonst *ptr;
     register int mndx;
     int weight, totalweight, selected_mndx, zlevel, minmlev, maxmlev;
@@ -1607,8 +1615,8 @@ rndmonst(void)
         return ptr;
 
     zlevel = level_difficulty();
-    minmlev = monmin_difficulty(zlevel);
-    maxmlev = monmax_difficulty(zlevel);
+    minmlev = monmin_difficulty(zlevel) + minadj;
+    maxmlev = monmax_difficulty(zlevel) + maxadj;
     upper = Is_rogue_level(&u.uz); /* prefer uppercase only on rogue level */
     elemlevel = In_endgame(&u.uz) && !Is_astralevel(&u.uz); /* elmntl plane */
 
@@ -2363,9 +2371,10 @@ set_mimic_sym(register struct monst *mtmp)
 
 /* release monster from bag of tricks; return number of monsters created */
 int
-bagotricks(struct obj *bag,
-           boolean tipping, /* caller emptying entire contents; affects shop handling */
-           int *seencount)  /* secondary output */
+bagotricks(
+    struct obj *bag,
+    boolean tipping, /* caller emptying entirely; affects shop handling */
+    int *seencount)  /* secondary output */
 {
     int moncount = 0;
 

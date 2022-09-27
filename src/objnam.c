@@ -271,6 +271,7 @@ safe_typename(int otyp)
         || !OBJ_NAME(objects[otyp])) {
         res = nextobuf();
         Sprintf(res, "glorkum[%d]", otyp);
+        impossible("safe_typename: %s", res);
     } else {
         /* force it to be treated as fully discovered */
         save_nameknown = objects[otyp].oc_name_known;
@@ -834,6 +835,7 @@ xname_flags(
     }
     default:
         Sprintf(buf, "glorkum %d %d %d", obj->oclass, typ, obj->spe);
+        impossible("xname_flags: %s", buf);
         break;
     }
     if (pluralize) {
@@ -1142,10 +1144,12 @@ doname_base(
            (when that is known, suffix of "(n:0)" will be appended,
            making the prefix be redundant; note that 'known' flag
            isn't set when emptiness gets discovered because then
-           charging magic would yield known number of new charges) */
-        && ((obj->otyp == BAG_OF_TRICKS)
-             ? (obj->spe == 0 && !obj->known)
-             /* not bag of tricks: empty if container which has no contents */
+           charging magic would yield known number of new charges);
+           horn of plenty isn't a container but is close enough */
+        && ((obj->otyp == BAG_OF_TRICKS || obj->otyp == HORN_OF_PLENTY)
+             ? (obj->spe == 0 && !known)
+             /* not a bag of tricks or horn of plenty: it's empty if
+                it is a container that has no contents */
              : ((Is_container(obj) || obj->otyp == STATUE)
                 && !Has_contents(obj))))
         Strcat(prefix, "empty ");
@@ -4590,14 +4594,6 @@ readobjnam(char *bp, struct obj *no_wish)
     d.otmp = d.typ ? mksobj(d.typ, TRUE, FALSE) : mkobj(d.oclass, FALSE);
     d.typ = d.otmp->otyp, d.oclass = d.otmp->oclass; /* what we actually got */
 
-    if (d.islit && (d.typ == OIL_LAMP || d.typ == MAGIC_LAMP
-                    || d.typ == BRASS_LANTERN
-                    || Is_candle(d.otmp) || d.typ == POT_OIL)) {
-        place_object(d.otmp, u.ux, u.uy); /* make it viable light source */
-        begin_burn(d.otmp, FALSE);
-        obj_extract_self(d.otmp); /* now release it for caller's use */
-    }
-
     /* if player specified a reasonable count, maybe honor it;
        quantity for gold is handled elsewhere and d.cnt is 0 for it here */
     if (d.otmp->globby) {
@@ -4642,6 +4638,14 @@ readobjnam(char *bp, struct obj *no_wish)
                         /* WEAPON_CLASS test excludes gems, gray stones */
                         || (d.oclass == WEAPON_CLASS && is_ammo(d.otmp))))))
             d.otmp->quan = (long) d.cnt;
+    }
+
+    if (d.islit && (d.typ == OIL_LAMP || d.typ == MAGIC_LAMP
+                    || d.typ == BRASS_LANTERN
+                    || Is_candle(d.otmp) || d.typ == POT_OIL)) {
+        place_object(d.otmp, u.ux, u.uy); /* make it viable light source */
+        begin_burn(d.otmp, FALSE);
+        obj_extract_self(d.otmp); /* now release it for caller's use */
     }
 
     if (d.spesgn == 0) {

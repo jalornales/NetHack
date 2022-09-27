@@ -184,7 +184,7 @@ struct debug_flags {
 /*
  * Stuff that really isn't option or platform related and does not
  * get saved and restored.  They are set and cleared during the game
- * to control the internal behaviour of various NetHack functions
+ * to control the internal behavior of various NetHack functions
  * and probably warrant a structure of their own elsewhere some day.
  */
 struct instance_flags {
@@ -318,7 +318,6 @@ struct instance_flags {
 #ifdef TTY_SOUND_ESCCODES
     boolean vt_sounddata;    /* output console codes for sound support in TTY*/
 #endif
-    boolean clicklook;       /* allow right-clicking for look */
     boolean cmdassist;       /* provide detailed assistance for some comnds */
     boolean fireassist;      /* autowield launcher when using fire-command */
     boolean time_botl;       /* context.botl for 'time' (moves) only */

@@ -124,6 +124,7 @@ typedef struct gi {
 #define ATR_NONE       0
 #define ATR_BOLD       1
 #define ATR_DIM        2
+#define ATR_ITALIC     3
 #define ATR_ULINE      4
 #define ATR_BLINK      5
 #define ATR_INVERSE    7
@@ -135,6 +136,7 @@ typedef struct gi {
 /* nh_poskey() modifier types */
 #define CLICK_1 1
 #define CLICK_2 2
+#define NUM_MOUSE_BUTTONS 2
 
 /* invalid winid */
 #define WIN_ERR ((winid) -1)

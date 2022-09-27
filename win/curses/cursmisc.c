@@ -12,6 +12,10 @@
 
 #include <ctype.h>
 
+#ifndef A_ITALIC
+#define A_ITALIC A_UNDERLINE
+#endif
+
 /* Misc. curses interface functions */
 
 /* Private declarations */
@@ -21,6 +25,18 @@ static int curs_y = -1;
 
 static int parse_escape_sequence(void);
 
+
+int
+curses_getch(void)
+{
+    int ch;
+
+    if (iflags.debug_fuzzer)
+        ch = randomkey();
+    else
+        ch = getch();
+    return ch;
+}
 
 /* Read a character of input from the user */
 
@@ -35,7 +51,7 @@ curses_read_char(void)
     /* cancel message suppression; all messages have had a chance to be read */
     curses_got_input();
 
-    ch = getch();
+    ch = curses_getch();
 #if defined(ALT_0) || defined(ALT_9) || defined(ALT_A) || defined(ALT_Z)
     tmpch = ch;
 #endif
@@ -747,6 +763,9 @@ curses_convert_attr(int attr)
         break;
     case ATR_INVERSE:
         curses_attr = A_REVERSE;
+        break;
+    case ATR_ITALIC:
+        curses_attr = A_ITALIC;
         break;
     default:
         curses_attr = A_NORMAL;

@@ -886,13 +886,15 @@ discard_migrations(void)
             *oprev = otmp->nobj; /* remove otmp from migrating_objs */
             otmp->nobj = 0;
             otmp->where = OBJ_FREE;
+            otmp->owornmask = 0L; /* overloaded for destination usage;
+                                   * obfree() will complain if nonzero */
             obfree(otmp, (struct obj *) 0); /* releases any contents too */
         }
     }
 }
 
-/* return quality of food; the lower the better */
-/* fungi will eat even tainted food */
+/* returns the quality of an item of food; the lower the better;
+   fungi and ghouls will eat even tainted food */
 int
 dogfood(struct monst *mon, struct obj *obj)
 {
@@ -963,17 +965,11 @@ dogfood(struct monst *mon, struct obj *obj)
                 || (acidic(fptr) && !resists_acid(mon))
                 || (poisonous(fptr) && !resists_poison(mon)))
                 return POISON;
-            /* polymorphing is preferable to starvation, and pet might also
-               want to take its chances on that if they've been mistreated */
-            else if (is_shapeshifter(fptr)) {
-                if (mon->mtame == 1) {
-                    /* A herbivore still won't eat a nonvegan corpse, but
-                       in any other circumstance a pet with tameness 1 will
-                       happily eat a shapeshifter. */
-                    return (herbi && !vegan(fptr)) ? MANFOOD : CADAVER;
-                }
-                return starving ? ACCFOOD : MANFOOD;
-            } else if (vegan(fptr))
+            /* avoid polymorph unless starving or abused (in which case the
+               pet will consider it for a chance to become more powerful) */
+            else if (is_shapeshifter(fptr) && mon->mtame > 1 && !starving)
+                return MANFOOD;
+            else if (vegan(fptr))
                 return herbi ? CADAVER : MANFOOD;
             /* most humanoids will avoid cannibalism unless starving;
                arbitrary: elves won't eat other elves even then */

@@ -36,7 +36,7 @@
 .ds f0 "\*(vr
 .ds f1
 .\"DO NOT REMOVE NH_DATESUB .ds f2 "DATE(%B %-d, %Y)
-.ds f2 "May 23, 2022
+.ds f2 "September 08, 2022
 .
 .\" A note on some special characters:
 .\" \(lq = left double quote
@@ -764,10 +764,13 @@ use a menu to pick which object(s) to drop.
 drop only unpaid food.
 .PE
 The last example shows a combination.
-There are three categories of object filtering: class (\(oq!\(cq for
+There are four categories of object filtering: class (\(oq!\(cq for
 potions, \(oq?\(cq for scrolls, and so on), shop status (\(oqu\(cq for
-unpaid, in other words, owned by the shop), and bless/curse state
-(\(oqB\(cq, \(oqU\(cq, \(oqC\(cq, and \(oqX\(cq as shown above).
+unpaid, in other words, owned by the shop), bless/curse state
+(\(oqB\(cq, \(oqU\(cq, \(oqC\(cq, and \(oqX\(cq as shown above),
+and novelty (\(oqP\(cq, recently picked up items; controlled by picking
+up or dropping things rather than by any time factor).
+.lp ""
 If you specify more than one value in a category (such as \(lq!?\(rq for
 potions and scrolls or \(lqBU\(rq for blessed and uncursed), an inventory
 object will meet the criteria if it matches any of the specified
@@ -1240,6 +1243,9 @@ Autocompletes.
 Default key is \(oqM-C\(cq.
 .lp ""
 See the section below entitled \(lqConduct\(rq for details.
+.lp #debugfuzzer
+Start the fuzz tester.
+Debug mode only.
 .lp "#dip     "
 Dip an object into something.
 Autocompletes.
@@ -1388,8 +1394,12 @@ Default key is \(oqo\(cq.
 Show and change option settings.
 Default key is \(oqO\(cq.
 Precede with the \(oqm\(cq prefix to show advanced options.
-.lp "#optionsfull"
+.lp #optionsfull
 Show advanced game option settings.
+No default key.
+Precede with the \(oqm\(cq prefix to execute the simpler options command.
+(Mainly useful if you use \f(CRBINDING=O:optionsfull\fP to switch
+\(oq\f(CRO\fP\(cq from simple options back to traditional advanced options.)
 .lp #overview
 Display information you've discovered about the dungeon.
 Any visited
@@ -1485,7 +1495,7 @@ Default key is \(oqR\(cq.
 Repeat the previous command.
 Default key is \(oq\(haA\(cq.
 .lp "#reqmenu "
-Prefix key to modify the behaviour or request menu from some commands.
+Prefix key to modify the behavior or request menu from some commands.
 Prevents autopickup when used with movement commands.
 Default key is \(oqm\(cq.
 .lp "#retravel"
@@ -1709,6 +1719,9 @@ Debug mode only.
 .lp "#wizbury "
 Bury objects under and around you.
 Autocompletes.
+Debug mode only.
+.lp #wizcast
+Cast any spell.
 Debug mode only.
 .lp #wizdetect
 Reveal hidden things (secret doors or traps or unseen monsters)
@@ -3473,8 +3486,8 @@ Set exceptions to the
 option.
 See the \(lqConfiguring Autopickup Exceptions\(rq section.
 .lp BINDINGS
-Change the key bindings of some special keys, menu accelerators, or
-extended commands.
+Change the key bindings of some special keys, menu accelerators,
+extended commands, or mouse buttons.
 You can specify multiple bindings.
 Format is key followed by the command, separated by a colon.
 See the \(lqChanging Key Bindings\(rq section for more information.
@@ -3743,9 +3756,6 @@ for more details.
 .lp checkpoint
 Save game state after each level change, for possible recovery after
 program crash (default on).  Persistent.
-.lp clicklook
-Allows looking at things on the screen by navigating the mouse
-over them and clicking the right mouse button (default off).
 .lp cmdassist
 Have the game provide some additional command assistance for
 new players if it detects some anticipated mistakes (default on).
@@ -3967,8 +3977,8 @@ Key to jump to the first page in a menu.
 Default \(oq\(ha\(cq.
 .lp menu_headings
 Controls how the headings in a menu are highlighted.
-Values are \(lqnone\(rq, \(lqbold\(rq, \(lqdim\(rq, \(lqunderline\(rq,
-\(lqblink\(rq, or \(lqinverse\(rq.
+Values are \(lqnone\(rq, \(lqbold\(rq, \(lqdim\(rq, \(lqitalic\(rq,
+\(lqunderline\(rq, \(lqblink\(rq, or \(lqinverse\(rq.
 Not all ports can actually display all types.
 .lp menu_invert_all
 Key to invert all items in a menu.
@@ -4863,7 +4873,8 @@ menu accelerator keys, and extended commands, by using BIND stanzas in the
 configuration file.
 Format is key, followed by the command to bind to, separated by a colon.
 The key can be a single character (\(lqx\(rq), a control key (\(lq\(haX\(rq,
-\(lqC-x\(rq), a meta key (\(lqM-x\(rq), or a three-digit decimal ASCII code.
+\(lqC-x\(rq), a meta key (\(lqM-x\(rq), a mouse button,
+or a three-digit decimal ASCII code.
 .pg
 For example:
 .sd
@@ -4883,6 +4894,9 @@ The menu control or accelerator keys can also be rebound via OPTIONS lines
 in the configuration file.
 You cannot bind object symbols or selection letters into menu accelerators.
 Some interfaces only support some of the menu accelerators.
+.lp "Mouse buttons"
+You can bind \(lqmouse1\(rq or \(lqmouse2\(rq to \(lqnothing\(rq,
+\(lqtherecmdmenu\(rq, \(lqclicklook\(rq, or \(lqmouseaction\(rq.
 .lp "Special command keys"
 Below are the special commands you can rebind.
 Some of them can be bound to
@@ -5078,7 +5092,7 @@ orange, light-green, yellow, light-blue, light-magenta, light-cyan, and white.
 And \f(CRno-color\fP, the default foreground color, which isn't necessarily
 the same as any of the other colors.
 .lp ""
-Allowed attributes are none, bold, dim, underline, blink, and inverse.
+Allowed attributes are none, bold, dim, italic, underline, blink, and inverse.
 \(lqNormal\(rq is a synonym for \(lqnone\(rq.
 Note that the platform used may interpret the attributes any way it
 wants.

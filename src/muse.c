@@ -20,8 +20,11 @@ static void mplayhorn(struct monst *, struct obj *, boolean);
 static void mreadmsg(struct monst *, struct obj *);
 static void mquaffmsg(struct monst *, struct obj *);
 static boolean m_use_healing(struct monst *);
+static boolean m_sees_sleepy_soldier(struct monst *);
 static boolean linedup_chk_corpse(coordxy, coordxy);
 static void m_use_undead_turning(struct monst *, struct obj *);
+static boolean hero_behind_chokepoint(struct monst *);
+static boolean mon_has_friends(struct monst *);
 static int mbhitm(struct monst *, struct obj *);
 static void mbhit(struct monst *, int, int (*)(MONST_P, OBJ_P),
                   int (*)(OBJ_P, OBJ_P), struct obj *);
@@ -320,10 +323,34 @@ m_use_healing(struct monst* mtmp)
     return FALSE;
 }
 
+/* return TRUE if monster mtmp can see at least one sleeping soldier */
+static boolean
+m_sees_sleepy_soldier(struct monst *mtmp)
+{
+    coordxy x = mtmp->mx, y = mtmp->my;
+    coordxy xx, yy;
+    struct monst *mon;
+
+    /* Distance is arbitrary.  What we really want to do is
+     * have the soldier play the bugle when it sees or
+     * remembers soldiers nearby...
+     */
+    for (xx = x - 3; xx <= x + 3; xx++)
+        for (yy = y - 3; yy <= y + 3; yy++) {
+            if (!isok(xx, yy) || (xx == x && yy == y))
+                continue;
+            if ((mon = m_at(xx, yy)) != 0 && is_mercenary(mon->data)
+                && mon->data != &mons[PM_GUARD]
+                && helpless(mon))
+                return TRUE;
+        }
+    return FALSE;
+}
+
 /* Select a defensive item/action for a monster.  Returns TRUE iff one is
    found. */
 boolean
-find_defensive(struct monst* mtmp)
+find_defensive(struct monst* mtmp, boolean tryescape)
 {
     struct obj *obj;
     struct trap *t;
@@ -338,7 +365,7 @@ find_defensive(struct monst* mtmp)
 
     if (is_animal(mtmp->data) || mindless(mtmp->data))
         return FALSE;
-    if (dist2(x, y, mtmp->mux, mtmp->muy) > 25)
+    if (!tryescape && dist2(x, y, mtmp->mux, mtmp->muy) > 25)
         return FALSE;
     if (u.uswallow && stuck)
         return FALSE;
@@ -421,17 +448,20 @@ find_defensive(struct monst* mtmp)
             }
     }
 
-    fraction = u.ulevel < 10 ? 5 : u.ulevel < 14 ? 4 : 3;
-    if (mtmp->mhp >= mtmp->mhpmax
-        || (mtmp->mhp >= 10 && mtmp->mhp * fraction >= mtmp->mhpmax))
-        return FALSE;
+    if (!tryescape) {
+        /* do we try to heal? */
+        fraction = u.ulevel < 10 ? 5 : u.ulevel < 14 ? 4 : 3;
+        if (mtmp->mhp >= mtmp->mhpmax
+            || (mtmp->mhp >= 10 && mtmp->mhp * fraction >= mtmp->mhpmax))
+            return FALSE;
 
-    if (mtmp->mpeaceful) {
-        if (!nohands(mtmp->data)) {
-            if (m_use_healing(mtmp))
-                return TRUE;
+        if (mtmp->mpeaceful) {
+            if (!nohands(mtmp->data)) {
+                if (m_use_healing(mtmp))
+                    return TRUE;
+            }
+            return FALSE;
         }
-        return FALSE;
     }
 
     if (stuck || immobile) {
@@ -514,29 +544,10 @@ find_defensive(struct monst* mtmp)
     if (nohands(mtmp->data)) /* can't use objects */
         goto botm;
 
-    if (is_mercenary(mtmp->data) && (obj = m_carrying(mtmp, BUGLE)) != 0) {
-        coordxy xx, yy;
-        struct monst *mon;
-
-        /* Distance is arbitrary.  What we really want to do is
-         * have the soldier play the bugle when it sees or
-         * remembers soldiers nearby...
-         */
-        for (xx = x - 3; xx <= x + 3; xx++) {
-            for (yy = y - 3; yy <= y + 3; yy++) {
-                if (!isok(xx, yy) || (xx == x && yy == y))
-                    continue;
-                if ((mon = m_at(xx, yy)) != 0 && is_mercenary(mon->data)
-                    && mon->data != &mons[PM_GUARD]
-                    && helpless(mon)) {
-                    g.m.defensive = obj;
-                    g.m.has_defense = MUSE_BUGLE;
-                    goto toot; /* double break */
-                }
-            }
-        }
- toot:
-        ;
+    if (is_mercenary(mtmp->data) && (obj = m_carrying(mtmp, BUGLE)) != 0
+        && m_sees_sleepy_soldier(mtmp)) {
+        g.m.defensive = obj;
+        g.m.has_defense = MUSE_BUGLE;
     }
 
     /* use immediate physical escape prior to attempting magic */
@@ -584,7 +595,7 @@ find_defensive(struct monst* mtmp)
              * about teleport traps.
              */
             if (!noteleport_level(mtmp)
-                || !(mtmp->mtrapseen & (1 << (TELEP_TRAP - 1)))) {
+                || !mon_knows_traps(mtmp, TELEP_TRAP)) {
                 g.m.defensive = obj;
                 g.m.has_defense = (mon_has_amulet(mtmp))
                                     ? MUSE_WAN_TELEPORTATION
@@ -598,7 +609,7 @@ find_defensive(struct monst* mtmp)
                                  && !mtmp->isgd && !mtmp->ispriest))) {
             /* see WAN_TELEPORTATION case above */
             if (!noteleport_level(mtmp)
-                || !(mtmp->mtrapseen & (1 << (TELEP_TRAP - 1)))) {
+                || !mon_knows_traps(mtmp, TELEP_TRAP)) {
                 g.m.defensive = obj;
                 g.m.has_defense = MUSE_SCR_TELEPORTATION;
             }
@@ -711,7 +722,7 @@ use_defensive(struct monst* mtmp)
                 makeknown(how);
             /* monster learns that teleportation isn't useful here */
             if (noteleport_level(mtmp))
-                mtmp->mtrapseen |= (1 << (TELEP_TRAP - 1));
+                mon_learns_traps(mtmp, TELEP_TRAP);
             return 2;
         }
         if ((mon_has_amulet(mtmp) || On_W_tower_level(&u.uz)) && !rn2(3)) {
@@ -730,7 +741,7 @@ use_defensive(struct monst* mtmp)
         mbhit(mtmp, rn1(8, 6), mbhitm, bhito, otmp);
         /* monster learns that teleportation isn't useful here */
         if (noteleport_level(mtmp))
-            mtmp->mtrapseen |= (1 << (TELEP_TRAP - 1));
+            mon_learns_traps(mtmp, TELEP_TRAP);
         g.m_using = FALSE;
         return 2;
     case MUSE_SCR_TELEPORTATION: {
@@ -1136,9 +1147,10 @@ rnd_defensive_item(struct monst* mtmp)
 #define MUSE_FROST_HORN 12
 #define MUSE_FIRE_HORN 13
 #define MUSE_POT_ACID 14
-/*#define MUSE_WAN_TELEPORTATION 15*/
+#define MUSE_WAN_TELEPORTATION 15
 #define MUSE_POT_SLEEPING 16
 #define MUSE_SCR_EARTH 17
+#define MUSE_CAMERA 18
 /*#define MUSE_WAN_UNDEAD_TURNING 20*/ /* also a defensive item so don't
                                      * redefine; nonconsecutive value is ok */
 
@@ -1193,6 +1205,57 @@ m_use_undead_turning(struct monst* mtmp, struct obj* obj)
     }
 }
 
+/* from monster's point of view, is hero behind a chokepoint? */
+static boolean
+hero_behind_chokepoint(struct monst *mtmp)
+{
+    coordxy dx = sgn(mtmp->mx - mtmp->mux);
+    coordxy dy = sgn(mtmp->my - mtmp->muy);
+
+    coordxy x = mtmp->mux + dx;
+    coordxy y = mtmp->muy + dy;
+
+    int dir = xytod(dx, dy);
+    int dir_l = DIR_CLAMP(DIR_LEFT2(dir));
+    int dir_r = DIR_CLAMP(DIR_RIGHT2(dir));
+
+    coord c1, c2;
+
+    dtoxy(&c1, dir_l);
+    dtoxy(&c2, dir_r);
+    c1.x += x, c2.x += x;
+    c1.y += y, c2.y += y;
+
+    if ((!isok(c1.x, c1.y) || !accessible(c1.x, c1.y))
+        && (!isok(c2.x, c2.y) || !accessible(c2.x, c2.y)))
+        return TRUE;
+    return FALSE;
+}
+
+/* hostile monster has another hostile next to it */
+static boolean
+mon_has_friends(struct monst *mtmp)
+{
+    coordxy dx, dy;
+    struct monst *mon2;
+
+    if (mtmp->mtame || mtmp->mpeaceful)
+        return FALSE;
+
+    for (dx = -1; dx <= 1; dx++)
+        for (dy = -1; dy <= 1; dy++) {
+            coordxy x = mtmp->mx + dx;
+            coordxy y = mtmp->my + dy;
+
+            if (isok(x, y) && (mon2 = m_at(x, y)) != 0
+                && mon2 != mtmp
+                && !mon2->mtame && !mon2->mpeaceful)
+                return TRUE;
+        }
+
+    return FALSE;
+}
+
 /* Select an offensive item/action for a monster.  Returns TRUE iff one is
  * found.
  */
@@ -1217,7 +1280,7 @@ find_offensive(struct monst* mtmp)
         && !uwep && !uarmu && !uarm && !uarmh
         && !uarms && !uarmg && !uarmc && !uarmf)
         return FALSE;
-    /* all offensive items require orthogonal or diagonal targetting */
+    /* all offensive items require orthogonal or diagonal targeting */
     if (!lined_up(mtmp))
         return FALSE;
 
@@ -1282,20 +1345,20 @@ find_offensive(struct monst* mtmp)
             g.m.offensive = obj;
             g.m.has_offense = MUSE_WAN_STRIKING;
         }
-#if 0   /* use_offensive() has had some code to support wand of teleportation
-         * for a long time, but find_offensive() never selected one;
-         * so for the time being, this is still disabled */
         nomore(MUSE_WAN_TELEPORTATION);
         if (obj->otyp == WAN_TELEPORTATION && obj->spe > 0
             /* don't give controlled hero a free teleport */
             && !Teleport_control
+            /* same hack as MUSE_WAN_TELEPORTATION_SELF */
+            && (!noteleport_level(mtmp)
+                || !mon_knows_traps(mtmp, TELEP_TRAP))
             /* do try to move hero to a more vulnerable spot */
             && (onscary(u.ux, u.uy, mtmp)
-                || (stairway_at(u.ux, u.uy))) {
+                || (hero_behind_chokepoint(mtmp) && mon_has_friends(mtmp))
+                || (stairway_at(u.ux, u.uy)))) {
             g.m.offensive = obj;
             g.m.has_offense = MUSE_WAN_TELEPORTATION;
         }
-#endif
         nomore(MUSE_POT_PARALYSIS);
         if (obj->otyp == POT_PARALYSIS && g.multi >= 0) {
             g.m.offensive = obj;
@@ -1339,6 +1402,14 @@ find_offensive(struct monst* mtmp)
             && (!In_endgame(&u.uz) || Is_earthlevel(&u.uz))) {
             g.m.offensive = obj;
             g.m.has_offense = MUSE_SCR_EARTH;
+        }
+        nomore(MUSE_CAMERA);
+        if (obj->otyp == EXPENSIVE_CAMERA
+            && (!Blind || hates_light(g.youmonst.data))
+            && dist2(mtmp->mx, mtmp->my, mtmp->mux, mtmp->muy) <= 2
+            && obj->spe > 0 && !rn2(6)) {
+            g.m.offensive = obj;
+            g.m.has_offense = MUSE_CAMERA;
         }
 #if 0
         nomore(MUSE_SCR_FIRE);
@@ -1399,7 +1470,6 @@ mbhitm(register struct monst* mtmp, register struct obj* otmp)
                 makeknown(WAN_STRIKING);
         }
         break;
-#if 0   /* disabled because find_offensive() never picks WAN_TELEPORTATION */
     case WAN_TELEPORTATION:
         if (hits_you) {
             tele();
@@ -1414,7 +1484,6 @@ mbhitm(register struct monst* mtmp, register struct obj* otmp)
                 (void) rloc(mtmp, RLOC_MSG);
         }
         break;
-#endif
     case WAN_CANCELLATION:
     case SPE_CANCELLATION:
         (void) cancel_monst(mtmp, otmp, FALSE, TRUE, FALSE);
@@ -1648,6 +1717,22 @@ use_offensive(struct monst* mtmp)
 
         return (DEADMONSTER(mtmp)) ? 1 : 2;
     } /* case MUSE_SCR_EARTH */
+    case MUSE_CAMERA: {
+        if (Hallucination)
+            verbalize("Say cheese!");
+        else
+            pline("%s takes a picture of you with %s!",
+                  Monnam(mtmp), an(xname(otmp)));
+        g.m_using = TRUE;
+        if (!Blind) {
+            You("are blinded by the flash of light!");
+            make_blinded(Blinded + (long) rnd(1 + 50), FALSE);
+        }
+        lightdamage(otmp, TRUE, 5);
+        g.m_using = FALSE;
+        otmp->spe--;
+        return 1;
+    } /* case MUSE_CAMERA */
 #if 0
     case MUSE_SCR_FIRE: {
         boolean vis = cansee(mtmp->mx, mtmp->my);
@@ -1874,7 +1959,7 @@ find_misc(struct monst* mtmp)
             && u_at(mtmp->mux, mtmp->muy)
             && next2u(mtmp->mx, mtmp->my)
             /* don't bother if it can't work (this doesn't
-               prevent cursed weapons from being targetted) */
+               prevent cursed weapons from being targeted) */
             && (canletgo(uwep, "")
                 || (u.twoweap && canletgo(uswapwep, "")))) {
             g.m.misc = obj;
@@ -2422,6 +2507,8 @@ searches_for_item(struct monst* mon, struct obj* obj)
         if (Is_container(obj) && !(Is_mbag(obj) && obj->cursed)
             && !obj->olocked)
             return TRUE;
+        if (typ == EXPENSIVE_CAMERA)
+            return (obj->spe > 0);
         break;
     case FOOD_CLASS:
         if (typ == CORPSE)

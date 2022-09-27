@@ -1,4 +1,4 @@
-/* NetHack 3.7	options.c	$NHDT-Date: 1655932898 2022/06/22 21:21:38 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.569 $ */
+/* NetHack 3.7	options.c	$NHDT-Date: 1661218575 2022/08/23 01:36:15 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.601 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2008. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -72,12 +72,6 @@ static struct allopt_t allopt_init[] = {
 #undef NHOPT_PARSE
 
 
-#if defined(USE_TILES) && defined(DEFAULT_WC_TILED_MAP)
-#define PREFER_TILED TRUE
-#else
-#define PREFER_TILED FALSE
-#endif
-
 #define PILE_LIMIT_DFLT 5
 #define rolestring(val, array, field) \
     ((val >= 0) ? array[val].field : (val == ROLE_RANDOM) ? randomrole : none)
@@ -101,7 +95,7 @@ static struct allopt_t allopt[SIZE(allopt_init)];
 /* use rest of file */
 
 extern char configfile[]; /* for messages */
-extern struct symparse loadsyms[];
+extern const struct symparse loadsyms[];
 #if defined(TOS) && defined(TEXTCOLOR)
 extern boolean colors_changed;  /* in tos.c */
 #endif
@@ -114,7 +108,7 @@ static char empty_optstr[] = { '\0' };
 boolean duplicate, using_alias;
 static boolean give_opt_msg = TRUE;
 
-static boolean got_from_config[OPTCOUNT];
+static boolean opt_set_in_config[OPTCOUNT];
 
 static NEARDATA const char *OptS_type[OptS_Advanced+1] = {
     "General", "Behavior", "Map", "Status", "Advanced"
@@ -302,10 +296,10 @@ static boolean test_regex_pattern(const char *, const char *);
 static boolean add_menu_coloring_parsed(const char *, int, int);
 static void free_one_menu_coloring(int);
 static int count_menucolors(void);
-static boolean parse_role_opts(int, boolean, const char *,
-                               char *, char **);
+static boolean parse_role_opts(int, boolean, const char *, char *, char **);
 static unsigned int longest_option_name(int, int);
-static void doset_add_menu(winid, const char *, int, int);
+static int doset_simple_menu(void);
+static void doset_add_menu(winid, const char *, const char *, int, int);
 static int handle_add_list_remove(const char *, int);
 static void all_options_menucolors(strbuf_t *);
 static void all_options_msgtypes(strbuf_t *);
@@ -313,7 +307,8 @@ static void all_options_apes(strbuf_t *);
 static void remove_autopickup_exception(struct autopickup_exception *);
 static int count_apes(void);
 static int count_cond(void);
-static void enhance_menu_text(char *, size_t, int, boolean *, struct allopt_t *);
+static void enhance_menu_text(char *, size_t, int, boolean *,
+                              struct allopt_t *);
 
 static int handler_align_misc(int);
 static int handler_autounlock(int);
@@ -338,6 +333,7 @@ static int handler_msgtype(void);
 #ifndef NO_VERBOSE_GRANULARITY
 static int handler_verbose(int optidx);
 #endif
+static int handler_windowborders(void);
 
 static boolean is_wc_option(const char *);
 static boolean wc_supported(const char *);
@@ -359,7 +355,10 @@ extern char *curses_fmt_attrs(char *);
  **********************************
  */
 boolean
-parseoptions(register char *opts, boolean tinitial, boolean tfrom_file)
+parseoptions(
+    register char *opts,
+    boolean tinitial,
+    boolean tfrom_file)
 {
     char *op;
     boolean negated, got_match = FALSE, pfx_match = FALSE;
@@ -498,7 +497,7 @@ parseoptions(register char *opts, boolean tinitial, boolean tfrom_file)
             optresult = (*allopt[matchidx].optfn)(allopt[matchidx].idx,
                                                   do_set, negated, opts, op);
             if (optresult == optn_ok)
-                got_from_config[matchidx] = TRUE;
+                opt_set_in_config[matchidx] = TRUE;
         }
     }
 
@@ -1093,7 +1092,7 @@ optfn_disclose(int optidx, int req, boolean negated, char *opts, char *op)
          *      DISCLOSE_SPECIAL_WITHOUT_PROMPT  ...to set up sort order.
          *
          * Those setting values can be used in the option
-         * string as a prefix to get the desired behaviour.
+         * string as a prefix to get the desired behavior.
          *
          * For backward compatibility, no prefix is required,
          * and the presence of a i,a,g,v, or c without a prefix
@@ -4081,6 +4080,9 @@ optfn_windowborders(
         Sprintf(opts, "%i", iflags.wc2_windowborders);
         return optn_ok;
     }
+    if (req == do_handler) {
+        return handler_windowborders();
+    }
     if (req == get_val) {
         if (!opts)
             return optn_err;
@@ -4492,6 +4494,10 @@ optfn_boolean(int optidx, int req, boolean negated, char *opts, char *op)
 
         /* option that must come from config file? */
         if (!g.opt_initial && (allopt[optidx].setwhere == set_in_config))
+            return optn_err;
+
+        /* options that must NOT come from config file */
+        if (g.opt_initial && allopt[optidx].setwhere == set_wiznofuz)
             return optn_err;
 
         op = string_for_opt(opts, TRUE);
@@ -5517,11 +5523,6 @@ handler_menu_colors(void)
             if (iflags.perm_invent)
                 update_inventory();
 
-        /* menu colors aren't being used yet; if any MENUCOLOR rules are
-           defined, remind player how to activate them */
-        } else if (nmc > 0) {
-            pline(
-    "To have menu colors become active, toggle 'menucolors' option to True.");
         }
         return optn_ok;
 
@@ -5734,6 +5735,43 @@ handler_verbose(int optidx)
 RESTORE_WARNING_FORMAT_NONLITERAL
 
 #endif
+
+static int
+handler_windowborders(void)
+{
+    winid tmpwin;
+    anything any;
+    int i;
+    const char *mode_name;
+    menu_item *mode_pick = (menu_item *) 0;
+    int clr = 0;
+    static const char *const windowborders_text[] = {
+        "Off, never show borders",
+        "On, always show borders",
+        "Auto, on if display is at least (24+2)x(80+2)",
+        "On, except forced off for perm_invent",
+        "Auto, except forced off for perm_invent"
+    };
+
+    tmpwin = create_nhwindow(NHW_MENU);
+    start_menu(tmpwin, MENU_BEHAVE_STANDARD);
+    any = cg.zeroany;
+    for (i = 0; i < SIZE(windowborders_text); i++) {
+        mode_name = windowborders_text[i];
+        any.a_int = i + 1;
+        /* index 'i' matches the numeric setting for windowborders,
+           so allow corresponding digit as group accellerator */
+        add_menu(tmpwin, &nul_glyphinfo, &any, 'a' + i, '0' + i,
+                 ATR_NONE, clr, mode_name, MENU_ITEMFLAGS_NONE);
+    }
+    end_menu(tmpwin, "Select window borders mode:");
+    if (select_menu(tmpwin, PICK_ONE, &mode_pick) > 0) {
+        iflags.wc2_windowborders = mode_pick->item.a_int - 1;
+        free((genericptr_t) mode_pick);
+    }
+    destroy_nhwindow(tmpwin);
+    return optn_ok;
+}
 
 /*
  **********************************
@@ -6210,6 +6248,17 @@ initoptions_init(void)
     memcpy(allopt, allopt_init, sizeof(allopt));
     determine_ambiguities();
 
+    /* if windowtype has been specified on the command line, set it up
+       early so windowtype-specific options use it as their base; we will
+       set it again in initoptions_finish() so that NETHACKOPTIONS and
+       .nethrackrc can't override it (command line takes precedence) */
+    if (g.cmdline_windowsys) {
+        config_error_init(FALSE, "command line", FALSE);
+        choose_windows(g.cmdline_windowsys);
+        config_error_done();
+        /* do not free g.cmdline_windowsys yet */
+    }
+
 #ifdef ENHANCED_SYMBOLS
     /* make any symbol parsing quicker */
     if (!glyphid_cache_status())
@@ -6420,6 +6469,14 @@ initoptions_finish(void)
         config_error_done();
     }
 
+    /* after .nethackrc and NETHACKOPTIONS so that cmdline takes precedence */
+    if (g.cmdline_windowsys) {
+        config_error_init(FALSE, "command line", FALSE);
+        choose_windows(g.cmdline_windowsys);
+        config_error_done();
+        free((genericptr_t) g.cmdline_windowsys), g.cmdline_windowsys = NULL;
+    }
+
     if (g.cmdline_rcfile)
         free((genericptr_t) g.cmdline_rcfile), g.cmdline_rcfile = 0;
     /*[end of nethackrc handling]*/
@@ -6462,6 +6519,17 @@ initoptions_finish(void)
     }
 #endif
     update_rest_on_space();
+
+    /* these can't rely on compile-time initialization for their defaults
+       because a multi-interface binary might need different values for
+       different interfaces; if neither tiled_map nor ascii_map pass the
+       wc_supported() test, assume ascii_map */
+    if (iflags.wc_tiled_map && !wc_supported("tiled_map"))
+        iflags.wc_tiled_map = FALSE, iflags.wc_ascii_map = TRUE;
+    else if (iflags.wc_ascii_map && !wc_supported("ascii_map")
+             && wc_supported("tiled_map"))
+        iflags.wc_ascii_map = FALSE, iflags.wc_tiled_map = TRUE;
+
 #ifdef ENHANCED_SYMBOLS
     if (glyphid_cache_status())
         free_glyphid_cache();
@@ -6628,6 +6696,9 @@ parsebindings(char *bindings)
     uchar key;
     int i;
     boolean ret = TRUE; /* assume success */
+    static const char *const mousebtn_names[NUM_MOUSE_BUTTONS] = {
+        "mouse1", "mouse2"
+    };
 
     /* look for first comma, then decide whether it is the key being bound
        or a list element separator; if it's a key, find separator beyond it */
@@ -6650,11 +6721,22 @@ parsebindings(char *bindings)
         if (!parsebindings(bind))
             ret = FALSE;
     }
-    
+
     /* parse a single binding: first split around : */
     if (! (bind = index(bindings, ':')))
         return FALSE; /* it's not a binding */
     *bind++ = 0;
+
+    bind = trimspaces(bind);
+
+    for (i = 0; i < SIZE(mousebtn_names); i++)
+        if (!strcmp(bindings, mousebtn_names[i])) {
+            if (!bind_mousebtn(i + 1, bind)) {
+                config_error_add("Error binding mouse button %i", i + 1);
+            } else {
+                return ret;
+            }
+        }
 
     /* read the key to be bound */
     key = txt2key(bindings);
@@ -6662,8 +6744,6 @@ parsebindings(char *bindings)
         config_error_add("Unknown key binding key '%s'", bindings);
         return FALSE;
     }
-
-    bind = trimspaces(bind);
 
     /* is it a special key? */
     if (bind_specialkey(key, bind))
@@ -6737,6 +6817,7 @@ static const struct attr_names {
     { "none", ATR_NONE },
     { "bold", ATR_BOLD },
     { "dim", ATR_DIM },
+    { "italic", ATR_ITALIC },
     { "underline", ATR_ULINE },
     { "blink", ATR_BLINK },
     { "inverse", ATR_INVERSE },
@@ -7252,6 +7333,7 @@ add_menu_coloring_parsed(const char *str, int c, int a)
     tmp->color = c;
     tmp->attr = a;
     g.menu_colorings = tmp;
+    iflags.use_menu_color = TRUE;
     return TRUE;
 }
 
@@ -7677,9 +7759,7 @@ fruitadd(char *str, struct fruit *replace_fruit)
 #define OPTIONS_HEADING "NETHACKOPTIONS"
 #endif
 
-static char fmtstr_doset[] = "%s%-15s [%s]   ";
-static char fmtstr_doset_tab[] = "%s\t[%s]";
-static char n_currently_set[] = "(%d currently set)";
+static const char n_currently_set[] = "(%d currently set)";
 
 DISABLE_WARNING_FORMAT_NONLITERAL   /* RESTORE is after show_menucontrols() */
 
@@ -7881,31 +7961,32 @@ longest_option_name(int startpass, int endpass)
     return longest_name_len;
 }
 
-/* #options - the user friendly version */
-int
-doset_simple(void)
+/* guts of doset_simple(); called repeatedly until no choice is made */
+static int
+doset_simple_menu(void)
 {
-    static boolean made_fmtstr = FALSE;
-    char buf[BUFSZ];
+    /* unlike doset()'s fmtstr, there is no leading %s for indentation */
+    static const char fmtstr_tab_doset_simple[] = "%s\t[%s]";
+    char fmtstr_doset_simple[sizeof "%-15s [%s]   "];
+    menu_item *pick_list;
+    boolean *bool_p;
+    const char *name, *fmtstr;
+    char buf[BUFSZ], buf2[BUFSZ], abuf[BUFSZ];
     winid tmpwin;
     anything any;
-    menu_item *pick_list;
-    int i, pick_cnt, pick_idx;
     enum OptSection section;
-    boolean *bool_p;
-    const char *name;
+    int i, k, pick_cnt, reslt;
 
-    if (iflags.menu_requested)
-        return doset();
-
-    if (!made_fmtstr) {
-        Sprintf(fmtstr_doset, "%%s%%-%us [%%s]",
+    /* we do this each time we're called instead of once in doset_simple()
+       in case 'menu_tab_sep' ever gets included in the simple menu so
+       becomes subject to being changed while doset_simple() is running */
+    if (!iflags.menu_tab_sep)
+        Sprintf(fmtstr_doset_simple, "%%-%us [%%s]",
                 longest_option_name(set_gameview, set_in_game));
-        made_fmtstr = TRUE;
-    }
+    else
+        Strcpy(fmtstr_doset_simple, fmtstr_tab_doset_simple);
+    fmtstr = fmtstr_doset_simple;
 
-    give_opt_msg = FALSE;
- rerun:
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
 
@@ -7933,17 +8014,11 @@ doset_simple(void)
                     continue;
                 if (iflags.wc_tiled_map && allopt[i].idx == opt_color)
                     continue;
-                Sprintf(buf, fmtstr_doset, "",
-                        name, *bool_p ? "X" : " ");
+                Sprintf(buf, fmtstr, name, *bool_p ? "X" : " ");
                 break;
             case CompOpt:
             case OthrOpt:
-                {
-                    const char *value = "unknown";
-                    int reslt = optn_err;
-                    char buf2[BUFSZ];
-                    int k = i;
-
+                    k = i;
                     if (allopt[i].optfn == optfn_symset
                         && Is_rogue_level(&u.uz)) {
                         k = opt_roguesymset;
@@ -7952,13 +8027,13 @@ doset_simple(void)
                     }
 
                     buf2[0] = '\0';
+                    reslt = optn_err;
                     if (allopt[k].optfn)
                         reslt = (*allopt[k].optfn)(allopt[k].idx, get_val,
                                                    FALSE, buf2, empty_optstr);
-                    if (reslt == optn_ok && buf2[0])
-                        value = (const char *) buf2;
-                    Sprintf(buf, fmtstr_doset, "", name, value);
-                }
+                    Sprintf(buf, fmtstr, name,
+                            ((reslt == optn_ok && buf2[0])
+                             ? (const char *) buf2 : "unknown"));
                 break;
             default:
                 Sprintf(buf, "ERROR");
@@ -7973,66 +8048,92 @@ doset_simple(void)
                      ATR_NONE, 0, buf, MENU_ITEMFLAGS_NONE);
         }
     }
-
     end_menu(tmpwin, "Options");
+
     g.opt_need_redraw = FALSE;
     g.opt_need_glyph_reset = FALSE;
-    if ((pick_cnt = select_menu(tmpwin, PICK_ONE, &pick_list)) > 0) {
-        for (pick_idx = 0; pick_idx < pick_cnt; ++pick_idx) {
-            int k = pick_list[pick_idx].item.a_int - 1;
+    pick_cnt = select_menu(tmpwin, PICK_ONE, &pick_list);
+    /* note:  without the complication of a preselected entry, a PICK_ONE
+       menu returning pick_cnt > 0 implies exactly 1 */
+    if (pick_cnt > 0) {
+        k = pick_list[0].item.a_int - 1;
 
-            if (allopt[k].opttyp == BoolOpt) {
-                /* boolean option */
-                Sprintf(buf, "%s%s", *allopt[k].addr ? "!" : "",
-                        allopt[k].name);
-                (void) parseoptions(buf, FALSE, FALSE);
+        abuf[0] = '\0';
+        if (allopt[k].opttyp == BoolOpt) {
+            /* boolean option */
+            Sprintf(buf, "%s%s", *allopt[k].addr ? "!" : "", allopt[k].name);
+            (void) parseoptions(buf, FALSE, FALSE);
+        } else {
+            /* compound option */
+            if (allopt[k].has_handler && allopt[k].optfn) {
+                reslt = (*allopt[k].optfn)(allopt[k].idx, do_handler, FALSE,
+                                           empty_optstr, empty_optstr);
+                /* if player eventually saves options, include this one */
+                if (reslt == optn_ok)
+                    opt_set_in_config[k] = TRUE;
             } else {
-                /* compound option */
-                int reslt UNUSED;
-
-                if (allopt[k].has_handler && allopt[k].optfn) {
-                    reslt = (*allopt[k].optfn)(allopt[k].idx, do_handler,
-                                               FALSE, empty_optstr,
-                                               empty_optstr);
-                } else {
-                    char abuf[BUFSZ];
-
-                    Sprintf(buf, "Set %s to what?", allopt[k].name);
-                    abuf[0] = '\0';
-                    getlin(buf, abuf);
-                    if (abuf[0] == '\033')
-                        continue;
+                Sprintf(buf, "Set %s to what?", allopt[k].name);
+                getlin(buf, abuf);
+                if (abuf[0] != '\033') { /* ESC */
                     Sprintf(buf, "%s:", allopt[k].name);
-                    (void) strncat(eos(buf), abuf,
-                                   (sizeof buf - 1 - strlen(buf)));
+                    copynchars(eos(buf), abuf,
+                               (int) (sizeof buf - 1 - strlen(buf)));
                     /* pass the buck */
                     (void) parseoptions(buf, FALSE, FALSE);
                 }
+                /* Note: using ESC to not set a new value will still return
+                   'picked 1' to caller which will loop for another choice */
             }
-            if (wc_supported(allopt[k].name)
-                || wc2_supported(allopt[k].name))
-                preference_update(allopt[k].name);
         }
+        if (abuf[0] != '\033'
+            && (wc_supported(allopt[k].name)
+                || wc2_supported(allopt[k].name)))
+            preference_update(allopt[k].name);
+
         free((genericptr_t) pick_list), pick_list = (menu_item *) 0;
     }
+    /* tear down this instance of the menu; if pick_cnt is 1, caller
+       will immediately call us back to put up another instance */
     destroy_nhwindow(tmpwin);
 
-    if (g.opt_need_glyph_reset) {
-        reset_glyphmap(gm_optionchange);
-    }
-    if (g.opt_need_redraw) {
-        check_gold_symbol();
-        reglyph_darkroom();
-        docrt();
-        flush_screen(1);
-    }
-    if (g.context.botl || g.context.botlx) {
-        bot();
+    return pick_cnt;
+}
+
+/* #options - the user friendly version:  get one option from a subset of
+   the zillion choices, act upon it, and prompt for another */
+int
+doset_simple(void)
+{
+    int pickedone = 0;
+
+    if (iflags.menu_requested) {
+        /* doset() checks for 'm' and calls doset_simple(); clear the
+           menu-requested flag to avoid doing that recursively */
+        iflags.menu_requested = FALSE;
+        return doset();
     }
 
-    if (pick_cnt > 0)
-        goto rerun;
+    /* select and change one option at a time, then reprocess the menu
+       with updated settings to offer chance for further change */
+    give_opt_msg = FALSE;
+    do {
+        pickedone = doset_simple_menu();
 
+        /* some option choices warrant immediate updating beyond the
+           option value itself */
+        if (g.opt_need_glyph_reset) {
+            reset_glyphmap(gm_optionchange);
+        }
+        if (g.opt_need_redraw) {
+            check_gold_symbol();
+            reglyph_darkroom();
+            docrt();
+            flush_screen(1);
+        }
+        if (g.context.botl || g.context.botlx) {
+            bot();
+        }
+    } while (pickedone > 0);
     give_opt_msg = TRUE;
     return ECMD_OK;
 }
@@ -8041,9 +8142,10 @@ doset_simple(void)
 int
 doset(void) /* changing options via menu by Per Liboriussen */
 {
-    static boolean made_fmtstr = FALSE;
+    static const char fmtstr_tab_doset[] = "%s%s\t[%s]";
+    char fmtstr_doset[sizeof "%s%-15s [%s]   "];
     char buf[BUFSZ];
-    const char *name;
+    const char *name, *indent;
     int i = 0, pass, pick_cnt, pick_idx, opt_indx;
     boolean *bool_p;
     winid tmpwin;
@@ -8053,6 +8155,13 @@ doset(void) /* changing options via menu by Per Liboriussen */
     boolean setinitial = FALSE, fromfile = FALSE,
             gavehelp = FALSE, skiphelp = !iflags.cmdassist;
     int clr = 0;
+
+    if (iflags.menu_requested) {
+        /* doset_simple() checks for 'm' and calls doset(); clear the
+           menu-requested flag to avoid doing that recursively */
+        iflags.menu_requested = FALSE;
+        return doset_simple();
+    }
 
     /* if we offer '?' as a choice and it is the only thing chosen,
        we'll end up coming back here after showing the explanatory text */
@@ -8094,13 +8203,14 @@ doset(void) /* changing options via menu by Per Liboriussen */
     else
 #endif
         startpass = set_gameview;
-    endpass = (wizard) ? set_wizonly : set_in_game;
+    endpass = (wizard) ? set_wiznofuz : set_in_game;
 
-    if (!made_fmtstr && !iflags.menu_tab_sep) {
+    if (!iflags.menu_tab_sep)
+        /* initial "%s" is for indentation of non-selectable items */
         Sprintf(fmtstr_doset, "%%s%%-%us [%%s]",
                 longest_option_name(startpass, endpass));
-        made_fmtstr = TRUE;
-    }
+    else
+        Strcpy(fmtstr_doset, fmtstr_tab_doset);
 
     indexoffset = 1;
     any = cg.zeroany;
@@ -8118,19 +8228,20 @@ doset(void) /* changing options via menu by Per Liboriussen */
                     continue; /* obsolete */
                 if (allopt[i].setwhere == set_wizonly && !wizard)
                     continue;
+                if (allopt[i].setwhere == set_wiznofuz
+                    && (!wizard || iflags.debug_fuzzer))
+                    continue;
                 if ((is_wc_option(name) && !wc_supported(name))
                     || (is_wc2_option(name) && !wc2_supported(name)))
                     continue;
 
                 any.a_int = (pass == 0) ? 0 : i + 1 + indexoffset;
-                if (!iflags.menu_tab_sep)
-                    Sprintf(buf, fmtstr_doset, (pass == 0) ? "    " : "",
-                            name, *bool_p ? "true" : "false");
-                else
-                    Sprintf(buf, fmtstr_doset_tab,
-                            name, *bool_p ? "true" : "false");
+                indent = (pass == 0 && !iflags.menu_tab_sep) ? "    " : "";
+                Sprintf(buf, fmtstr_doset, indent,
+                        name, *bool_p ? "true" : "false");
                 if (pass == 0)
-                    enhance_menu_text(buf, sizeof buf, pass, bool_p, &allopt[i]);
+                    enhance_menu_text(buf, sizeof buf, pass, bool_p,
+                                      &allopt[i]);
                 add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
                          ATR_NONE, clr, buf, MENU_ITEMFLAGS_NONE);
             }
@@ -8142,12 +8253,12 @@ doset(void) /* changing options via menu by Per Liboriussen */
              MENU_ITEMFLAGS_NONE);
 
     /* deliberately put playmode, name, role+race+gender+align first */
-    doset_add_menu(tmpwin, "playmode", opt_playmode, 0);
-    doset_add_menu(tmpwin, "name", opt_name, 0);
-    doset_add_menu(tmpwin, "role", opt_role, 0);
-    doset_add_menu(tmpwin, "race", opt_race, 0);
-    doset_add_menu(tmpwin, "gender", opt_gender, 0);
-    doset_add_menu(tmpwin, "align", opt_align, 0);
+    doset_add_menu(tmpwin, "playmode", fmtstr_doset, opt_playmode, 0);
+    doset_add_menu(tmpwin, "name", fmtstr_doset, opt_name, 0);
+    doset_add_menu(tmpwin, "role", fmtstr_doset, opt_role, 0);
+    doset_add_menu(tmpwin, "race", fmtstr_doset, opt_race, 0);
+    doset_add_menu(tmpwin, "gender", fmtstr_doset, opt_gender, 0);
+    doset_add_menu(tmpwin, "align", fmtstr_doset, opt_align, 0);
 
     for (pass = startpass; pass <= endpass; pass++)
         for (i = 0; (name = allopt[i].name) != 0; i++) {
@@ -8162,7 +8273,7 @@ doset(void) /* changing options via menu by Per Liboriussen */
                     || (is_wc2_option(name) && !wc2_supported(name)))
                     continue;
 
-                doset_add_menu(tmpwin, name, i,
+                doset_add_menu(tmpwin, name, fmtstr_doset, i,
                                (pass == set_gameview) ? 0 : indexoffset);
             }
         }
@@ -8183,7 +8294,7 @@ doset(void) /* changing options via menu by Per Liboriussen */
                     || (is_wc2_option(name) && !wc2_supported(name)))
                     continue;
 
-                doset_add_menu(tmpwin, name, i,
+                doset_add_menu(tmpwin, name, fmtstr_doset, i,
                                (pass == set_gameview) ? 0 : indexoffset);
             }
         }
@@ -8196,7 +8307,7 @@ doset(void) /* changing options via menu by Per Liboriussen */
              iflags.menu_headings, clr,
              "Variable playground locations:", MENU_ITEMFLAGS_NONE);
     for (i = 0; i < PREFIX_COUNT; i++)
-        doset_add_menu(tmpwin, fqn_prefix_names[i], -1, 0);
+        doset_add_menu(tmpwin, fqn_prefix_names[i], fmtstr_doset, -1, 0);
 #endif
     end_menu(tmpwin, "Set what options?");
     g.opt_need_redraw = FALSE;
@@ -8277,15 +8388,18 @@ doset(void) /* changing options via menu by Per Liboriussen */
     return ECMD_OK;
 }
 
-/* doset('O' command) menu entries for compound options */
+/* doset(#optionsfull command) menu entries for compound options */
 static void
-doset_add_menu(winid win,          /* window to add to */
-               const char *option, /* option name */
-               int idx,            /* index in allopt[] */
-               int indexoffset)    /* value to add to index in allopt[],
-                                      or zero if option cannot be changed */
+doset_add_menu(
+    winid win,          /* window to add to */
+    const char *option, /* option name */
+    const char *fmtstr, /* fmtstr_doset */
+    int idx,            /* index in allopt[] */
+    int indexoffset)    /* value to add to index in allopt[],
+                         * or zero if option cannot be changed */
 {
     const char *value = "unknown"; /* current value */
+    const char *indent;
     char buf[BUFSZ], buf2[BUFSZ];
     anything any;
     int i = idx, reslt = optn_err;
@@ -8319,11 +8433,8 @@ doset_add_menu(winid win,          /* window to add to */
     }
 
     /* "    " replaces "a - " -- assumes menus follow that style */
-    if (!iflags.menu_tab_sep)
-        Sprintf(buf, fmtstr_doset, any.a_int ? "" : "    ", option,
-                value);
-    else
-        Sprintf(buf, fmtstr_doset_tab, option, value);
+    indent = !any.a_int ? "    " : "";
+    Sprintf(buf, fmtstr, indent, option, value);
     add_menu(win, &nul_glyphinfo, &any, 0, 0,
              ATR_NONE, clr, buf, MENU_ITEMFLAGS_NONE);
 }
@@ -8708,7 +8819,8 @@ option_help(void)
     winid datawin;
 
     datawin = create_nhwindow(NHW_TEXT);
-    Sprintf(buf, "Set options as OPTIONS=<options> in %s", configfile);
+    Snprintf(buf, sizeof buf,
+             "Set options as OPTIONS=<options> in %s", configfile);
     opt_intro[CONFIG_SLOT] = (const char *) buf;
     for (i = 0; opt_intro[i]; i++)
         putstr(datawin, 0, opt_intro[i]);
@@ -8717,6 +8829,9 @@ option_help(void)
     for (i = 0; allopt[i].name; i++) {
         if ((allopt[i].opttyp != BoolOpt || !allopt[i].addr)
             || (allopt[i].setwhere == set_wizonly && !wizard))
+            continue;
+        if (allopt[i].setwhere == set_wiznofuz
+            && (!wizard || iflags.debug_fuzzer))
             continue;
         optname = allopt[i].name;
         if ((is_wc_option(optname) && !wc_supported(optname))
@@ -8731,6 +8846,9 @@ option_help(void)
     for (i = 0; allopt[i].name; i++) {
         if (allopt[i].opttyp != CompOpt
             || (allopt[i].setwhere == set_wizonly && !wizard))
+            continue;
+        if (allopt[i].setwhere == set_wiznofuz
+            && (!wizard || iflags.debug_fuzzer))
             continue;
         optname = allopt[i].name;
         if ((is_wc_option(optname) && !wc_supported(optname))
@@ -8861,7 +8979,7 @@ all_options_strbuf(strbuf_t *sbuf)
     strbuf_append(sbuf, tmp);
 
     for (i = 0; (name = allopt[i].name) != 0; i++) {
-        if (!got_from_config[i])
+        if (!opt_set_in_config[i])
             continue;
         switch (allopt[i].opttyp) {
         case BoolOpt:
@@ -9431,4 +9549,3 @@ enhance_menu_text(
 #endif /* OPTION_LISTS_ONLY */
 
 /*options.c*/
-

@@ -20,7 +20,6 @@ static void m_detach(struct monst *, struct permonst *);
 static void set_mon_min_mhpmax(struct monst *, int);
 static void lifesaved_monster(struct monst *);
 static boolean ok_to_obliterate(struct monst *);
-static void deal_with_overcrowding(struct monst *);
 static void m_restartcham(struct monst *);
 static boolean restrap(struct monst *);
 static int pick_animal(void);
@@ -951,126 +950,124 @@ m_calcdistress(struct monst *mtmp)
     /* FIXME: mtmp->mlstmv ought to be updated here */
 }
 
-int
-movemon(void)
+/* perform movement for a single monster.
+   meant to be used with iter_mons_safe. */
+boolean
+movemon_singlemon(struct monst *mtmp)
 {
-    register struct monst *mtmp, *nmtmp;
-    register boolean somebody_can_move = FALSE;
-
-    /*
-     * Some of you may remember the former assertion here that
-     * because of deaths and other actions, a simple one-pass
-     * algorithm wasn't possible for movemon.  Deaths are no longer
-     * removed to the separate list fdmon; they are simply left in
-     * the chain with hit points <= 0, to be cleaned up at the end
-     * of the pass.
-     *
-     * The only other actions which cause monsters to be removed from
-     * the chain are level migrations and losedogs().  I believe losedogs()
-     * is a cleanup routine not associated with monster movements, and
-     * monsters can only affect level migrations on themselves, not others
-     * (hence the fetching of nmon before moving the monster).  Currently,
-     * monsters can jump into traps, read cursed scrolls of teleportation,
-     * and drink cursed potions of raise level to change levels.  These are
-     * all reflexive at this point.  Should one monster be able to level
-     * teleport another, this scheme would have problems.
-     */
-
-    for (mtmp = fmon; mtmp; mtmp = nmtmp) {
-        /* end monster movement early if hero is flagged to leave the level */
-        if (u.utotype
+    /* end monster movement early if hero is flagged to leave the level */
+    if (u.utotype
 #ifdef SAFERHANGUP
-            /* or if the program has lost contact with the user */
-            || g.program_state.done_hup
+        /* or if the program has lost contact with the user */
+        || g.program_state.done_hup
 #endif
-            ) {
-            somebody_can_move = FALSE;
-            break;
+        ) {
+        g.somebody_can_move = FALSE;
+        return TRUE;
+    }
+
+    /* one dead monster needs to perform a move after death: vault
+       guard whose temporary corridor is still on the map; live
+       guards who have led the hero back to civilization get moved
+       off the map too; gd_move() decides whether the temporary
+       corridor can be removed and guard discarded (via clearing
+       mon->isgd flag so that dmonsfree() will get rid of mon) */
+    if (mtmp->isgd && !mtmp->mx && !(mtmp->mstate & MON_MIGRATING)) {
+        /* parked at <0,0>; eventually isgd should get set to false */
+        if (g.moves > mtmp->mlstmv) {
+            (void) gd_move(mtmp);
+            mtmp->mlstmv = g.moves;
         }
-        nmtmp = mtmp->nmon;
-        /* one dead monster needs to perform a move after death: vault
-           guard whose temporary corridor is still on the map; live
-           guards who have led the hero back to civilization get moved
-           off the map too; gd_move() decides whether the temporary
-           corridor can be removed and guard discarded (via clearing
-           mon->isgd flag so that dmonsfree() will get rid of mon) */
-        if (mtmp->isgd && !mtmp->mx) {
-            /* parked at <0,0>; eventually isgd should get set to false */
-            if (g.moves > mtmp->mlstmv) {
-                (void) gd_move(mtmp);
-                mtmp->mlstmv = g.moves;
-            }
-            continue;
-        }
-        if (DEADMONSTER(mtmp))
-            continue;
+        return FALSE;
+    }
+    if (DEADMONSTER(mtmp))
+        return FALSE;
 
-        /* Find a monster that we have not treated yet. */
-        if (mtmp->movement < NORMAL_SPEED)
-            continue;
+    /* monster isn't on this map anymore */
+    if ((mtmp->mstate & (MON_DETACH|MON_MIGRATING|MON_LIMBO|MON_OFFMAP)) != 0)
+        return FALSE;
 
-        mtmp->movement -= NORMAL_SPEED;
-        if (mtmp->movement >= NORMAL_SPEED)
-            somebody_can_move = TRUE;
+    /* Find a monster that we have not treated yet. */
+    if (mtmp->movement < NORMAL_SPEED)
+        return FALSE;
 
-        if (g.vision_full_recalc)
-            vision_recalc(0); /* vision! */
+    mtmp->movement -= NORMAL_SPEED;
+    if (mtmp->movement >= NORMAL_SPEED)
+        g.somebody_can_move = TRUE;
 
-        /* reset obj bypasses before next monster moves */
-        if (g.context.bypasses)
-            clear_bypasses();
-        clear_splitobjs();
-        if (minliquid(mtmp))
-            continue;
+    if (g.vision_full_recalc)
+        vision_recalc(0); /* vision! */
 
-        /* after losing equipment, try to put on replacement */
-        if (mtmp->misc_worn_check & I_SPECIAL) {
-            long oldworn;
+    /* reset obj bypasses before next monster moves */
+    if (g.context.bypasses)
+        clear_bypasses();
+    clear_splitobjs();
+    if (minliquid(mtmp))
+        return FALSE;
 
+    /* after losing equipment, try to put on replacement */
+    if (mtmp->misc_worn_check & I_SPECIAL) {
+        long oldworn;
+
+        /* hostiles only try to equip things if they think hero isn't
+         * nearby; if they think hero is nearby, leave the flag intact so
+         * that it can be checked again on subsequent moves until the hero
+         * is perceived to be farther away. */
+        if (mtmp->mpeaceful || mtmp->mtame
+            || dist2(mtmp->mx, mtmp->my, mtmp->mux, mtmp->muy) > (3 * 3)) {
             mtmp->misc_worn_check &= ~I_SPECIAL;
             oldworn = mtmp->misc_worn_check;
             m_dowear(mtmp, FALSE);
             if (mtmp->misc_worn_check != oldworn || !mtmp->mcanmove)
-                continue;
+                return FALSE; /* is spending this turn equipping */
         }
-
-        if (is_hider(mtmp->data)) {
-            /* unwatched mimics and piercers may hide again  [MRS] */
-            if (restrap(mtmp))
-                continue;
-            if (M_AP_TYPE(mtmp) == M_AP_FURNITURE
-                || M_AP_TYPE(mtmp) == M_AP_OBJECT)
-                continue;
-            if (mtmp->mundetected)
-                continue;
-        } else if (mtmp->data->mlet == S_EEL && !mtmp->mundetected
-                   && (mtmp->mflee || !next2u(mtmp->mx, mtmp->my))
-                   && !canseemon(mtmp) && !rn2(4)) {
-            /* some eels end up stuck in isolated pools, where they
-               can't--or at least won't--move, so they never reach
-               their post-move chance to re-hide */
-            if (hideunder(mtmp))
-                continue;
-        }
-
-        /* continue if the monster died fighting */
-        if (Conflict && !mtmp->iswiz && m_canseeu(mtmp)) {
-            /* Note:
-             *  Conflict does not take effect in the first round.
-             *  Therefore, A monster when stepping into the area will
-             *  get to swing at you.
-             *
-             *  The call to fightm() must be _last_.  The monster might
-             *  have died if it returns 1.
-             */
-            if (cansee(mtmp->mx, mtmp->my)
-                && (distu(mtmp->mx, mtmp->my) <= BOLT_LIM * BOLT_LIM)
-                && fightm(mtmp))
-                continue; /* mon might have died */
-        }
-        if (dochugw(mtmp, TRUE)) /* otherwise just move the monster */
-            continue;
     }
+
+    if (is_hider(mtmp->data)) {
+        /* unwatched mimics and piercers may hide again  [MRS] */
+        if (restrap(mtmp))
+            return FALSE;
+        if (M_AP_TYPE(mtmp) == M_AP_FURNITURE
+            || M_AP_TYPE(mtmp) == M_AP_OBJECT)
+            return FALSE;
+        if (mtmp->mundetected)
+            return FALSE;
+    } else if (mtmp->data->mlet == S_EEL && !mtmp->mundetected
+               && (mtmp->mflee || !next2u(mtmp->mx, mtmp->my))
+               && !canseemon(mtmp) && !rn2(4)) {
+        /* some eels end up stuck in isolated pools, where they
+           can't--or at least won't--move, so they never reach
+           their post-move chance to re-hide */
+        if (hideunder(mtmp))
+            return FALSE;
+    }
+
+    /* continue if the monster died fighting */
+    if (Conflict && !mtmp->iswiz && m_canseeu(mtmp)) {
+        /* Note:
+         *  Conflict does not take effect in the first round.
+         *  Therefore, A monster when stepping into the area will
+         *  get to swing at you.
+         *
+         *  The call to fightm() must be _last_.  The monster might
+         *  have died if it returns 1.
+         */
+        if (cansee(mtmp->mx, mtmp->my)
+            && (distu(mtmp->mx, mtmp->my) <= BOLT_LIM * BOLT_LIM)
+            && fightm(mtmp))
+            return FALSE; /* mon might have died */
+    }
+    (void) dochugw(mtmp, TRUE); /* otherwise just move the monster */
+    return FALSE;
+}
+
+/* perform movement for all monsters */
+int
+movemon(void)
+{
+    g.somebody_can_move = FALSE;
+
+    iter_mons_safe(movemon_singlemon);
 
     if (any_light_source())
         g.vision_full_recalc = 1; /* in case a mon moved with a light source */
@@ -1086,10 +1083,42 @@ movemon(void)
     if (u.utotype) {
         deferred_goto();
         /* changed levels, so these monsters are dormant */
-        somebody_can_move = FALSE;
+        g.somebody_can_move = FALSE;
     }
 
-    return somebody_can_move;
+    return g.somebody_can_move;
+}
+
+/* dispose of contents of an eaten container; used for pets and other mons */
+void
+meatbox(struct monst *mon, struct obj *otmp)
+{
+    boolean engulf_contents = (mon->data == &mons[PM_GELATINOUS_CUBE]);
+    int x = mon->mx, y = mon->my;
+    struct obj *cobj;
+
+    if (!Has_contents(otmp) || !isok(x, y))
+        return;
+
+    /* contents of eaten containers become engulfed or dropped onto
+      the floor; this is arbitrary, but otherwise g-cubes are too
+      powerful */
+    if (!engulf_contents && cansee(x, y)) {
+        pline("%s contents spill out onto the %s.",
+              s_suffix(The(distant_name(otmp, xname))),
+              surface(x, y));
+    }
+    while ((cobj = otmp->cobj) != 0) {
+        obj_extract_self(cobj);
+        if (otmp->otyp == ICE_BOX)
+            removed_from_icebox(cobj);
+        if (engulf_contents) {
+            (void) mpickobj(mon, cobj);
+        } else {
+            if (!flooreffects(cobj, x, y, ""))
+                place_object(cobj, x, y);
+        }
+    }
 }
 
 #define mstoning(obj)                                       \
@@ -1160,6 +1189,10 @@ meatmetal(struct monst *mtmp)
                     if (mtmp->mhp > mtmp->mhpmax)
                         mtmp->mhp = mtmp->mhpmax;
                 }
+                /* Currently there shouldn't be any metal object with
+                  contents, but just in case... */
+                if (Has_contents(otmp))
+                    meatbox(mtmp, otmp);
                 if (otmp == uball) {
                     unpunish();
                     delobj(otmp);
@@ -1314,20 +1347,8 @@ meatobj(struct monst* mtmp) /* for gelatinous cubes */
                 if (mtmp->mhp > mtmp->mhpmax)
                     mtmp->mhp = mtmp->mhpmax;
             }
-            if (Has_contents(otmp)) {
-                register struct obj *otmp3;
-
-                /* contents of eaten containers become engulfed; this
-                   is arbitrary, but otherwise g-cubes are too powerful */
-                while ((otmp3 = otmp->cobj) != 0) {
-                    obj_extract_self(otmp3);
-                    if (otmp->otyp == ICE_BOX && otmp3->otyp == CORPSE) {
-                        otmp3->age = g.moves - otmp3->age;
-                        start_corpse_timeout(otmp3);
-                    }
-                    (void) mpickobj(mtmp, otmp3);
-                }
-            }
+            if (Has_contents(otmp))
+                meatbox(mtmp, otmp);
             /* possibility of being turned to stone or into slime can't
                reach here (don't touch for cockatrice corpse, engulf rather
                than eat for tin, cockatrice egg, or glob of green slime) */
@@ -1622,7 +1643,8 @@ mpickstuff(struct monst *mtmp, const char *str)
             }
             obj_extract_self(otmp3);      /* remove from floor */
             (void) mpickobj(mtmp, otmp3); /* may merge and free otmp3 */
-            m_dowear(mtmp, FALSE);
+            /* let them try and equip it on the next turn */
+            check_gear_next_turn(mtmp);
             newsym(mtmp->mx, mtmp->my);
             return TRUE; /* pick only one object */
         }
@@ -2061,7 +2083,7 @@ mfndpos(
                                 && !is_whirly(mdat) && !unsolid(mdat)))
                         && (ttmp->ttyp != ANTI_MAGIC || !resists_magm(mon))) {
                         if (!(flag & ALLOW_TRAPS)) {
-                            if (mon->mtrapseen & (1L << (ttmp->ttyp - 1)))
+                            if (mon_knows_traps(mon, ttmp->ttyp))
                                 continue;
                         }
                         info[cnt] |= ALLOW_TRAPS;
@@ -2094,7 +2116,7 @@ mm_2way_aggression(struct monst *magr, struct monst *mdef)
 
 /* Monster against monster special attacks; for the specified monster
    combinations, this allows one monster to attack another adjacent one
-   in the absence of Conflict.  There is no provision for targetting
+   in the absence of Conflict.  There is no provision for targeting
    other monsters; just hand to hand fighting when they happen to be
    next to each other. */
 static long
@@ -2505,7 +2527,7 @@ lifesaved_monster(struct monst* mtmp)
         }
         m_useup(mtmp, lifesave);
         /* equip replacement amulet, if any, on next move */
-        mtmp->misc_worn_check |= I_SPECIAL;
+        check_gear_next_turn(mtmp);
 
         surviver = !(g.mvitals[monsndx(mtmp->data)].mvflags & G_GENOD);
         mtmp->mcanmove = 1;
@@ -2902,13 +2924,13 @@ monstone(struct monst* mdef)
         unmap_object(x, y);
     if (cansee(x, y))
         newsym(x, y);
-    /* We don't currently trap the hero in the statue in this case but we
-     * could */
+    /* we don't currently trap the hero in the statue in this case but we
+       could */
     if (engulfing_u(mdef))
         wasinside = TRUE;
     mondead(mdef);
     if (wasinside) {
-        if (is_animal(mdef->data))
+        if (digests(mdef->data))
             You("%s through an opening in the new %s.",
                 u_locomotion("jump"), xname(otmp));
     }
@@ -2961,7 +2983,7 @@ monkilled(
 }
 
 void
-set_ustuck(struct monst* mtmp)
+set_ustuck(struct monst *mtmp)
 {
     if (iflags.sanity_check || iflags.debug_fuzzer) {
         if (mtmp && !next2u(mtmp->mx, mtmp->my))
@@ -2971,23 +2993,26 @@ set_ustuck(struct monst* mtmp)
 
     g.context.botl = 1;
     u.ustuck = mtmp;
+    if (!u.ustuck) {
+        u.uswallow = 0;
+        u.uswldtim = 0;
+    }
 }
 
 void
-unstuck(struct monst* mtmp)
+unstuck(struct monst *mtmp)
 {
     if (u.ustuck == mtmp) {
         struct permonst *ptr = mtmp->data;
+        unsigned swallowed = u.uswallow;
 
         /* do this first so that docrt()'s botl update is accurate;
-           safe to do as long as u.uswallow is also cleared before docrt() */
+           clears u.uswallow as well as setting u.ustuck to Null */
         set_ustuck((struct monst *) 0);
 
-        if (u.uswallow) {
+        if (swallowed) {
             u.ux = mtmp->mx;
             u.uy = mtmp->my;
-            u.uswallow = 0;
-            u.uswldtim = 0;
             if (Punished && uchain->where != OBJ_FLOOR)
                 placebc();
             g.vision_full_recalc = 1;
@@ -3164,7 +3189,7 @@ xkilled(
     newsym(x, y);
 
  cleanup:
-    /* punish bad behaviour */
+    /* punish bad behavior */
     if (is_human(mdat)
         && (!always_hostile(mdat) && mtmp->malign <= 0)
         && (mndx < PM_ARCHEOLOGIST || mndx > PM_WIZARD)
@@ -3444,7 +3469,7 @@ elemental_clog(struct monst *mon)
 /* make monster mtmp next to you (if possible);
    might place monst on far side of a wall or boulder */
 void
-mnexto(struct monst* mtmp, unsigned int rlocflags)
+mnexto(struct monst *mtmp, unsigned int rlocflags)
 {
     coord mm;
 
@@ -3463,8 +3488,8 @@ mnexto(struct monst* mtmp, unsigned int rlocflags)
     return;
 }
 
-static void
-deal_with_overcrowding(struct monst* mtmp)
+void
+deal_with_overcrowding(struct monst *mtmp)
 {
     if (In_endgame(&u.uz)) {
         debugpline1("overcrowding: elemental_clog on %s", m_monnam(mtmp));
@@ -3477,7 +3502,7 @@ deal_with_overcrowding(struct monst* mtmp)
 
 /* like mnexto() but requires destination to be directly accessible */
 void
-maybe_mnexto(struct monst* mtmp)
+maybe_mnexto(struct monst *mtmp)
 {
     coord mm;
     struct permonst *ptr = mtmp->data;
@@ -3886,6 +3911,35 @@ normal_shape(struct monst *mon)
         }
     }
 }
+
+/* iterate all monsters on the level, even dead ones, calling func
+   for each monster. if func returns TRUE, stop iterating.
+   safe for list deletions and insertions, and guarantees
+   calling func once per monster in the list. */
+void
+iter_mons_safe(boolean (*func)(struct monst *))
+{
+    struct monst **monarr;
+    int i = 0, nmons = 0;
+    struct monst *mtmp;
+    boolean stopiter = FALSE;
+
+    for (mtmp = fmon; mtmp; mtmp = mtmp->nmon)
+        nmons++;
+
+    monarr = (struct monst **)alloc(nmons * sizeof(struct monst *));
+    for (mtmp = fmon; mtmp; mtmp = mtmp->nmon)
+        monarr[i++] = mtmp;
+
+    for (i = 0; i < nmons && !stopiter; i++) {
+        mtmp = monarr[i];
+        if (func(mtmp))
+            stopiter = TRUE;
+    }
+
+    free(monarr);
+}
+
 
 /* iterate all living monsters on current level, calling func for each. */
 void
@@ -4655,7 +4709,7 @@ newcham(
                     if (is_vampshifter(mtmp)) {
                         Sprintf(msgtrail, " which was a shapeshifted %s",
                                 noname_monnam(mtmp, ARTICLE_NONE));
-                    } else if (is_animal(mdat)) {
+                    } else if (digests(mdat)) {
                         Strcpy(msgtrail, "'s stomach");
                     } else {
                         msgtrail[0] = '\0';
@@ -4711,7 +4765,7 @@ newcham(
     if (!(mtmp->misc_worn_check & W_ARMG))
         mselftouch(mtmp, "No longer petrify-resistant, ",
                    !g.context.mon_moving);
-    m_dowear(mtmp, FALSE);
+    check_gear_next_turn(mtmp);
 
     /* This ought to re-test can_carry() on each item in the inventory
      * rather than just checking ex-giants & boulders, but that'd be
@@ -5112,6 +5166,15 @@ usmellmon(struct permonst* mdat)
             }
     }
     return msg_given ? TRUE : FALSE;
+}
+
+/* setting misc_worn_check's I_SPECIAL bit flags a monster to reassess
+   and potentially re-equip gear at the start of its next move;
+   this hides the details of that */
+void
+check_gear_next_turn(struct monst *mon)
+{
+    mon->misc_worn_check |= I_SPECIAL;
 }
 
 /*mon.c*/

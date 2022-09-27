@@ -1006,7 +1006,7 @@ inside_gas_cloud(genericptr_t p1, genericptr_t p2)
     int dam = reg->arg.a_int;
 
     /*
-     * Gas clouds can't be targetted at water locations, but they can
+     * Gas clouds can't be targeted at water locations, but they can
      * start next to water and spread over it.
      */
 
@@ -1175,7 +1175,8 @@ create_gas_cloud(coordxy x, coordxy y, int cloudsize, int damage)
     add_region(cloud);
 
     if (!g.in_mklev && !inside_cloud && is_hero_inside_gas_cloud())
-        You("are enveloped in a cloud of noxious gas!");
+        You("are enveloped in a cloud of %s!",
+            damage ? "noxious gas" : "steam");
 
     return cloud;
 }
