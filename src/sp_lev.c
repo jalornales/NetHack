@@ -163,11 +163,11 @@ int lspo_trap(lua_State *);
 int lspo_wall_property(lua_State *);
 int lspo_wallify(lua_State *);
 
-#define LEFT 1
-#define H_LEFT 2
-#define CENTER 3
-#define H_RIGHT 4
-#define RIGHT 5
+#define SPLEV_LEFT 1
+#define SPLEV_H_LEFT 2
+#define SPLEV_CENTER 3
+#define SPLEV_H_RIGHT 4
+#define SPLEV_RIGHT 5
 
 #define TOP 1
 #define BOTTOM 5
@@ -237,7 +237,7 @@ mapfrag_fromstr(char *str)
     mf->hei = 0;
     tmps = mf->data;
     while (tmps && *tmps) {
-        char *s1 = index(tmps, '\n');
+        char *s1 = strchr(tmps, '\n');
 
         if (mf->hei > MAP_Y_LIM) {
             free(mf->data);
@@ -1561,12 +1561,12 @@ create_room(
             xabs = (((xtmp - 1) * COLNO) / 5) + 1;
             yabs = (((ytmp - 1) * ROWNO) / 5) + 1;
             switch (xaltmp) {
-            case LEFT:
+            case SPLEV_LEFT:
                 break;
-            case RIGHT:
+            case SPLEV_RIGHT:
                 xabs += (COLNO / 5) - wtmp;
                 break;
-            case CENTER:
+            case SPLEV_CENTER:
                 xabs += ((COLNO / 5) - wtmp) / 2;
                 break;
             }
@@ -1576,7 +1576,7 @@ create_room(
             case BOTTOM:
                 yabs += (ROWNO / 5) - htmp;
                 break;
-            case CENTER:
+            case SPLEV_CENTER:
                 yabs += ((ROWNO / 5) - htmp) / 2;
                 break;
             }
@@ -3443,18 +3443,18 @@ int
 lspo_object(lua_State *L)
 {
     static object zeroobject = {
-	    { 0 },   /* Str_or_len name */
-	    0,       /* corpsenm */
-	    0, 0,    /* id, spe */
-	    0,       /* coord */
-	    0, 0,    /* coordxy x,y */
-	    0, 0,    /* class, containment */
-	    0,       /* curse_state */
-	    0,       /* quan */
-	    0,       /* buried */
-	    0,       /* lit */
-	    0, 0, 0, 0, 0, 0, 0, 0, /* eroded, locked, trapped, recharged,
-				       invis, greased, broken, achievment */
+            { 0 },   /* Str_or_len name */
+            0,       /* corpsenm */
+            0, 0,    /* id, spe */
+            0,       /* coord */
+            0, 0,    /* coordxy x,y */
+            0, 0,    /* class, containment */
+            0,       /* curse_state */
+            0,       /* quan */
+            0,       /* buried */
+            0,       /* lit */
+            0, 0, 0, 0, 0, 0, 0, 0, /* eroded, locked, trapped, recharged,
+                                       invis, greased, broken, achievment */
     };
 #if 0
     int nparams = 0;
@@ -3551,12 +3551,22 @@ lspo_object(lua_State *L)
         || tmpobj.id == CORPSE || tmpobj.id == TIN
         || tmpobj.id == FIGURINE) {
         struct permonst *pm = NULL;
+        boolean nonpmobj = FALSE;
         int i;
         char *montype = get_table_str_opt(L, "montype", NULL);
 
         if (montype) {
-            if (strlen(montype) == 1
-                && def_char_to_monclass(*montype) != MAXMCLASSES) {
+            if ((tmpobj.id == TIN && (!strcmpi(montype, "spinach")
+                /* id="tin",montype="empty" produces an empty tin */
+                                      || !strcmpi(montype, "empty")))
+                /* id="egg",montype="empty" produces a generic, unhatchable
+                   egg rather than an "empty egg" */
+                || (tmpobj.id == EGG && !strcmpi(montype, "empty"))) {
+                tmpobj.corpsenm = NON_PM;
+                tmpobj.spe = !strcmpi(montype, "spinach") ? 1 : 0;
+                nonpmobj = TRUE;
+            } else if (strlen(montype) == 1
+                       && def_char_to_monclass(*montype) != MAXMCLASSES) {
                 pm = mkclass(def_char_to_monclass(*montype),
                              G_NOGEN | G_IGNORE);
             } else {
@@ -3573,7 +3583,7 @@ lspo_object(lua_State *L)
             free((genericptr_t) montype);
             if (pm)
                 tmpobj.corpsenm = monsndx(pm);
-            else
+            else if (!nonpmobj)
                 nhl_error(L, "Unknown montype");
         }
         if (tmpobj.id == STATUE || tmpobj.id == CORPSE) {
@@ -3588,7 +3598,7 @@ lspo_object(lua_State *L)
             tmpobj.spe = lflags;
         } else if (tmpobj.id == EGG) {
             tmpobj.spe = get_table_boolean_opt(L, "laid_by_you", 0) ? 1 : 0;
-        } else {
+        } else if (!nonpmobj) { /* tmpobj.spe is already set for nonpmobj */
             tmpobj.spe = 0;
         }
     }
@@ -3882,12 +3892,12 @@ lspo_room(lua_State *L)
             "none", "random", NULL
         };
         static const int l_or_r2i[] = {
-            LEFT, H_LEFT, CENTER, H_RIGHT, RIGHT, -1, -1, -1
+            SPLEV_LEFT, SPLEV_H_LEFT, SPLEV_CENTER, SPLEV_H_RIGHT, SPLEV_RIGHT, -1, -1, -1
         };
         static const char *const top_or_bot[] = {
             "top", "center", "bottom", "none", "random", NULL
         };
-        static const int t_or_b2i[] = { TOP, CENTER, BOTTOM, -1, -1, -1 };
+        static const int t_or_b2i[] = { TOP, SPLEV_CENTER, BOTTOM, -1, -1, -1 };
         room tmproom;
         struct mkroom *tmpcr;
         lua_Integer rx, ry;
@@ -6435,12 +6445,12 @@ TODO: g.coder->croom needs to be updated
         "left", "half-left", "center", "half-right", "right", "none", NULL
     };
     static const int l_or_r2i[] = {
-        LEFT, H_LEFT, CENTER, H_RIGHT, RIGHT, -1, -1
+        SPLEV_LEFT, SPLEV_H_LEFT, SPLEV_CENTER, SPLEV_H_RIGHT, SPLEV_RIGHT, -1, -1
     };
     static const char *const top_or_bot[] = {
         "top", "center", "bottom", "none", NULL
     };
-    static const int t_or_b2i[] = { TOP, CENTER, BOTTOM, -1, -1 };
+    static const int t_or_b2i[] = { TOP, SPLEV_CENTER, BOTTOM, -1, -1 };
     int lr, tb;
     lua_Integer x = -1, y = -1;
     struct mapfragment *mf;
@@ -6457,7 +6467,7 @@ TODO: g.coder->croom needs to be updated
 
     if (argc == 1 && lua_type(L, 1) == LUA_TSTRING) {
         tmpstr = dupstr(luaL_checkstring(L, 1));
-        lr = tb = CENTER;
+        lr = tb = SPLEV_CENTER;
         mf = mapfrag_fromstr(tmpstr);
         free(tmpstr);
     } else {
@@ -6535,19 +6545,19 @@ TODO: g.coder->croom needs to be updated
     } else {
         /* place map starting at halign,valign */
         switch (lr) {
-        case LEFT:
+        case SPLEV_LEFT:
             g.xstart = splev_init_present ? 1 : 3;
             break;
-        case H_LEFT:
+        case SPLEV_H_LEFT:
             g.xstart = 2 + ((g.x_maze_max - 2 - g.xsize) / 4);
             break;
-        case CENTER:
+        case SPLEV_CENTER:
             g.xstart = 2 + ((g.x_maze_max - 2 - g.xsize) / 2);
             break;
-        case H_RIGHT:
+        case SPLEV_H_RIGHT:
             g.xstart = 2 + ((g.x_maze_max - 2 - g.xsize) * 3 / 4);
             break;
-        case RIGHT:
+        case SPLEV_RIGHT:
             g.xstart = g.x_maze_max - g.xsize - 1;
             break;
         }
@@ -6555,7 +6565,7 @@ TODO: g.coder->croom needs to be updated
         case TOP:
             g.ystart = 3;
             break;
-        case CENTER:
+        case SPLEV_CENTER:
             g.ystart = 2 + ((g.y_maze_max - 2 - g.ysize) / 2);
             break;
         case BOTTOM:

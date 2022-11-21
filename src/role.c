@@ -676,7 +676,7 @@ const struct Race races[] = {
         { 1, 0, 1, 0, 1, 0 }  /* Energy */
     },
     /* Array terminator */
-    { 0, 0, 0, 0 }
+    { 0, 0, 0, 0, { 0, 0 }, NON_PM }
 };
 
 /* Table of all genders */
@@ -1623,12 +1623,12 @@ plnamesuffix(void)
 
         /* Look for tokens delimited by '-' */
         sptr = g.plname + g.plnamelen;
-        if ((eptr = index(sptr, '-')) != (char *) 0)
+        if ((eptr = strchr(sptr, '-')) != (char *) 0)
             *eptr++ = '\0';
         while (eptr) {
             /* Isolate the next token */
             sptr = eptr;
-            if ((eptr = index(sptr, '-')) != (char *) 0)
+            if ((eptr = strchr(sptr, '-')) != (char *) 0)
                 *eptr++ = '\0';
 
             /* Try to match it to something */
@@ -1697,41 +1697,37 @@ role_selection_prolog(int which, winid where)
                 : !*g.plname ? not_yet : g.plname);
     putstr(where, 0, buf);
     Sprintf(buf, "%12s ", "role:");
-    Strcat(buf, (which == RS_ROLE) ? choosing : (r == ROLE_NONE)
-                                                    ? not_yet
-                                                    : (r == ROLE_RANDOM)
-                                                          ? rand_choice
-                                                          : roles[r].name.m);
+    Strcat(buf, (which == RS_ROLE) ? choosing
+                : (r == ROLE_NONE) ? not_yet
+                  : (r == ROLE_RANDOM) ? rand_choice
+                    : roles[r].name.m);
     if (r >= 0 && roles[r].name.f) {
         /* distinct female name [caveman/cavewoman, priest/priestess] */
         if (gend == 1)
             /* female specified; replace male role name with female one */
-            Sprintf(index(buf, ':'), ": %s", roles[r].name.f);
+            Sprintf(strchr(buf, ':'), ": %s", roles[r].name.f);
         else if (gend < 0)
             /* gender unspecified; append slash and female role name */
             Sprintf(eos(buf), "/%s", roles[r].name.f);
     }
     putstr(where, 0, buf);
     Sprintf(buf, "%12s ", "race:");
-    Strcat(buf, (which == RS_RACE) ? choosing : (c == ROLE_NONE)
-                                                    ? not_yet
-                                                    : (c == ROLE_RANDOM)
-                                                          ? rand_choice
-                                                          : races[c].noun);
+    Strcat(buf, (which == RS_RACE) ? choosing
+                : (c == ROLE_NONE) ? not_yet
+                  : (c == ROLE_RANDOM) ? rand_choice
+                    : races[c].noun);
     putstr(where, 0, buf);
     Sprintf(buf, "%12s ", "gender:");
-    Strcat(buf, (which == RS_GENDER) ? choosing : (gend == ROLE_NONE)
-                                                      ? not_yet
-                                                      : (gend == ROLE_RANDOM)
-                                                            ? rand_choice
-                                                            : genders[gend].adj);
+    Strcat(buf, (which == RS_GENDER) ? choosing
+                : (gend == ROLE_NONE) ? not_yet
+                  : (gend == ROLE_RANDOM) ? rand_choice
+                    : genders[gend].adj);
     putstr(where, 0, buf);
     Sprintf(buf, "%12s ", "alignment:");
-    Strcat(buf, (which == RS_ALGNMNT) ? choosing : (a == ROLE_NONE)
-                                                       ? not_yet
-                                                       : (a == ROLE_RANDOM)
-                                                             ? rand_choice
-                                                             : aligns[a].adj);
+    Strcat(buf, (which == RS_ALGNMNT) ? choosing
+                : (a == ROLE_NONE) ? not_yet
+                  : (a == ROLE_RANDOM) ? rand_choice
+                    : aligns[a].adj);
     putstr(where, 0, buf);
 }
 
@@ -2076,6 +2072,19 @@ Goodbye(void)
     default:
         return "Goodbye";
     }
+}
+
+/* if pmindex is any player race (not necessarily the hero's),
+   return a pointer to the races[] entry for it */
+const struct Race *
+character_race(short pmindex)
+{
+    const struct Race *r;
+
+    for (r = races; r->mnum >= LOW_PM; ++r)
+        if (r->mnum == pmindex)
+            return r;
+    return (const struct Race *) NULL;
 }
 
 /* role.c */

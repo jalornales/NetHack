@@ -6,6 +6,7 @@
 ifdef CROSS_TO_MSDOS
 #
 $(TARGETPFX)msdos.o : ../sys/msdos/msdos.c $(HACK_H)
+$(TARGETPFX)font.o : ../sys/msdos/font.c ../sys/msdos/font.h $(HACK_H)
 $(TARGETPFX)pckeys.o : ../sys/msdos/pckeys.c $(HACK_H)
 $(TARGETPFX)pctiles.o : ../sys/msdos/pctiles.c ../sys/msdos/portio.h $(HACK_H)
 $(TARGETPFX)video.o : ../sys/msdos/video.c ../sys/msdos/portio.h $(HACK_H)
@@ -14,7 +15,7 @@ $(TARGETPFX)vidtxt.o : ../sys/msdos/vidtxt.c ../sys/msdos/portio.h \
 $(TARGETPFX)vidvga.o : ../sys/msdos/vidvga.c ../sys/msdos/portio.h \
 		../win/share/tile.h ../include/tileset.h $(HACK_H)
 $(TARGETPFX)vidvesa.o : ../sys/msdos/vidvesa.c ../sys/msdos/portio.h \
-		../win/share/tile.h ../include/tileset.h $(HACK_H)
+		../win/share/tile.h ../include/tileset.h ../sys/msdos/font.h $(HACK_H)
 $(TARGETPFX)vidstub.o : ../sys/msdos/vidvesa.c ../sys/msdos/portio.h \
 		$(HACK_H)
 $(TARGETPFX)tile.o : tile.c
@@ -24,29 +25,25 @@ $(TARGETPFX)exceptn.o : ../lib/djgpp/djgpp-patch/src/libc/go32/exceptn.S
 $(GAMEBIN) : $(HOBJ) $(LUACROSSLIB)
 	$(TARGET_LINK) $(TARGET_LFLAGS) -o $(GAMEBIN) \
 	$(HOBJ) $(WINLIB) $(TARGET_LIBS)
-$(FONTDIR)/ter-u16b.psf: $(FONTTOP)/ter-u16b.bdf $(FONTDIR)/makefont.lua $(LUABIN)
-	$(LUABIN) $(FONTDIR)/makefont.lua $(FONTTOP)/ter-u16b.bdf $@
-$(FONTDIR)/ter-u16v.psf: $(FONTTOP)/ter-u16v.bdf $(FONTDIR)/makefont.lua $(LUABIN)
-	$(LUABIN) $(FONTDIR)/makefont.lua $(FONTTOP)/ter-u16v.bdf $@
-$(FONTDIR)/ter-u18b.psf: $(FONTTOP)/ter-u18b.bdf $(FONTDIR)/makefont.lua $(LUABIN)
-	$(LUABIN) $(FONTDIR)/makefont.lua $(FONTTOP)/ter-u18b.bdf $@
-$(FONTDIR)/ter-u20b.psf: $(FONTTOP)/ter-u20b.bdf $(FONTDIR)/makefont.lua $(LUABIN)
-	$(LUABIN) $(FONTDIR)/makefont.lua $(FONTTOP)/ter-u20b.bdf $@
-$(FONTDIR)/ter-u22b.psf: $(FONTTOP)/ter-u22b.bdf $(FONTDIR)/makefont.lua $(LUABIN)
-	$(LUABIN) $(FONTDIR)/makefont.lua $(FONTTOP)/ter-u22b.bdf $@
-$(FONTDIR)/ter-u24b.psf: $(FONTTOP)/ter-u24b.bdf $(FONTDIR)/makefont.lua $(LUABIN)
-	$(LUABIN) $(FONTDIR)/makefont.lua $(FONTTOP)/ter-u24b.bdf $@
-$(FONTDIR)/ter-u28b.psf: $(FONTTOP)/ter-u28b.bdf $(FONTDIR)/makefont.lua $(LUABIN)
-	$(LUABIN) $(FONTDIR)/makefont.lua $(FONTTOP)/ter-u28b.bdf $@
-$(FONTDIR)/ter-u32b.psf: $(FONTTOP)/ter-u32b.bdf $(FONTDIR)/makefont.lua $(LUABIN)
-	$(LUABIN) $(FONTDIR)/makefont.lua $(FONTTOP)/ter-u32b.bdf $@
+$(DOSFONT)/ter-u16b.psf: $(FONTTOP)/ter-u16b.bdf $(DOSFONT)/nh-u16b.bdf $(DOSFONT)/makefont.lua $(LUABIN)
+	$(LUABIN) $(DOSFONT)/makefont.lua $(FONTTOP)/ter-u16b.bdf $(DOSFONT)/nh-u16b.bdf $@
+$(DOSFONT)/ter-u16v.psf: $(FONTTOP)/ter-u16v.bdf $(DOSFONT)/nh-u16v.bdf $(DOSFONT)/makefont.lua $(LUABIN)
+	$(LUABIN) $(DOSFONT)/makefont.lua $(FONTTOP)/ter-u16v.bdf $(DOSFONT)/nh-u16v.bdf $@
+$(DOSFONT)/ter-u18b.psf: $(FONTTOP)/ter-u18b.bdf $(DOSFONT)/nh-u18b.bdf $(DOSFONT)/makefont.lua $(LUABIN)
+	$(LUABIN) $(DOSFONT)/makefont.lua $(FONTTOP)/ter-u18b.bdf $(DOSFONT)/nh-u18b.bdf $@
+$(DOSFONT)/ter-u20b.psf: $(FONTTOP)/ter-u20b.bdf $(DOSFONT)/nh-u20b.bdf $(DOSFONT)/makefont.lua $(LUABIN)
+	$(LUABIN) $(DOSFONT)/makefont.lua $(FONTTOP)/ter-u20b.bdf $(DOSFONT)/nh-u20b.bdf $@
+$(DOSFONT)/ter-u22b.psf: $(FONTTOP)/ter-u22b.bdf $(DOSFONT)/nh-u22b.bdf $(DOSFONT)/makefont.lua $(LUABIN)
+	$(LUABIN) $(DOSFONT)/makefont.lua $(FONTTOP)/ter-u22b.bdf $(DOSFONT)/nh-u22b.bdf $@
+$(DOSFONT)/ter-u24b.psf: $(FONTTOP)/ter-u24b.bdf $(DOSFONT)/nh-u24b.bdf $(DOSFONT)/makefont.lua $(LUABIN)
+	$(LUABIN) $(DOSFONT)/makefont.lua $(FONTTOP)/ter-u24b.bdf $(DOSFONT)/nh-u24b.bdf $@
+$(DOSFONT)/ter-u28b.psf: $(FONTTOP)/ter-u28b.bdf $(DOSFONT)/nh-u28b.bdf $(DOSFONT)/makefont.lua $(LUABIN)
+	$(LUABIN) $(DOSFONT)/makefont.lua $(FONTTOP)/ter-u28b.bdf $(DOSFONT)/nh-u28b.bdf $@
+$(DOSFONT)/ter-u32b.psf: $(FONTTOP)/ter-u32b.bdf $(DOSFONT)/nh-u32b.bdf $(DOSFONT)/makefont.lua $(LUABIN)
+	$(LUABIN) $(DOSFONT)/makefont.lua $(FONTTOP)/ter-u32b.bdf $(DOSFONT)/nh-u32b.bdf $@
 #
 .PHONY: dodata dospkg dosfonts
-ifdef WANT_DOSVGA
 dosfonts: $(FONTTARGETS)
-else
-dosfonts:
-endif
 dospkg: dodata dosfonts $(GAMEBIN) $(TARGETPFX)recover.exe ../dat/nhtiles.bmp
 	$(TARGET_STUBEDIT) $(GAMEBIN) minstack=2048K
 	mkdir -p $(TARGETPFX)pkg
@@ -59,16 +56,14 @@ dospkg: dodata dosfonts $(GAMEBIN) $(TARGETPFX)recover.exe ../dat/nhtiles.bmp
 	cp ../sys/share/NetHack.cnf $(TARGETPFX)pkg/NETHACK.CNF
 	cp ../sys/msdos/sysconf $(TARGETPFX)pkg/SYSCONF
 	cp ../doc/nethack.txt $(TARGETPFX)pkg/NETHACK.TXT
-ifdef WANT_DOSVGA
-	cp ../sys/msdos/fonts/ter-u16b.psf $(TARGETPFX)pkg/TER-U16B.PSF
-	cp ../sys/msdos/fonts/ter-u16v.psf $(TARGETPFX)pkg/TER-U16V.PSF
-	cp ../sys/msdos/fonts/ter-u18b.psf $(TARGETPFX)pkg/TER-U18B.PSF
-	cp ../sys/msdos/fonts/ter-u20b.psf $(TARGETPFX)pkg/TER-U20B.PSF
-	cp ../sys/msdos/fonts/ter-u22b.psf $(TARGETPFX)pkg/TER-U22B.PSF
-	cp ../sys/msdos/fonts/ter-u24b.psf $(TARGETPFX)pkg/TER-U24B.PSF
-	cp ../sys/msdos/fonts/ter-u28b.psf $(TARGETPFX)pkg/TER-U28B.PSF
-	cp ../sys/msdos/fonts/ter-u32b.psf $(TARGETPFX)pkg/TER-U32B.PSF
-endif
+	cp $(DOSFONT)/ter-u16b.psf $(TARGETPFX)pkg/TER-U16B.PSF
+	cp $(DOSFONT)/ter-u16v.psf $(TARGETPFX)pkg/TER-U16V.PSF
+	cp $(DOSFONT)/ter-u18b.psf $(TARGETPFX)pkg/TER-U18B.PSF
+	cp $(DOSFONT)/ter-u20b.psf $(TARGETPFX)pkg/TER-U20B.PSF
+	cp $(DOSFONT)/ter-u22b.psf $(TARGETPFX)pkg/TER-U22B.PSF
+	cp $(DOSFONT)/ter-u24b.psf $(TARGETPFX)pkg/TER-U24B.PSF
+	cp $(DOSFONT)/ter-u28b.psf $(TARGETPFX)pkg/TER-U28B.PSF
+	cp $(DOSFONT)/ter-u32b.psf $(TARGETPFX)pkg/TER-U32B.PSF
 	cp  ../lib/djgpp/cwsdpmi/bin/CWSDPMI.EXE $(TARGETPFX)pkg/CWSDPMI.EXE
 	-touch $(TARGETPFX)pkg/RECORD
 	cd $(TARGETPFX)pkg ; zip -9 ../NH370DOS.ZIP * ; cd ../../..

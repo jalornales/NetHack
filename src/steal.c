@@ -25,11 +25,7 @@ equipname(register struct obj* otmp)
 long
 somegold(long lmoney)
 {
-#ifdef LINT /* long conv. ok */
-    int igold = 0;
-#else
     int igold = (lmoney >= (long) LARGEST_INT) ? LARGEST_INT : (int) lmoney;
-#endif
 
     if (igold < 50)
         ; /* all gold */
@@ -689,7 +685,7 @@ mdrop_obj(
     if (unwornmask && mon->mtame && (unwornmask & W_SADDLE) != 0L
         && !obj->unpaid && costly_spot(omx, omy)
         /* being at costly_spot guarantees lev->roomno is not 0 */
-        && index(in_rooms(u.ux, u.uy, SHOPBASE), levl[omx][omy].roomno)) {
+        && strchr(in_rooms(u.ux, u.uy, SHOPBASE), levl[omx][omy].roomno)) {
         obj->no_charge = 1;
     }
     /* obj_no_longer_held(obj); -- done by place_object */
@@ -703,7 +699,7 @@ mdrop_obj(
        throws rider, possibly inflicting fatal damage and producing bones; this
        is why we had to call extract_from_minvent() with do_intrinsics=FALSE */
     if (!DEADMONSTER(mon) && unwornmask)
-        update_mon_intrinsics(mon, obj, FALSE, TRUE);
+        update_mon_extrinsics(mon, obj, FALSE, TRUE);
 }
 
 /* some monsters bypass the normal rules for moving between levels or

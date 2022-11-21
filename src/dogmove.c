@@ -312,12 +312,8 @@ dog_eat(struct monst *mtmp,
     /* It's a reward if it's DOGFOOD and the player dropped/threw it.
        We know the player had it if invlet is set. -dlc */
     if (dogfood(mtmp, obj) == DOGFOOD && obj->invlet)
-#ifdef LINT
-        edog->apport = 0;
-#else
         edog->apport += (int) (200L / ((long) edog->dropdist + g.moves
                                        - edog->droptime));
-#endif
     if (mtmp->data == &mons[PM_RUST_MONSTER] && obj->oerodeproof) {
         /* The object's rustproofing is gone now */
         if (obj->unpaid)
@@ -459,7 +455,7 @@ dog_invent(struct monst *mtmp, struct edog *edog, int udist)
             }
     } else {
         if ((obj = g.level.objects[omx][omy]) != 0
-            && !index(nofetch, obj->oclass)
+            && !strchr(nofetch, obj->oclass)
 #ifdef MAIL_STRUCTURES
             && obj->otyp != SCR_MAIL
 #endif

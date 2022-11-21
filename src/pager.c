@@ -32,6 +32,7 @@ static void dispfile_optionfile(void);
 static void dispfile_optmenu(void);
 static void dispfile_license(void);
 static void dispfile_debughelp(void);
+static void dispfile_usagehelp(void);
 static void hmenu_doextversion(void);
 static void hmenu_dohistory(void);
 static void hmenu_dowhatis(void);
@@ -768,7 +769,7 @@ checkfile(char *inp, struct permonst *pm, boolean user_typed_name,
     /* remove enchantment ("+0 aklys"); [for 3.6.0 and earlier, this wasn't
        needed because looking at items on the map used xname() rather than
        doname() hence known enchantment was implicitly suppressed] */
-    if (*dbase_str && index("+-", dbase_str[0]) && digit(dbase_str[1])) {
+    if (*dbase_str && strchr("+-", dbase_str[0]) && digit(dbase_str[1])) {
         ++dbase_str; /* skip sign */
         while (digit(*dbase_str))
             ++dbase_str;
@@ -812,7 +813,7 @@ checkfile(char *inp, struct permonst *pm, boolean user_typed_name,
         if (alt && (!strncmpi(alt, "a ", 2)
                     || !strncmpi(alt, "an ", 3)
                     || !strncmpi(alt, "the ", 4)))
-            alt = index(alt, ' ') + 1;
+            alt = strchr(alt, ' ') + 1;
         /* remove charges or "(lit)" or wizmode "(N aum)" */
         if ((ep = strstri(dbase_str, " (")) != 0 && ep > dbase_str)
             *ep = '\0';
@@ -854,7 +855,7 @@ checkfile(char *inp, struct permonst *pm, boolean user_typed_name,
                     /* a number indicates the end of current entry */
                     skipping_entry = FALSE;
                 } else if (!skipping_entry) {
-                    if (!(ep = index(buf, '\n')))
+                    if (!(ep = strchr(buf, '\n')))
                         goto bad_data_file;
                     (void) strip_newline((ep > buf) ? ep - 1 : ep);
                     /* if we match a key that begins with "~", skip
@@ -920,7 +921,7 @@ checkfile(char *inp, struct permonst *pm, boolean user_typed_name,
                         if (!dlb_fgets(tabbuf, BUFSZ, fp))
                             goto bad_data_file;
                         tp = tabbuf;
-                        if (!index(tp, '\n'))
+                        if (!strchr(tp, '\n'))
                             goto bad_data_file;
                         (void) strip_newline(tp);
                         /* text in this file is indented with one tab but
@@ -940,7 +941,7 @@ checkfile(char *inp, struct permonst *pm, boolean user_typed_name,
                         /* if a tab after the leading one is found,
                            convert tabs into spaces; the attributions
                            at the end of quotes typically have them */
-                        if (index(tp, '\t') != 0)
+                        if (strchr(tp, '\t') != 0)
                             (void) tabexpand(tp);
                         putstr(datawin, 0, tp);
                     }
@@ -2050,7 +2051,7 @@ whatdoes_cond(char *buf, struct wd_stack_frame *stack, int *depth, int lnum)
         if ((neg = (*buf == '!')) != 0)
             if (*++buf == ' ')
                 ++buf;
-        p = index(buf, '='), q = index(buf, ':');
+        p = strchr(buf, '='), q = strchr(buf, ':');
         if (!p || (q && q < p))
             p = q;
         if (p) { /* we have a value specified */
@@ -2073,7 +2074,7 @@ whatdoes_cond(char *buf, struct wd_stack_frame *stack, int *depth, int lnum)
                                     : (-1 * iflags.num_pad_mode); /* -1..0 */
                 newcond = FALSE;
                 for (; p; p = q) {
-                    q = index(p, ',');
+                    q = strchr(p, ',');
                     if (q)
                         *q++ = '\0';
                     if (atoi(p) == np) {
@@ -2190,7 +2191,7 @@ dowhatdoes_core(char q, char *cbuf)
     cond = stack[0].active = 1;
     while (dlb_fgets(buf, sizeof buf, fp)) {
         ++lnum;
-        if (buf[0] == '&' && buf[1] && index("?:.#", buf[1])) {
+        if (buf[0] == '&' && buf[1] && strchr("?:.#", buf[1])) {
             cond = whatdoes_cond(buf, stack, &depth, lnum);
             continue;
         }
@@ -2202,7 +2203,7 @@ dowhatdoes_core(char q, char *cbuf)
                  : (ctrl ? buf[0] == '^' && highc(buf[1]) == q
                          : buf[0] == q)) {
             (void) strip_newline(buf);
-            if (index(buf, '\t'))
+            if (strchr(buf, '\t'))
                 (void) tabexpand(buf);
             if (meta && ctrl && buf[4] == ' ') {
                 (void) strncpy(buf, "M-^?    ", 8);
@@ -2265,7 +2266,7 @@ dowhatdoes(void)
 #endif
     reslt = dowhatdoes_core(q, bufr);
     if (reslt) {
-        char *p = index(reslt, '\n'); /* 'm' prefix has two lines of output */
+        char *p = strchr(reslt, '\n'); /* 'm' prefix has two lines of output */
 
         if (q == '&' || q == '?')
             whatdoes_help();
@@ -2356,6 +2357,12 @@ dispfile_debughelp(void)
 }
 
 static void
+dispfile_usagehelp(void)
+{
+    display_file(USAGEHELP, TRUE);
+}
+
+static void
 hmenu_doextversion(void)
 {
     (void) doextversion();
@@ -2389,6 +2396,7 @@ static void
 domenucontrols(void)
 {
     winid cwin = create_nhwindow(NHW_TEXT);
+
     show_menu_controls(cwin, FALSE);
     display_nhwindow(cwin, FALSE);
     destroy_nhwindow(cwin);
@@ -2411,6 +2419,7 @@ static const struct {
     { dokeylist, "Full list of keyboard commands." },
     { hmenu_doextlist, "List of extended commands." },
     { domenucontrols, "List menu control keys." },
+    { dispfile_usagehelp, "Description of NetHack's command line." },
     { dispfile_license, "The NetHack license." },
     { docontact, "Support information." },
 #ifdef PORT_HELP
@@ -2440,6 +2449,9 @@ dohelp(void)
     for (i = 0; help_menu_items[i].text; i++) {
         if (!wizard && help_menu_items[i].f == dispfile_debughelp)
             continue;
+        if (sysopt.hideusage && help_menu_items[i].f == dispfile_usagehelp)
+            continue;
+
         if (help_menu_items[i].text[0] == '%') {
             Sprintf(helpbuf, help_menu_items[i].text, PORT_ID);
         } else if (help_menu_items[i].f == dispfile_optmenu) {

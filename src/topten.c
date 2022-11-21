@@ -248,7 +248,7 @@ readentry(FILE* rfile, struct toptenentry* tt)
         if (!fgets(inbuf, sizeof inbuf, rfile)) {
             /* sscanf will fail and tt->points will be set to 0 */
             *inbuf = '\0';
-        } else if (!index(inbuf, '\n')) {
+        } else if (!strchr(inbuf, '\n')) {
             Strcpy(&inbuf[sizeof inbuf - 2], "\n");
             discardexcess(rfile);
         }
@@ -963,7 +963,7 @@ outentry(int rank, struct toptenentry* t1, boolean so)
                 !strncmp(" (", t1->death + 7, 2) ? t1->death + 7 + 2 : "",
                 t1->maxlvl);
         /* fixup for closing paren in "escaped... with...Amulet)[max..." */
-        if ((bp = index(linebuf, ')')) != 0)
+        if ((bp = strchr(linebuf, ')')) != 0)
             *bp = (t1->deathdnum == astral_level.dnum) ? '\0' : ' ';
         second_line = FALSE;
     } else if (!strncmp("ascended", t1->death, 8)) {
@@ -1099,31 +1099,36 @@ score_wanted(
     const char **players,
     int uid)
 {
+    const char *arg, *nxt;
     int i;
 
-    if (current_ver
-        && (t1->ver_major != VERSION_MAJOR || t1->ver_minor != VERSION_MINOR
-            || t1->patchlevel != PATCHLEVEL))
+    if (current_ver && (t1->ver_major != VERSION_MAJOR
+                        || t1->ver_minor != VERSION_MINOR
+                        || t1->patchlevel != PATCHLEVEL))
         return 0;
 
     if (sysopt.pers_is_uid && !playerct && t1->uid == uid)
         return 1;
 
     for (i = 0; i < playerct; i++) {
-        if (players[i][0] == '-' && index("pr", players[i][1])
-            && players[i][2] == 0 && i + 1 < playerct) {
-            const char *arg = players[i + 1];
-            if ((players[i][1] == 'p'
-                 && str2role(arg) == str2role(t1->plrole))
-                || (players[i][1] == 'r'
-                    && str2race(arg) == str2race(t1->plrace)))
+        arg = players[i];
+        if (arg[0] == '-' && arg[1] == 'u' && arg[2] != '\0')
+            arg += 2; /* handle '-uname' */
+
+        if (arg[0] == '-' && strchr("pru", arg[1]) && !arg[2]
+            && i + 1 < playerct) {
+            nxt = players[i + 1];
+            if ((arg[1] == 'p' && str2role(nxt) == str2role(t1->plrole))
+                || (arg[1] == 'r' && str2race(nxt) == str2race(t1->plrace))
+                /* handle '-u name' */
+                || (arg[1] == 'u' && (!strcmp(nxt, "all")
+                                      || !strncmp(t1->name, nxt, NAMSZ))))
                 return 1;
             i++;
-        } else if (strcmp(players[i], "all") == 0
-                   || strncmp(t1->name, players[i], NAMSZ) == 0
-                   || (players[i][0] == '-' && players[i][1] == t1->plrole[0]
-                       && players[i][2] == 0)
-                   || (digit(players[i][0]) && rank <= atoi(players[i])))
+        } else if (!strcmp(arg, "all")
+                   || !strncmp(t1->name, arg, NAMSZ)
+                   || (arg[0] == '-' && arg[1] == t1->plrole[0] && !arg[2])
+                   || (digit(arg[0]) && rank <= atoi(arg)))
             return 1;
     }
     return 0;
@@ -1138,18 +1143,21 @@ score_wanted(
 void
 prscore(int argc, char **argv)
 {
-    const char **players;
-    int playerct, rank;
-    boolean current_ver = TRUE, init_done = FALSE;
+    const char **players, *player0;
+    int i, playerct, rank;
     register struct toptenentry *t1;
     FILE *rfile;
-    boolean match_found = FALSE;
-    register int i;
-    char pbuf[BUFSZ];
+    char pbuf[BUFSZ], *p;
+    unsigned ln;
     int uid = -1;
-    const char *player0;
+    boolean current_ver = TRUE, init_done = FALSE, match_found = FALSE;
 
-    if (argc < 2 || strncmp(argv[1], "-s", 2)) {
+    /* expect "-s" or "--scores"; "-s<anything> is accepted */
+    ln = (argc < 2) ? 0U
+         : ((p = strchr(argv[1], ' ')) != 0) ? (unsigned) (p - argv[1])
+           : Strlen(argv[1]);
+    if (ln < 2 || (strncmp(argv[1], "-s", 2)
+                   && strcmp(argv[1], "--scores"))) {
         raw_printf("prscore: bad arguments (%d)", argc);
         return;
     }
@@ -1177,12 +1185,16 @@ prscore(int argc, char **argv)
         init_done = TRUE;
     }
 
-    if (!argv[1][2]) { /* plain "-s" */
+    /* to get here, argv[1] either starts with "-s" or is "--scores" without
+       trailing stuff; for "-s<anything>" treat <anything> as separate arg */
+    if (argv[1][1] == '-' || !argv[1][2]) {
         argc--;
         argv++;
-    } else
+    } else { /* concatenated arg string; use up "-s" but keep argc,argv */
         argv[1] += 2;
-
+    }
+    /* -v doesn't take a version number arg; it means 'current vers only';
+       unlike -s, we don't accept "-v<anything>" for non-empty <anything> */
     if (argc > 1 && !strcmp(argv[1], "-v")) {
         current_ver = FALSE;
         argc--;
@@ -1197,11 +1209,8 @@ prscore(int argc, char **argv)
         } else {
             player0 = g.plname;
             if (!*player0)
-#ifdef AMIGA
-                player0 = "all"; /* single user system */
-#else
-                player0 = "hackplayer";
-#endif
+                player0 = "all"; /* if no plname[], show all scores
+                                  * (possibly filtered by '-v') */
             playerct = 1;
             players = &player0;
         }
@@ -1212,7 +1221,7 @@ prscore(int argc, char **argv)
     raw_print("");
 
     t1 = tt_head = newttentry();
-    for (rank = 1;; rank++) {
+    for (rank = 1; ; rank++) {
         readentry(rfile, t1);
         if (t1->points == 0)
             break;
@@ -1239,12 +1248,21 @@ prscore(int argc, char **argv)
     } else {
         Sprintf(pbuf, "Cannot find any %sentries for ",
                 current_ver ? "current " : "");
-        if (playerct < 1)
-            Strcat(pbuf, "you.");
-        else {
+        if (playerct < 1) {
+            Strcat(pbuf, "you");
+        } else {
+            /* minor bug: 'nethack -s -u ziggy' will say "any of"
+               even though the '-u' doesn't indicate multiple names */
             if (playerct > 1)
                 Strcat(pbuf, "any of ");
             for (i = 0; i < playerct; i++) {
+                /* accept '-u name' and '-uname' as well as just 'name'
+                   so skip '-u' for the none-found feedback */
+                if (!strncmp(players[i], "-u", 2)) {
+                    if (!players[i][2])
+                        continue;
+                    players[i] += 2;
+                }
                 /* stop printing players if there are too many to fit */
                 if (strlen(pbuf) + strlen(players[i]) + 2 >= BUFSZ) {
                     if (strlen(pbuf) < BUFSZ - 4)
@@ -1255,7 +1273,7 @@ prscore(int argc, char **argv)
                 }
                 Strcat(pbuf, players[i]);
                 if (i < playerct - 1) {
-                    if (players[i][0] == '-' && index("pr", players[i][1])
+                    if (players[i][0] == '-' && strchr("pr", players[i][1])
                         && players[i][2] == 0)
                         Strcat(pbuf, " ");
                     else
@@ -1263,9 +1281,11 @@ prscore(int argc, char **argv)
                 }
             }
         }
+        /* append end-of-sentence punctuation if there is room */
+        if (strlen(pbuf) < BUFSZ - 1)
+            Strcat(pbuf, ".");
         raw_print(pbuf);
         raw_printf("Usage: %s -s [-v] <playertypes> [maxrank] [playernames]",
-
                    g.hname);
         raw_printf("Player types are: [-p role] [-r race]");
     }
@@ -1377,7 +1397,7 @@ static void
 nsb_mung_line(p)
 char *p;
 {
-    while ((p = index(p, ' ')) != 0)
+    while ((p = strchr(p, ' ')) != 0)
         *p = '|';
 }
 
@@ -1385,7 +1405,7 @@ static void
 nsb_unmung_line(p)
 char *p;
 {
-    while ((p = index(p, '|')) != 0)
+    while ((p = strchr(p, '|')) != 0)
         *p = ' ';
 }
 #endif /* NO_SCAN_BRACK */

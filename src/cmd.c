@@ -17,6 +17,7 @@
 #endif
 #if (NH_DEVEL_STATUS != NH_STATUS_RELEASED) || defined(DEBUG)
 static int wiz_display_macros(void);
+static int wiz_mon_diff(void);
 #endif
 
 #ifdef DUMB /* stuff commented out in extern.h, but needed here */
@@ -1430,7 +1431,7 @@ wiz_flip_level(void)
     if (wizard) {
         char c = yn_function(prmpt, choices, '\0', TRUE);
 
-        if (c && index(choices, c)) {
+        if (c && strchr(choices, c)) {
             c -= '0';
 
             if (!c)
@@ -1954,16 +1955,12 @@ static int
 wiz_intrinsic(void)
 {
     if (wizard) {
-        extern const struct propname {
-            int prop_num;
-            const char *prop_name;
-        } propertynames[]; /* timeout.c */
         static const char wizintrinsic[] = "#wizintrinsic";
         static const char fmt[] = "You are%s %s.";
         winid win;
         anything any;
         char buf[BUFSZ];
-        int i, j, n, p, amt, typ;
+        int i, j, n, amt, typ, p = 0;
         long oldtimeout, newtimeout;
         const char *propname;
         menu_item *pick_list = (menu_item *) 0;
@@ -1981,8 +1978,7 @@ wiz_intrinsic(void)
             add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr, buf,
                      MENU_ITEMFLAGS_NONE);
         }
-        for (i = 0; (propname = propertynames[i].prop_name) != 0; ++i) {
-            p = propertynames[i].prop_num;
+        for (i = 0; (propname = property_by_index(i, &p)) != 0; ++i) {
             if (p == HALLUC_RES) {
                 /* Grayswandir vs hallucination; ought to be redone to
                    use u.uprops[HALLUC].blocked instead of being treated
@@ -2013,7 +2009,7 @@ wiz_intrinsic(void)
 
         for (j = 0; j < n; ++j) {
             i = pick_list[j].item.a_int - 1; /* -1: reverse +1 above */
-            p = propertynames[i].prop_num;
+            propname = property_by_index(i, &p);
             oldtimeout = u.uprops[p].intrinsic & TIMEOUT;
             amt = (pick_list[j].count == -1L) ? DEFAULT_TIMEOUT_INCR
                                               : (int) pick_list[j].count;
@@ -2086,7 +2082,7 @@ wiz_intrinsic(void)
                 if (p != GLIB)
                     incr_itimeout(&u.uprops[p].intrinsic, amt);
                 g.context.botl = 1; /* have pline() do a status update */
-                pline("Timeout for %s %s %d.", propertynames[i].prop_name,
+                pline("Timeout for %s %s %d.", propname,
                       oldtimeout ? "increased by" : "set to", amt);
                 break;
             }
@@ -2723,8 +2719,8 @@ struct ext_func_tab extcmdlist[] = {
     { '<',    "up", "go up a staircase",
               /* (see comment for dodown() above */
               doup, CMD_M_PREFIX, NULL },
-    { '\0',   "vanquished", "list vanquished monsters",
-              dovanquished, IFBURIED | AUTOCOMPLETE | WIZMODECMD, NULL },
+    { M('V'), "vanquished", "list vanquished monsters",
+              dovanquished, IFBURIED | AUTOCOMPLETE | CMD_M_PREFIX, NULL },
     { M('v'), "version",
               "list compile time options for this version of NetHack",
               doextversion, IFBURIED | AUTOCOMPLETE | GENERALCMD, NULL },
@@ -2780,6 +2776,10 @@ struct ext_func_tab extcmdlist[] = {
               wiz_makemap, IFBURIED | WIZMODECMD, NULL },
     { C('f'), "wizmap", "map the level",
               wiz_map, IFBURIED | WIZMODECMD, NULL },
+#if (NH_DEVEL_STATUS != NH_STATUS_RELEASED) || defined(DEBUG)
+    { '\0',   "wizmondiff", "validate the difficulty ratings of monsters",
+              wiz_mon_diff, IFBURIED | AUTOCOMPLETE | WIZMODECMD, NULL },
+#endif
     { '\0',   "wizrumorcheck", "verify rumor boundaries",
               wiz_rumor_check, IFBURIED | AUTOCOMPLETE | WIZMODECMD, NULL },
     { '\0',   "wizseenv", "show map locations' seen vectors",
@@ -3692,8 +3692,12 @@ count_obj(struct obj *chain, long *total_count, long *total_size,
 DISABLE_WARNING_FORMAT_NONLITERAL  /* RESTORE_WARNING follows show_wiz_stats */
 
 static void
-obj_chain(winid win, const char *src, struct obj *chain, boolean force,
-          long *total_count, long *total_size)
+obj_chain(
+    winid win,
+    const char *src,
+    struct obj *chain,
+    boolean force,
+    long *total_count, long *total_size)
 {
     char buf[BUFSZ];
     long count = 0L, size = 0L;
@@ -3709,8 +3713,11 @@ obj_chain(winid win, const char *src, struct obj *chain, boolean force,
 }
 
 static void
-mon_invent_chain(winid win, const char *src, struct monst *chain,
-                 long *total_count, long *total_size)
+mon_invent_chain(
+    winid win,
+    const char *src,
+    struct monst *chain,
+    long *total_count, long *total_size)
 {
     char buf[BUFSZ];
     long count = 0, size = 0;
@@ -3728,8 +3735,10 @@ mon_invent_chain(winid win, const char *src, struct monst *chain,
 }
 
 static void
-contained_stats(winid win, const char *src, long *total_count,
-                long *total_size)
+contained_stats(
+    winid win,
+    const char *src,
+    long *total_count, long *total_size)
 {
     char buf[BUFSZ];
     long count = 0, size = 0;
@@ -3782,8 +3791,12 @@ size_monst(struct monst *mtmp, boolean incl_wsegs)
 }
 
 static void
-mon_chain(winid win, const char *src, struct monst *chain,
-          boolean force, long *total_count, long *total_size)
+mon_chain(
+    winid win,
+    const char *src,
+    struct monst *chain,
+    boolean force,
+    long *total_count, long *total_size)
 {
     char buf[BUFSZ];
     long count, size;
@@ -3805,7 +3818,9 @@ mon_chain(winid win, const char *src, struct monst *chain,
 }
 
 static void
-misc_stats(winid win, long *total_count, long *total_size)
+misc_stats(
+    winid win,
+    long *total_count, long *total_size)
 {
     char buf[BUFSZ], hdrbuf[QBUFSZ];
     long count, size;
@@ -4007,6 +4022,8 @@ wiz_show_stats(void)
     return ECMD_OK;
 }
 
+RESTORE_WARNING_FORMAT_NONLITERAL
+
 #if (NH_DEVEL_STATUS != NH_STATUS_RELEASED) || defined(DEBUG)
 /* the #wizdispmacros command
  * Verify that some display macros are returning sane values */
@@ -4028,9 +4045,8 @@ wiz_display_macros(void)
             if (test == no_glyph) {
                 if (!trouble++)
                     putstr(win, 0, display_issues);
-                Sprintf(buf,
-                        "glyph_is_cmap() / glyph_to_cmap(glyph=%d)"
-                        " sync failure, returned NO_GLYPH (%d)",
+                Sprintf(buf, "glyph_is_cmap() / glyph_to_cmap(glyph=%d)"
+                             " sync failure, returned NO_GLYPH (%d)",
                         glyph, test);
                  putstr(win, 0, buf);
             }
@@ -4048,7 +4064,7 @@ wiz_display_macros(void)
                 if (!trouble++)
                     putstr(win, 0, display_issues);
                 Sprintf(buf, "glyph_to_cmap(glyph=%d) returns %d"
-                        " exceeds defsyms[%d] bounds (MAX_GLYPH = %d)",
+                             " exceeds defsyms[%d] bounds (MAX_GLYPH = %d)",
                         glyph, test, SIZE(defsyms), max_glyph);
                 putstr(win, 0, buf);
             }
@@ -4061,7 +4077,7 @@ wiz_display_macros(void)
                 if (!trouble++)
                     putstr(win, 0, display_issues);
                 Sprintf(buf, "glyph_to_mon(glyph=%d) returns %d"
-                        " exceeds mons[%d] bounds",
+                             " exceeds mons[%d] bounds",
                         glyph, test, NUMMONS);
                 putstr(win, 0, buf);
             }
@@ -4074,21 +4090,63 @@ wiz_display_macros(void)
                 if (!trouble++)
                     putstr(win, 0, display_issues);
                 Sprintf(buf, "glyph_to_obj(glyph=%d) returns %d"
-                        " exceeds objects[%d] bounds",
+                             " exceeds objects[%d] bounds",
                         glyph, test, NUM_OBJECTS);
                 putstr(win, 0, buf);
             }
         }
     }
     if (!trouble)
-        putstr(win, 0, "No display macro issues detected");
+        putstr(win, 0, "No display macro issues detected.");
     display_nhwindow(win, FALSE);
     destroy_nhwindow(win);
     return ECMD_OK;
 }
 #endif /* (NH_DEVEL_STATUS != NH_STATUS_RELEASED) || defined(DEBUG) */
 
-RESTORE_WARNING_FORMAT_NONLITERAL
+#if (NH_DEVEL_STATUS != NH_STATUS_RELEASED) || defined(DEBUG)
+/* the #wizmondiff command */
+static int
+wiz_mon_diff(void)
+{
+    static const char window_title[] = "Review of monster difficulty ratings"
+                                       " [index:level]:";
+    char buf[BUFSZ];
+    winid win;
+    int mhardcoded = 0, mcalculated = 0, trouble = 0, cnt = 0, mdiff = 0;
+    int mlev;
+    struct permonst *ptr;
+
+    /*
+     * Possible extension:  choose between showing discrepancies,
+     * showing all monsters, or monsters within a particular class.
+     */
+
+    win = create_nhwindow(NHW_TEXT);
+    for (ptr = &mons[0]; ptr->mlet; ptr++, cnt++) {
+        mcalculated = mstrength(ptr);
+        mhardcoded = (int) ptr->difficulty;
+        mdiff = mhardcoded - mcalculated;
+        if (mdiff) {
+            if (!trouble++)
+                putstr(win, 0, window_title);
+            mlev = (int) ptr->mlevel;
+            if (mlev > 50) /* hack for named demons */
+                mlev = 50;
+            Snprintf(buf, sizeof buf,
+                     "%-18s [%3d:%2d]: calculated: %2d, hardcoded: %2d (%+d)",
+                     ptr->pmnames[NEUTRAL], cnt, mlev,
+                     mcalculated, mhardcoded, mdiff);
+            putstr(win, 0, buf);
+        }
+    }
+    if (!trouble)
+        putstr(win, 0, "No monster difficulty discrepencies were detected.");
+    display_nhwindow(win, FALSE);
+    destroy_nhwindow(win);
+    return ECMD_OK;
+}
+#endif /* (NH_DEVEL_STATUS != NH_STATUS_RELEASED) || defined(DEBUG) */
 
 static void
 you_sanity_check(void)
@@ -4388,8 +4446,8 @@ parseautocomplete(char *autocomplete, boolean condition)
     register char *autoc;
 
     /* break off first autocomplete from the rest; parse the rest */
-    if ((autoc = index(autocomplete, ',')) != 0
-        || (autoc = index(autocomplete, ':')) != 0) {
+    if ((autoc = strchr(autocomplete, ',')) != 0
+        || (autoc = strchr(autocomplete, ':')) != 0) {
         *autoc++ = '\0';
         parseautocomplete(autoc, condition);
     }
@@ -4806,7 +4864,7 @@ rhack(char *cmd)
                             down = (key == '>' || tlist->ef_funct == dodown);
 
                     pline(
-                  "The '%s' prefix should be followed by a movement command%s.",
+                "The '%s' prefix should be followed by a movement command%s.",
                           which, (up || down) ? " other than up or down" : "");
                 }
                 res = ECMD_FAIL;
@@ -4823,7 +4881,8 @@ rhack(char *cmd)
                 if (!g.in_doagain && func != do_repeat && func != doextcmd) {
                     if (!prefix_seen)
                         cmdq_clear(CQ_REPEAT);
-                    cmdq_add_ec(CQ_REPEAT, ((struct ext_func_tab *) tlist)->ef_funct);
+                    cmdq_add_ec(CQ_REPEAT,
+                                ((struct ext_func_tab *) tlist)->ef_funct);
                 } else {
                     if (func == doextcmd) {
                         cmdq_clear(CQ_REPEAT);
@@ -4837,7 +4896,8 @@ rhack(char *cmd)
                 if (g.ext_tlist) {
                     tlist = g.ext_tlist, g.ext_tlist = NULL;
                     /* Add the command post-execution */
-                    cmdq_add_ec(CQ_REPEAT, ((struct ext_func_tab *) tlist)->ef_funct);
+                    cmdq_add_ec(CQ_REPEAT,
+                                ((struct ext_func_tab *) tlist)->ef_funct);
                     /* shift the command to first */
                     cmdq_shift(CQ_REPEAT);
                 }
@@ -4919,8 +4979,9 @@ rhack(char *cmd)
 #if 1
         nhUse(c1);
 #else
-        /* note: since prefix keys became actual commnads, we can no longer get
-           here with 'prefix_seen' set so this never calls help_dir() anymore */
+        /* note: since prefix keys became actual commnads, we can no longer
+           get here with 'prefix_seen' set so this never calls help_dir()
+           anymore */
         if (!prefix_seen
             || !help_dir(c1, prefix_seen->key, "Invalid direction key!"))
 #endif
@@ -5162,7 +5223,7 @@ getdir(const char *s)
     } else if (!(is_mov = movecmd(dirsym, MV_ANY)) && !u.dz) {
         boolean did_help = FALSE, help_requested;
 
-        if (!index(quitchars, dirsym)) {
+        if (!strchr(quitchars, dirsym)) {
             help_requested = (dirsym == g.Cmd.spkeys[NHKF_GETDIR_HELP]);
             if (help_requested || iflags.cmdassist) {
                 did_help = help_dir((s && *s == '^') ? dirsym : '\0',
@@ -5312,9 +5373,9 @@ help_dir(
         sym = highc(sym); /* @A-Z[ (note: letter() accepts '@') */
         ctrl = (sym - 'A') + 1; /* 0-27 (note: 28-31 aren't applicable) */
         if ((explain = dowhatdoes_core(ctrl, buf2)) != 0
-            && (!index(wiz_only_list, sym) || wizard)) {
+            && (!strchr(wiz_only_list, sym) || wizard)) {
             Sprintf(buf, "Are you trying to use ^%c%s?", sym,
-                    index(wiz_only_list, sym) ? ""
+                    strchr(wiz_only_list, sym) ? ""
                         : " as specified in the Guidebook");
             putstr(win, 0, buf);
             putstr(win, 0, "");
@@ -5367,7 +5428,7 @@ void
 confdir(boolean force_impairment)
 {
     if (force_impairment || u_maybe_impaired()) {
-        register coordxy x = NODIAG(u.umonnum) ? dirs_ord[rn2(4)] : rn2(N_DIRS);
+        int x = NODIAG(u.umonnum) ? (int) dirs_ord[rn2(4)] : rn2(N_DIRS);
 
         u.dx = xdir[x];
         u.dy = ydir[x];
@@ -6120,7 +6181,7 @@ get_count(
             backspaced = TRUE;
         } else if (key == g.Cmd.spkeys[NHKF_ESC]) {
             break;
-        } else if (!allowchars || index(allowchars, key)) {
+        } else if (!allowchars || strchr(allowchars, key)) {
             *count = (cmdcount_nht) cnt;
             if ((long) *count != cnt)
                 impossible("get_count: cmdcount_nht");
@@ -6355,6 +6416,7 @@ dotravel(void)
     iflags.getloc_travelmode = TRUE;
     if (iflags.menu_requested) {
         int gf = iflags.getloc_filter;
+
         iflags.getloc_filter = GFILTER_VIEW;
         if (!getpos_menu(&cc, GLOC_INTERESTING)) {
             iflags.getloc_filter = gf;
@@ -6419,7 +6481,11 @@ doclicklook(void)
  *   window port causing a buffer overflow there.
  */
 char
-yn_function(const char *query, const char *resp, char def, boolean addcmdq)
+yn_function(
+    const char *query,
+    const char *resp,
+    char def,
+    boolean addcmdq)
 {
     char res = '\033', qbuf[QBUFSZ];
     struct _cmd_queue cq, *cmdq;

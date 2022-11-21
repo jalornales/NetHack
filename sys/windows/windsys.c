@@ -5,7 +5,7 @@
 /*
  *  WIN32 system functions.
  * 
- *  Included in both console and window based clients on the windows platform.
+ *  Included in both console-based and window-based clients on the windows platform.
  *
  *  Initial Creation: Michael Allison - January 31/93
  *
@@ -135,7 +135,7 @@ chdrive(char* str)
 {
     char *ptr;
     char drive;
-    if ((ptr = index(str, ':')) != (char *) 0) {
+    if ((ptr = strchr(str, ':')) != (char *) 0) {
         drive = toupper((uchar) *(ptr - 1));
         _chdrive((drive - 'A') + 1);
     }
@@ -180,7 +180,7 @@ void nt_regularize(char* s) /* normalize file name */
 char *getxxx(void)
 {
 char     szFullPath[MAX_PATH] = "";
-HMODULE  hInst = NULL;  	/* NULL gets the filename of this module */
+HMODULE  hInst = NULL;  /* NULL gets the filename of this module */
 
 GetModuleFileName(hInst, szFullPath, sizeof(szFullPath));
 return &szFullPath[0];
@@ -543,10 +543,26 @@ winos_ascii_to_wide_str(const unsigned char * src, WCHAR * dst, size_t dstLength
     return dst;
 }
 
-WCHAR
-winos_ascii_to_wide(const unsigned char c)
+void
+winos_ascii_to_wide(WCHAR dst[3], UINT32 c)
 {
-    return cp437[c];
+#ifdef ENHANCED_SYMBOLS
+    if (SYMHANDLING(H_UTF8)) {
+        if (c <= 0xFFFF) {
+            dst[0] = (WCHAR) c;
+            dst[1] = L'\0';
+        } else {
+            /* UTF-16 surrogate pair */
+            dst[0] = (WCHAR) ((c >> 10) + 0xD7C0);
+            dst[1] = (WCHAR) ((c & 0x3FF) + 0xDC00);
+            dst[2] = L'\0';
+        }
+    } else
+#endif
+    {
+        dst[0] = cp437[c];
+        dst[1] = L'\0';
+    }
 }
 
 BOOL winos_font_support_cp437(HFONT hFont)
@@ -605,7 +621,7 @@ windows_early_options(const char *window_opt)
 }
 
 /*
- * Add a backslash to any name not ending in /, \ or :	 There must
+ * Add a backslash to any name not ending in /, \ or : There must
  * be room for the \
  */
 void

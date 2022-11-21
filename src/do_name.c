@@ -42,10 +42,13 @@ nextmbuf(void)
  * parameter value 0 = initialize, 1 = highlight, 2 = done
  */
 static void (*getpos_hilitefunc)(int) = (void (*)(int)) 0;
-static boolean (*getpos_getvalid)(coordxy, coordxy) = (boolean (*)(coordxy, coordxy)) 0;
+static boolean
+    (*getpos_getvalid)(coordxy, coordxy) = (boolean (*)(coordxy, coordxy)) 0;
 
 void
-getpos_sethilite(void (*gp_hilitef)(int), boolean (*gp_getvalidf)(coordxy, coordxy))
+getpos_sethilite(
+    void (*gp_hilitef)(int),
+    boolean (*gp_getvalidf)(coordxy, coordxy))
 {
     getpos_hilitefunc = gp_hilitef;
     getpos_getvalid = gp_getvalidf;
@@ -71,7 +74,10 @@ static const char *const gloc_filtertxt[NUM_GFILTER] = {
 };
 
 static void
-getpos_help_keyxhelp(winid tmpwin, const char *k1, const char *k2, int gloc)
+getpos_help_keyxhelp(
+    winid tmpwin,
+    const char *k1, const char *k2,
+    int gloc)
 {
     char sbuf[BUFSZ], fbuf[QBUFSZ];
     const char *move_cursor_to = "move the cursor to ",
@@ -263,11 +269,11 @@ cmp_coord_distu(const void *a, const void *b)
 }
 
 #define IS_UNEXPLORED_LOC(x,y) \
-    (isok((x), (y))                                     \
-     && glyph_is_unexplored(levl[(x)][(y)].glyph)   \
+    (isok((x), (y))                                             \
+     && glyph_is_unexplored(levl[(x)][(y)].glyph)               \
      && !levl[(x)][(y)].seenv)
 
-#define GLOC_SAME_AREA(x,y)                                     \
+#define GLOC_SAME_AREA(x,y) \
     (isok((x), (y))                                             \
      && (selection_getpoint((x),(y), g.gloc_filter_map)))
 
@@ -775,7 +781,10 @@ getpos(coord *ccp, boolean force, const char *goal)
             free(cmdq);
         } else {
             c = readchar_poskey(&tx, &ty, &sidx);
-            if (!g.in_doagain)
+            /* remember_getpos is normally False because reusing the
+               cursor positioning during ^A is almost never the right
+               thing to do, but caller could set it if that was needed */
+            if (iflags.remember_getpos && !g.in_doagain)
                 cmdq_add_key(CQ_REPEAT, c);
         }
 
@@ -807,7 +816,7 @@ getpos(coord *ccp, boolean force, const char *goal)
             cy = ty;
             break;
         }
-        if ((cp = index(pick_chars, c)) != 0) {
+        if ((cp = strchr(pick_chars, c)) != 0) {
             /* '.' => 0, ',' => 1, ';' => 2, ':' => 3 */
             result = pick_chars_def[(int) (cp - pick_chars)].ret;
             break;
@@ -907,7 +916,7 @@ getpos(coord *ccp, boolean force, const char *goal)
                   iflags.getloc_moveskip ? "S" : "Not s");
             msg_given = TRUE;
             goto nxtc;
-        } else if ((cp = index(mMoOdDxX, c)) != 0) { /* 'm|M', 'o|O', &c */
+        } else if ((cp = strchr(mMoOdDxX, c)) != 0) { /* 'm|M', 'o|O', &c */
             /* nearest or farthest monster or object or door or unexplored */
             int gtmp = (int) (cp - mMoOdDxX), /* 0..7 */
                 gloc = gtmp >> 1;             /* 0..3 */
@@ -936,7 +945,7 @@ getpos(coord *ccp, boolean force, const char *goal)
             cy = garr[gloc][gidx[gloc]].y;
             goto nxtc;
         } else {
-            if (!index(quitchars, c)) {
+            if (!strchr(quitchars, c)) {
                 char matching[MAXPCHARS];
                 int pass, lo_x, lo_y, hi_x, hi_y, k = 0;
 
@@ -1057,9 +1066,9 @@ getpos(coord *ccp, boolean force, const char *goal)
 
 /* allocate space for a monster's name; removes old name if there is one */
 void
-new_mgivenname(struct monst *mon,
-               int lth) /* desired length (caller handles adding 1
-                           for terminator) */
+new_mgivenname(
+    struct monst *mon,
+    int lth) /* desired length (caller handles adding 1 for terminator) */
 {
     if (lth) {
         /* allocate mextra if necessary; otherwise get rid of old name */
@@ -1087,9 +1096,9 @@ free_mgivenname(struct monst *mon)
 
 /* allocate space for an object's name; removes old name if there is one */
 void
-new_oname(struct obj *obj,
-          int lth) /* desired length (caller handles adding 1
-                      for terminator) */
+new_oname(
+    struct obj *obj,
+    int lth) /* desired length (caller handles adding 1 for terminator) */
 {
     if (lth) {
         /* allocate oextra if necessary; otherwise get rid of old name */
@@ -1153,24 +1162,38 @@ christen_monst(struct monst *mtmp, const char *name)
 }
 
 /* check whether user-supplied name matches or nearly matches an unnameable
-   monster's name; if so, give alternate reject message for do_mgivenname() */
+   monster's name, or is an attempt to delete the monster's name; if so, give
+   alternate reject message for do_mgivenname() */
 static boolean
 alreadynamed(struct monst *mtmp, char *monnambuf, char *usrbuf)
 {
     char pronounbuf[10], *p;
 
-    if (fuzzymatch(usrbuf, monnambuf, " -_", TRUE)
-        /* catch trying to name "the Oracle" as "Oracle" */
-        || (!strncmpi(monnambuf, "the ", 4)
-            && fuzzymatch(usrbuf, monnambuf + 4, " -_", TRUE))
-        /* catch trying to name "invisible Orcus" as "Orcus" */
-        || ((p = strstri(monnambuf, "invisible ")) != 0
-            && fuzzymatch(usrbuf, p + 10, " -_", TRUE))
-        /* catch trying to name "the {priest,Angel} of Crom" as "Crom" */
-        || ((p = strstri(monnambuf, " of ")) != 0
-            && fuzzymatch(usrbuf, p + 4, " -_", TRUE))) {
-        pline("%s is already called %s.",
-              upstart(strcpy(pronounbuf, mhe(mtmp))), monnambuf);
+    if (!*usrbuf) { /* attempt to erase existing name */
+        boolean name_not_title = (has_mgivenname(mtmp)
+                                  || type_is_pname(mtmp->data)
+                                  || mtmp->isshk);
+        pline("%s would rather keep %s existing %s.", upstart(monnambuf),
+              is_rider(mtmp->data) ? "its" : mhis(mtmp),
+              name_not_title ? "name" : "title");
+        return TRUE;
+    } else if (fuzzymatch(usrbuf, monnambuf, " -_", TRUE)
+               /* catch trying to name "the Oracle" as "Oracle" */
+               || (!strncmpi(monnambuf, "the ", 4)
+                   && fuzzymatch(usrbuf, monnambuf + 4, " -_", TRUE))
+               /* catch trying to name "invisible Orcus" as "Orcus" */
+               || ((p = strstri(monnambuf, "invisible ")) != 0
+                   && fuzzymatch(usrbuf, p + 10, " -_", TRUE))
+               /* catch trying to name "the priest of Crom" as "Crom" */
+               || ((p = strstri(monnambuf, " of ")) != 0
+                   && fuzzymatch(usrbuf, p + 4, " -_", TRUE))) {
+        if (is_rider(mtmp->data)) {
+            /* avoid gendered pronoun for riders */
+            pline("%s is already called that.", upstart(monnambuf));
+        } else {
+            pline("%s is already called %s.",
+                  upstart(strcpy(pronounbuf, mhe(mtmp))), monnambuf);
+        }
         return TRUE;
     } else if (mtmp->data == &mons[PM_JUIBLEX]
                && strstri(monnambuf, "Juiblex")
@@ -1240,11 +1263,9 @@ do_mgivenname(void)
      * Shopkeepers, temple priests and other minions use alternate
      * name formatting routines which ignore any user-supplied name.
      *
-     * Don't say the name is being rejected if it happens to match
-     * the existing name.
-     *
-     * TODO: should have an alternate message when the attempt is to
-     * remove existing name without assigning a new one.
+     * Don't say a new name is being rejected if it happens to match
+     * the existing name, or if the player is trying to remove the
+     * monster's existing name without assigning a new one.
      */
     if ((mtmp->data->geno & G_UNIQ) && !mtmp->ispriest) {
         if (!alreadynamed(mtmp, monnambuf, buf))
@@ -1258,8 +1279,9 @@ do_mgivenname(void)
                || mtmp->data == &mons[PM_GHOST]) {
         if (!alreadynamed(mtmp, monnambuf, buf))
             pline("%s will not accept the name %s.", upstart(monnambuf), buf);
-    } else
+    } else {
         (void) christen_monst(mtmp, buf);
+    }
 }
 
 /*
@@ -2313,7 +2335,7 @@ bogusmon(char *buf, char *code)
     get_rnd_text(BOGUSMONFILE, buf, rn2_on_display_rng, MD_PAD_BOGONS);
     if (!*mnam) {
         Strcpy(buf, "bogon");
-    } else if (index(bogon_codes, *mnam)) { /* strip prefix if present */
+    } else if (strchr(bogon_codes, *mnam)) { /* strip prefix if present */
         if (code)
             *code = *mnam;
         ++mnam;
@@ -2353,7 +2375,7 @@ bogon_is_pname(char code)
 {
     if (!code)
         return FALSE;
-    return index("-+=", code) ? TRUE : FALSE;
+    return strchr("-+=", code) ? TRUE : FALSE;
 }
 
 /* name of a Rogue player */
@@ -2366,7 +2388,7 @@ roguename(void)
         for (i = opts; *i; i++)
             if (!strncmp("name=", i, 5)) {
                 char *j;
-                if ((j = index(i + 5, ',')) != 0)
+                if ((j = strchr(i + 5, ',')) != 0)
                     *j = (char) 0;
                 return i + 5;
             }

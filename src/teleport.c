@@ -40,7 +40,8 @@ noteleport_level(struct monst* mon)
 }
 
 /* this is an approximation of onscary() that doesn't use any 'struct monst'
-   fields aside from 'monst->data' */
+   fields aside from 'monst->data'; used primarily for new monster creation
+   and monster teleport destination, not for ordinary monster movement */
 static boolean
 goodpos_onscary(
     coordxy x, coordxy y,
@@ -60,10 +61,11 @@ goodpos_onscary(
     /* engraved Elbereth doesn't work in Gehennom or the end-game */
     if (Inhell || In_endgame(&u.uz))
         return FALSE;
-    /* creatures who don't (or can't) fear a written Elbereth */
+    /* creatures who don't (or can't) fear a written Elbereth and weren't
+       caught by the minions check */
     if (mptr == &mons[PM_MINOTAUR] || !haseyes(mptr))
         return FALSE;
-    return sengr_at("Elbereth", x, y, TRUE);
+    return sengr_at("Elbereth", x, y, TRUE) ? TRUE : FALSE;
 }
 
 /*
@@ -1336,14 +1338,14 @@ rloc_to_core(
     if (domsg && (canspotmon(mtmp) || appearmsg)) {
         int du = distu(x, y), olddu;
         const char *next = (du <= 2) ? " next to you" : 0, /* next2u() */
-                   *near = (du <= BOLT_LIM * BOLT_LIM) ? " close by" : 0;
+                   *nearu = (du <= BOLT_LIM * BOLT_LIM) ? " close by" : 0;
 
         mtmp->mstrategy &= ~STRAT_APPEARMSG; /* one chance only */
         if (telemsg && (couldsee(x, y) || sensemon(mtmp))) {
             pline("%s vanishes and reappears%s.",
                   Monnam(mtmp),
                   next ? next
-                  : near ? near
+                  : nearu ? nearu
                     : ((olddu = distu(oldx, oldy)) == du) ? ""
                       : (du < olddu) ? " closer to you"
                         : " farther away");
@@ -1352,7 +1354,7 @@ rloc_to_core(
                   appearmsg ? Amonnam(mtmp) : Monnam(mtmp),
                   appearmsg ? "suddenly " : "",
                   !Blind ? "appears" : "arrives",
-                  next ? next : near ? near : "");
+                  next ? next : nearu ? nearu : "");
         }
     }
 
@@ -1655,9 +1657,9 @@ rloco(register struct obj* obj)
     } else {
         if (costly_spot(otx, oty)
             && (!costly_spot(tx, ty)
-                || !index(in_rooms(tx, ty, 0), *in_rooms(otx, oty, 0)))) {
+                || !strchr(in_rooms(tx, ty, 0), *in_rooms(otx, oty, 0)))) {
             if (costly_spot(u.ux, u.uy)
-                && index(u.urooms, *in_rooms(otx, oty, 0)))
+                && strchr(u.urooms, *in_rooms(otx, oty, 0)))
                 addtobill(obj, FALSE, FALSE, FALSE);
             else
                 (void) stolen_value(obj, otx, oty, FALSE, FALSE);

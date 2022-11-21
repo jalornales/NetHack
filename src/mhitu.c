@@ -404,7 +404,7 @@ mattacku(register struct monst *mtmp)
      *     excessively verbose miss feedback when monster can do multiple
      *     attacks and would miss the same wrong spot each time.)
      */
-    boolean ranged = (distu(mtmp->mx, mtmp->my) > 3),
+    boolean ranged = (mdistu(mtmp) > 3),
             range2 = !monnear(mtmp, mtmp->mux, mtmp->muy),
             foundyou = u_at(mtmp->mux, mtmp->muy),
             youseeit = canseemon(mtmp),
@@ -1041,7 +1041,8 @@ hitmu(register struct monst *mtmp, register struct attack *mattk)
 
     mhitm_adtyping(mtmp, mattk, &g.youmonst, &mhm);
 
-    (void) mhitm_knockback(mtmp, &g.youmonst, mattk, &mhm.hitflags, (MON_WEP(mtmp) != 0));
+    (void) mhitm_knockback(mtmp, &g.youmonst, mattk, &mhm.hitflags,
+                           (MON_WEP(mtmp) != 0));
 
     if (mhm.done)
         return mhm.hitflags;
@@ -1605,7 +1606,7 @@ gazemu(struct monst *mtmp, struct attack *mattk)
         break;
     case AD_BLND:
         if (canseemon(mtmp) && !resists_blnd(&g.youmonst)
-            && distu(mtmp->mx, mtmp->my) <= BOLT_LIM * BOLT_LIM) {
+            && mdistu(mtmp) <= BOLT_LIM * BOLT_LIM) {
             if (cancelled) {
                 react = rn1(2, 2); /* "puzzled" || "dazzled" */
                 already = (mtmp->mcansee == 0);
@@ -2147,7 +2148,10 @@ mayberem(struct monst *mon,
  *  damage applies.
  */
 static int
-passiveum(struct permonst *olduasmon, struct monst *mtmp, struct attack *mattk)
+passiveum(
+    struct permonst *olduasmon,
+    struct monst *mtmp,
+    struct attack *mattk)
 {
     int i, tmp;
     struct attack *oldu_mattk = 0;

@@ -61,6 +61,8 @@ int case_insensitive_comp(const char *, const char *);
 
 static void make_version(void);
 static char *eos(char *);
+int mstrength(struct permonst *);
+
 #if 0
 static char *mdlib_strsubst(char *, const char *, const char *);
 #endif
@@ -649,11 +651,11 @@ opt_out_words(
     char *word;
 
     while (*str) {
-        word = index(str, ' ');
+        word = strchr(str, ' ');
 #if 0
         /* treat " (" as unbreakable space */
         if (word && *(word + 1) == '(')
-            word = index(word + 1,  ' ');
+            word = strchr(word + 1,  ' ');
 #endif
         if (word)
             *word = '\0';

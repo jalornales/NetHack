@@ -753,7 +753,7 @@ init_dungeons(void)
     (void) memset(&pd, 0, sizeof (struct proto_dungeon));
     pd.n_levs = pd.n_brs = 0;
 
-    L = nhl_init(&sbi);	/* private Lua state for this function */
+    L = nhl_init(&sbi); /* private Lua state for this function */
     if (!L) {
         panic1("'nhl_init' failed; can't continue.");
         /*NOTREACHED*/
@@ -2017,6 +2017,9 @@ lev_by_name(const char *nam)
                 nam = " to Vlad's tower"; /* branch to... */
             else
                 nam = "valley";
+        } else if (!strcmpi(nam, "delphi")) {
+            /* Oracle says "welcome to Delphi" so recognize that name too */
+            nam = "oracle";
         }
 
         if ((slev = find_level(nam)) != 0)
@@ -3153,7 +3156,7 @@ seen_string(xint16 x, const char *obj)
         return "no";
     /* an() returns too much.  index is ok in this case */
     case 1:
-        return index(vowels, *obj) ? "an" : "a";
+        return strchr(vowels, *obj) ? "an" : "a";
     case 2:
         return "some";
     case 3:

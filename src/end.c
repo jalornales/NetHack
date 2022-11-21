@@ -365,9 +365,7 @@ done2(void)
             done_stopprint++;
     }
 #endif
-#ifndef LINT
     done(QUIT);
-#endif
     return ECMD_OK;
 }
 
@@ -517,7 +515,7 @@ done_in_by(struct monst *mtmp, int how)
          */
         if (sscanf(g.multireasonbuf, "%u:%c", &reasonmid, &reasondummy) == 2
             && mtmp->m_id == reasonmid) {
-            if ((p = index(g.multireasonbuf, ' ')) != 0)
+            if ((p = strchr(g.multireasonbuf, ' ')) != 0)
                 *p = '\0';
         }
     }
@@ -686,7 +684,7 @@ should_query_disclose_option(int category, char *defquery)
     char disclose, *dop;
 
     *defquery = 'n';
-    if ((dop = index(disclosure_options, category)) != 0) {
+    if ((dop = strchr(disclosure_options, category)) != 0) {
         idx = (int) (dop - disclosure_options);
         if (idx < 0 || idx >= NUM_DISCLOSURE_OPTIONS) {
             impossible(
@@ -836,8 +834,9 @@ disclose(int how, boolean taken)
         ask = should_query_disclose_option('i', &defquery);
         c = ask ? yn_function(qbuf, ynqchars, defquery, TRUE) : defquery;
         if (c == 'y') {
-            /* caller has already ID'd everything */
-            (void) display_inventory((char *) 0, FALSE);
+            /* caller has already ID'd everything; we pass 'want_reply=True'
+               to force display_pickinv() to avoid using WIN_INVENT */
+            (void) display_inventory((char *) 0, TRUE);
             container_contents(g.invent, TRUE, TRUE, FALSE);
         }
         if (c == 'q')

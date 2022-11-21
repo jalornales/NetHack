@@ -108,7 +108,7 @@ wipeout_text(
                 continue;
 
             /* rub out unreadable & small punctuation marks */
-            if (index("?.,'`-|_", *s)) {
+            if (strchr("?.,'`-|_", *s)) {
                 *s = ' ';
                 continue;
             }
@@ -271,16 +271,17 @@ engr_at(coordxy x, coordxy y)
  * If strict checking is requested, the word is only considered to be
  * present if it is intact and is the entire content of the engraving.
  */
-boolean
+struct engr *
 sengr_at(const char *s, coordxy x, coordxy y, boolean strict)
 {
-    register struct engr *ep = engr_at(x, y);
+    struct engr *ep = engr_at(x, y);
 
     if (ep && ep->engr_type != HEADSTONE && ep->engr_time <= g.moves) {
-        return (strict ? !strcmpi(ep->engr_txt, s)
-                       : (strstri(ep->engr_txt, s) != 0));
+        if (strict ? !strcmpi(ep->engr_txt, s)
+                   : (strstri(ep->engr_txt, s) != 0))
+            return ep;
     }
-    return FALSE;
+    return (struct engr *) NULL;
 }
 
 void
@@ -395,16 +396,22 @@ make_engr_at(coordxy x, coordxy y, const char *s, long e_time, xint16 e_type)
     if ((ep = engr_at(x, y)) != 0)
         del_engr(ep);
     ep = newengr(smem);
-    (void) memset((genericptr_t)ep, 0, smem + sizeof(struct engr));
+    (void) memset((genericptr_t) ep, 0, smem + sizeof (struct engr));
     ep->nxt_engr = head_engr;
     head_engr = ep;
     ep->engr_x = x;
     ep->engr_y = y;
     ep->engr_txt = (char *) (ep + 1);
     Strcpy(ep->engr_txt, s);
-    /* engraving Elbereth shows wisdom */
-    if (!g.in_mklev && !strcmp(s, "Elbereth"))
-        exercise(A_WIS, TRUE);
+    if (!strcmp(s, "Elbereth")) {
+        /* engraving "Elbereth":  if done when making a level, it creates
+           an old-style Elbereth that deters monsters when any objects are
+           present; otherwise (done by the player), exercises wisdom */
+        if (g.in_mklev)
+            ep->guardobjects = 1;
+        else
+            exercise(A_WIS, TRUE);
+    }
     ep->engr_time = e_time;
     ep->engr_type = e_type > 0 ? e_type : rnd(N_ENGRAVE - 1);
     ep->engr_lth = smem;
@@ -1066,7 +1073,7 @@ doengrave(void)
         if (*sp == ' ')
             len -= 1;
 
-    if (len == 0 || index(ebuf, '\033')) {
+    if (len == 0 || strchr(ebuf, '\033')) {
         if (zapwand) {
             if (!Blind)
                 pline("%s, then %s.", Tobjnam(otmp, "glow"),
@@ -1079,7 +1086,7 @@ doengrave(void)
     }
 
     /* A single `x' is the traditional signature of an illiterate person */
-    if (len != 1 || (!index(ebuf, 'x') && !index(ebuf, 'X')))
+    if (len != 1 || (!strchr(ebuf, 'x') && !strchr(ebuf, 'X')))
         if (!u.uconduct.literate++)
             livelog_printf(LL_CONDUCT, "became literate by engraving \"%s\"",
                            ebuf);
@@ -1378,7 +1385,7 @@ rest_engravings(NHFILE *nhfp)
         }
         ep->nxt_engr = head_engr;
         head_engr = ep;
-        ep->engr_txt = (char *) (ep + 1);	/* Andreas Bormann */
+        ep->engr_txt = (char *) (ep + 1);    /* Andreas Bormann */
         /* mark as finished for bones levels -- no problem for
          * normal levels as the player must have finished engraving
          * to be able to move again */

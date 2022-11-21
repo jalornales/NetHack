@@ -150,7 +150,7 @@ CFLAGS += -DCROSSCOMPILE
 TOOLTOP1 = ../lib/djgpp/bin
 TOOLTOP2 = ../lib/djgpp/i586-pc-msdosdjgpp/bin
 override TARGET_CC = $(TOOLTOP1)/i586-pc-msdosdjgpp-gcc
-override TARGET_CXX = $(TOOLTOP2)/g++
+override TARGET_CXX = $(TOOLTOP1)/i586-pc-msdosdjgpp-g++
 override TARGET_AR = $(TOOLTOP1)/i586-pc-msdosdjgpp-gcc-ar
 override TARGET_STUBEDIT = ../lib/djgpp/i586-pc-msdosdjgpp/bin/stubedit
 MSDOS_TARGET_CFLAGS = -c -O -I../include -I../sys/msdos -I../win/share \
@@ -159,25 +159,33 @@ MSDOS_TARGET_CFLAGS = -c -O -I../include -I../sys/msdos -I../win/share \
         -Wall -Wextra -Wno-missing-field-initializers -Wreturn-type -Wunused \
         -Wformat -Wswitch -Wshadow -Wwrite-strings \
 	-Wimplicit -Wimplicit-function-declaration -Wimplicit-int \
-	-Wmissing-parameter-type -Wold-style-definition -Wstrict-prototypes \
-	-DGCC_WARN
+	-Wmissing-parameter-type -Wold-style-definition -Wstrict-prototypes
+MSDOS_TARGET_CXXFLAGS = -c -O -I../include -I../sys/msdos -I../win/share \
+        $(LUAINCL) -DDLB $(PDCURSESDEF) \
+        -DUSE_TILES -DCROSSCOMPILE -DCROSSCOMPILE_TARGET -DCROSS_TO_MSDOS \
+        -Wall -Wextra -Wno-missing-field-initializers -Wreturn-type -Wunused \
+        -Wformat -Wswitch -Wshadow -Wwrite-strings -Wno-maybe-uninitialized
 PDCINCL += -I$(PDCPORT)
 PDC_TARGET_CFLAGS = $(MSDOS_TARGET_CFLAGS) -Wno-unused-parameter \
 			-Wno-missing-prototypes
 FONTVER = terminus-font-4.49.1
 FONTTOP = ../lib/$(FONTVER)
-FONTDIR = ../sys/msdos/fonts
-FONTTARGETS = $(FONTDIR)/ter-u16b.psf $(FONTDIR)/ter-u16v.psf \
-		$(FONTDIR)/ter-u18b.psf $(FONTDIR)/ter-u20b.psf \
-		$(FONTDIR)/ter-u22b.psf $(FONTDIR)/ter-u24b.psf \
-		$(FONTDIR)/ter-u28b.psf $(FONTDIR)/ter-u32b.psf
+DOSFONT = ../sys/msdos/fonts
+FONTTARGETS = $(DOSFONT)/ter-u16b.psf $(DOSFONT)/ter-u16v.psf \
+		$(DOSFONT)/ter-u18b.psf $(DOSFONT)/ter-u20b.psf \
+		$(DOSFONT)/ter-u22b.psf $(DOSFONT)/ter-u24b.psf \
+		$(DOSFONT)/ter-u28b.psf $(DOSFONT)/ter-u32b.psf
 LUABIN = ../lib/lua-$(LUA_VERSION)/src/lua
 LUA_TARGET_CFLAGS = $(MSDOS_TARGET_CFLAGS)
 override TARGET_CFLAGS = $(MSDOS_TARGET_CFLAGS) -Wmissing-declarations \
 			-Wmissing-prototypes -pedantic -Wmissing-declarations \
 			-Wformat-nonliteral
-override TARGET_CXXFLAGS = $(TARGET_CFLAGS)
+override TARGET_CXXFLAGS = $(MSDOS_TARGET_CXXFLAGS)
+ifdef CPLUSPLUS_NEEDED
+override TARGET_LINK = $(TOOLTOP1)/i586-pc-msdosdjgpp-g++
+else
 override TARGET_LINK = $(TOOLTOP1)/i586-pc-msdosdjgpp-gcc
+endif
 override TARGET_LFLAGS=
 override TARGET_LIBS += -lpc
 override SYSSRC = ../sys/share/pcmain.c ../sys/msdos/msdos.c \
@@ -185,6 +193,7 @@ override SYSSRC = ../sys/share/pcmain.c ../sys/msdos/msdos.c \
 		../sys/share/pcunix.c ../sys/msdos/video.c \
 		../sys/msdos/vidtxt.c ../sys/msdos/pckeys.c \
 		../sys/msdos/vidvga.c ../sys/msdos/vidvesa.c \
+		../sys/msdos/font.c \
 		../win/share/bmptiles.c ../win/share/giftiles.c \
 		../win/share/tileset.c
 override SYSOBJ= $(TARGETPFX)pcmain.o $(TARGETPFX)msdos.o \
@@ -192,6 +201,7 @@ override SYSOBJ= $(TARGETPFX)pcmain.o $(TARGETPFX)msdos.o \
 		$(TARGETPFX)pcunix.o $(TARGETPFX)video.o \
 		$(TARGETPFX)vidtxt.o $(TARGETPFX)pckeys.o \
 		$(TARGETPFX)vidvga.o $(TARGETPFX)vidvesa.o \
+		$(TARGETPFX)font.o \
 		$(TARGETPFX)bmptiles.o $(TARGETPFX)giftiles.o \
 		$(TARGETPFX)tileset.o $(TARGETPFX)tile.o
 override WINLIB=
@@ -283,7 +293,6 @@ WASM_CFLAGS += -Wshadow
 WASM_CFLAGS += $(WINCFLAGS)   #WINCFLAGS set from multiw-2.370
 WASM_CFLAGS += -DSYSCF -DSYSCF_FILE=\"/sysconf\" -DSECURE
 WASM_CFLAGS += -g -I../include -DNOTPARMDECL
-WASM_CFLAGS += -DGCC_WARN
 # NetHack sources control
 WASM_CFLAGS += -DDLB
 WASM_CFLAGS += -DHACKDIR=\"$(HACKDIR)\"

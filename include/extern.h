@@ -1,5 +1,5 @@
 /* NetHack 3.7	extern.h	$NHDT-Date: 1657918089 2022/07/15 20:48:09 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.1132 $ */
-/* Copyright (c) Steve Creps, 1988.				  */
+/* Copyright (c) Steve Creps, 1988.                               */
 /* NetHack may be freely redistributed.  See license for details. */
 
 #ifndef EXTERN_H
@@ -14,7 +14,7 @@ extern char *fmt_ptr(const void *) NONNULL;
 
 /* This next pre-processor directive covers almost the entire file,
  * interrupted only occasionally to pick up specific functions as needed. */
-#if !defined(MAKEDEFS_C) && !defined(MDLIB_C)
+#if !defined(MAKEDEFS_C) && !defined(MDLIB_C) && !defined(CPPREGEX_C)
 
 /* ### allmain.c ### */
 
@@ -28,9 +28,6 @@ extern void welcome(boolean);
 extern int argcheck(int, char **, enum earlyarg);
 extern long timet_to_seconds(time_t);
 extern long timet_delta(time_t, time_t);
-#ifndef NODUMPENUMS
-extern void dump_enums(void);
-#endif
 
 /* ### apply.c ### */
 
@@ -114,7 +111,8 @@ extern struct obj *has_magic_key(struct monst *);
 
 extern boolean adjattrib(int, int, int);
 extern void gainstr(struct obj *, int, boolean);
-extern void losestr(int);
+extern void losestr(int, const char *, schar);
+extern void poison_strdmg(int, int, const char *, schar);
 extern void poisontell(int, boolean);
 extern void poisoned(const char *, int, const char *, int, boolean);
 extern void change_luck(schar);
@@ -196,6 +194,7 @@ extern const char *bl_idx_to_fldname(int);
 extern void condopt(int, boolean *, boolean);
 extern int parse_cond_option(boolean, char *);
 extern void cond_menu(void);
+extern boolean opt_next_cond(int, char *);
 #ifdef STATUS_HILITES
 extern void status_eval_next_unhilite(void);
 extern void reset_status_hilites(void);
@@ -775,6 +774,7 @@ extern void set_tin_variety(struct obj *, int);
 extern int tin_variety_txt(char *, int *);
 extern void tin_details(struct obj *, int, char *);
 extern boolean Popeye(int);
+extern int Finish_digestion(void);
 
 /* ### end.c ### */
 
@@ -782,9 +782,11 @@ extern void done1(int);
 extern int done2(void);
 extern void done_in_by(struct monst *, int);
 extern void done_object_cleanup(void);
-#endif /* !MAKEDEFS_C && MDLIB_C */
+#endif /* !MAKEDEFS_C && MDLIB_C && !CPPREGEX_C */
+#if !defined(CPPREGEX_C)
 extern void panic(const char *, ...) PRINTF_F(1, 2) NORETURN;
-#if !defined(MAKEDEFS_C) && !defined(MDLIB_C)
+#endif
+#if !defined(MAKEDEFS_C) && !defined(MDLIB_C) && !defined(CPPREGEX_C)
 extern void done(int);
 extern void container_contents(struct obj *, boolean, boolean, boolean);
 extern void nh_terminate(int) NORETURN;
@@ -807,7 +809,7 @@ extern void cant_reach_floor(coordxy, coordxy, boolean, boolean);
 extern const char *surface(coordxy, coordxy);
 extern const char *ceiling(coordxy, coordxy);
 extern struct engr *engr_at(coordxy, coordxy);
-extern boolean sengr_at(const char *, coordxy, coordxy, boolean);
+extern struct engr *sengr_at(const char *, coordxy, coordxy, boolean);
 extern void u_wipe_engr(int);
 extern void wipe_engr_at(coordxy, coordxy, xint16, boolean);
 extern void read_engr_at(coordxy, coordxy);
@@ -976,7 +978,7 @@ extern int monster_nearby(void);
 extern void end_running(boolean);
 extern void nomul(int);
 extern void unmul(const char *);
-extern void losehp(int, const char *, boolean);
+extern void losehp(int, const char *, schar);
 extern int weight_cap(void);
 extern int inv_weight(void);
 extern int near_capacity(void);
@@ -1377,7 +1379,7 @@ extern void clear_level_structures(void);
 extern void level_finalize_topology(void);
 extern void mklev(void);
 #ifdef SPECIALIZATION
-extern void topologize(struct mkroom *, boolean));
+extern void topologize(struct mkroom *, boolean);
 #else
 extern void topologize(struct mkroom *);
 #endif
@@ -1660,6 +1662,9 @@ extern boolean mon_knows_traps(struct monst *, int);
 extern void mon_learns_traps(struct monst *, int);
 extern void mons_see_trap(struct trap *);
 extern int get_atkdam_type(int);
+#if (NH_DEVEL_STATUS != NH_STATUS_RELEASED) || defined(DEBUG)
+extern int mstrength(struct permonst *);
+#endif
 
 /* ### monmove.c ### */
 
@@ -1852,6 +1857,7 @@ extern char *stripdigits(char *);
 extern const char *get_lua_version(void);
 extern void nhl_pushhooked_open_table(lua_State *L);
 #endif /* !CROSSCOMPILE || CROSSCOMPILE_TARGET */
+#endif /* MAKEDEFS_C MDLIB_C CPPREGEX_C */
 
 /* ### nhregex.c ### */
 
@@ -1860,6 +1866,8 @@ extern boolean regex_compile(const char *, struct nhregex *);
 extern char *regex_error_desc(struct nhregex *, char *);
 extern boolean regex_match(const char *, struct nhregex *);
 extern void regex_free(struct nhregex *);
+
+#if !defined(MAKEDEFS_C) && !defined(MDLIB_C) && !defined(CPPREGEX_C)
 
 /* ### consoletty.c ### */
 
@@ -2147,6 +2155,7 @@ extern void change_sex(void);
 extern void livelog_newform(boolean, int, int);
 extern void polyself(int);
 extern int polymon(int);
+extern schar uasmon_maxStr(void);
 extern void rehumanize(void);
 extern int dobreathe(void);
 extern int dospit(void);
@@ -2393,14 +2402,15 @@ extern void rigid_role_checks(void);
 extern boolean setrolefilter(const char *);
 extern boolean gotrolefilter(void);
 extern void clearrolefilter(void);
-extern char *build_plselection_prompt(char *, int, int, int, int, int);
 extern char *root_plselection_prompt(char *, int, int, int, int, int);
+extern char *build_plselection_prompt(char *, int, int, int, int, int);
 extern void plnamesuffix(void);
 extern void role_selection_prolog(int, winid);
 extern void role_menu_extra(int, winid, boolean);
 extern void role_init(void);
 extern const char *Hello(struct monst *);
 extern const char *Goodbye(void);
+extern const struct Race *character_race(short);
 
 /* ### rumors.c ### */
 
@@ -2471,6 +2481,7 @@ extern void shopper_financial_report(void);
 extern int inhishop(struct monst *);
 extern struct monst *shop_keeper(char);
 extern boolean tended_shop(struct mkroom *);
+extern boolean onshopbill(struct obj *, struct monst *, boolean);
 extern boolean is_unpaid(struct obj *);
 extern void delete_contents(struct obj *);
 extern void obfree(struct obj *, struct obj *);
@@ -2744,6 +2755,7 @@ extern void substitute_tiles(d_level *);
 
 /* ### timeout.c ### */
 
+extern const char *property_by_index(int, int *);
 extern void burn_away_slime(void);
 extern void nh_timeout(void);
 extern void fall_asleep(int, boolean);
@@ -3292,6 +3304,7 @@ extern char *encglyph(int);
 extern int decode_glyph(const char *str, int *glyph_ptr);
 extern char *decode_mixed(char *, const char *);
 extern void genl_putmixed(winid, int, const char *);
+extern void genl_display_file(const char *, boolean);
 extern boolean menuitem_invert_test(int, unsigned, boolean);
 
 /* ### windows.c ### */
@@ -3352,7 +3365,7 @@ extern struct obj *wearmask_to_obj(long);
 extern long wearslot(struct obj *);
 extern void mon_set_minvis(struct monst *);
 extern void mon_adjust_speed(struct monst *, int, struct obj *);
-extern void update_mon_intrinsics(struct monst *, struct obj *, boolean,
+extern void update_mon_extrinsics(struct monst *, struct obj *, boolean,
                                   boolean);
 extern int find_mac(struct monst *);
 extern void m_dowear(struct monst *, boolean);

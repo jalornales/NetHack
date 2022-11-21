@@ -1,4 +1,4 @@
-/* NetHack 3.7	uhitm.c	$NHDT-Date: 1664966387 2022/10/05 10:39:47 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.365 $ */
+/* NetHack 3.7	uhitm.c	$NHDT-Date: 1665130027 2022/10/07 08:07:07 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.366 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -160,7 +160,7 @@ attack_checks(
 
     /* cache the shown glyph;
        cases which might change it (by placing or removing
-       'rembered, unseen monster' glyph or revealing a mimic)
+       'remembered, unseen monster' glyph or revealing a mimic)
        always return without further reference to this */
     glyph = glyph_at(g.bhitpos.x, g.bhitpos.y);
 
@@ -1306,6 +1306,8 @@ hmon_hitmon(
         tmp = (get_dmg_bonus && !mon_is_shade) ? 1 : 0;
         if (mon_is_shade && !hittxt
             && thrown != HMON_THROWN && thrown != HMON_KICKED)
+            /* this gives "harmlessly passes through" feedback even when
+               hero doesn't see it happen; presumably sensed by touch? */
             hittxt = shade_miss(&g.youmonst, mon, obj, FALSE, TRUE);
     }
 
@@ -1591,8 +1593,12 @@ shade_aware(struct obj *obj)
 /* used for hero vs monster and monster vs monster; also handles
    monster vs hero but that won't happen because hero can't be a shade */
 boolean
-shade_miss(struct monst *magr, struct monst *mdef, struct obj *obj,
-           boolean thrown, boolean verbose)
+shade_miss(
+    struct monst *magr,
+    struct monst *mdef,
+    struct obj *obj,
+    boolean thrown,
+    boolean verbose)
 {
     const char *what, *whose, *target;
     boolean youagr = (magr == &g.youmonst), youdef = (mdef == &g.youmonst);
@@ -1648,8 +1654,8 @@ m_slips_free(struct monst *mdef, struct attack *mattk)
     if (obj && (obj->greased || obj->otyp == OILSKIN_CLOAK)
         && (!obj->cursed || rn2(3))) {
         You("%s %s %s %s!",
-            mattk->adtyp == AD_WRAP ? "slip off of"
-                                    : "grab, but cannot hold onto",
+            (mattk->adtyp == AD_WRAP) ? "slip off of"
+                                      : "grab, but cannot hold onto",
             s_suffix(mon_nam(mdef)), obj->greased ? "greased" : "slippery",
             /* avoid "slippery slippery cloak"
                for undiscovered oilskin cloak */
@@ -2844,10 +2850,12 @@ mhitm_ad_stck(
 }
 
 void
-mhitm_ad_wrap(struct monst *magr, struct attack *mattk, struct monst *mdef,
-              struct mhitm_data *mhm)
+mhitm_ad_wrap(
+    struct monst *magr, struct attack *mattk,
+    struct monst *mdef, struct mhitm_data *mhm)
 {
-    struct permonst *pd = mdef->data;
+    struct permonst *pd = mdef->data, *pa = magr->data;
+    boolean coil = slithy(pa) && (pa->mlet == S_SNAKE || pa->mlet == S_NAGA);
 
     if (magr == &g.youmonst) {
         /* uhitm */
@@ -2856,7 +2864,8 @@ mhitm_ad_wrap(struct monst *magr, struct attack *mattk, struct monst *mdef,
                 if (m_slips_free(mdef, mattk)) {
                     mhm->damage = 0;
                 } else {
-                    You("swing yourself around %s!", mon_nam(mdef));
+                    You("%s yourself around %s!",
+                        coil ? "coil" : "swing", mon_nam(mdef));
                     set_ustuck(mdef);
                 }
             } else if (u.ustuck == mdef) {
@@ -2869,9 +2878,13 @@ mhitm_ad_wrap(struct monst *magr, struct attack *mattk, struct monst *mdef,
                     pline("%s is being crushed.", Monnam(mdef));
             } else {
                 mhm->damage = 0;
-                if (Verbose(4, mhitm_ad_wrap1))
-                    You("brush against %s %s.", s_suffix(mon_nam(mdef)),
-                        mbodypart(mdef, LEG));
+                if (Verbose(4, mhitm_ad_wrap1)) {
+                    if (coil)
+                        You("brush against %s.", mon_nam(mdef));
+                    else
+                        You("brush against %s %s.", s_suffix(mon_nam(mdef)),
+                            mbodypart(mdef, LEG));
+                }
             }
         } else
             mhm->damage = 0;
@@ -2883,8 +2896,8 @@ mhitm_ad_wrap(struct monst *magr, struct attack *mattk, struct monst *mdef,
                     mhm->damage = 0;
                 } else {
                     set_ustuck(magr); /* before message, for botl update */
-                    urgent_pline("%s swings itself around you!",
-                                 Monnam(magr));
+                    urgent_pline("%s %s itself around you!",
+                                 Some_Monnam(magr), coil ? "coils" : "swings");
                 }
             } else if (u.ustuck == magr) {
                 if (is_pool(magr->mx, magr->my) && !Swimming && !Amphibious) {
@@ -2904,9 +2917,13 @@ mhitm_ad_wrap(struct monst *magr, struct attack *mattk, struct monst *mdef,
                 }
             } else {
                 mhm->damage = 0;
-                if (Verbose(4, mhitm_ad_wrap2))
-                    pline("%s brushes against your %s.", Monnam(magr),
-                          body_part(LEG));
+                if (Verbose(4, mhitm_ad_wrap2)) {
+                    if (coil)
+                        pline("%s brushes against you.", Monnam(magr));
+                    else
+                        pline("%s brushes against your %s.", Monnam(magr),
+                              body_part(LEG));
+                }
             }
         } else
             mhm->damage = 0;
@@ -2918,8 +2935,9 @@ mhitm_ad_wrap(struct monst *magr, struct attack *mattk, struct monst *mdef,
 }
 
 void
-mhitm_ad_plys(struct monst *magr, struct attack *mattk, struct monst *mdef,
-              struct mhitm_data *mhm)
+mhitm_ad_plys(
+    struct monst *magr, struct attack *mattk,
+    struct monst *mdef, struct mhitm_data *mhm)
 {
     boolean negated = mhitm_mgc_atk_negated(magr, mdef);
 
@@ -3415,8 +3433,9 @@ do_stone_mon(struct monst *magr, struct attack *mattk UNUSED,
 }
 
 void
-mhitm_ad_phys(struct monst *magr, struct attack *mattk, struct monst *mdef,
-              struct mhitm_data *mhm)
+mhitm_ad_phys(
+    struct monst *magr, struct attack *mattk,
+    struct monst *mdef, struct mhitm_data *mhm)
 {
     struct permonst *pa = magr->data;
     struct permonst *pd = mdef->data;
@@ -3544,11 +3563,12 @@ mhitm_ad_phys(struct monst *magr, struct attack *mattk, struct monst *mdef,
     } else {
         /* mhitm */
         struct obj *mwep = MON_WEP(magr);
+        boolean vis = canseemon(magr) && canseemon(mdef);
 
         if (mattk->aatyp != AT_WEAP && mattk->aatyp != AT_CLAW)
             mwep = 0;
 
-        if (shade_miss(magr, mdef, mwep, FALSE, TRUE)) {
+        if (shade_miss(magr, mdef, mwep, FALSE, vis)) {
             mhm->damage = 0;
         } else if (mattk->aatyp == AT_KICK && thick_skinned(pd)) {
             /* [no 'kicking boots' check needed; monsters with kick attacks
@@ -4170,8 +4190,9 @@ mhitm_ad_ssex(struct monst *magr, struct attack *mattk, struct monst *mdef,
 }
 
 void
-mhitm_adtyping(struct monst *magr, struct attack *mattk, struct monst *mdef,
-               struct mhitm_data *mhm)
+mhitm_adtyping(
+    struct monst *magr, struct attack *mattk,
+    struct monst *mdef, struct mhitm_data *mhm)
 {
     switch (mattk->adtyp) {
     case AD_STUN: mhitm_ad_stun(magr, mattk, mdef, mhm); break;
@@ -4345,11 +4366,7 @@ end_engulf(void)
 static int
 gulpum(struct monst *mdef, struct attack *mattk)
 {
-#ifdef LINT /* static char msgbuf[BUFSZ]; */
-    char msgbuf[BUFSZ];
-#else
     static char msgbuf[BUFSZ]; /* for g.nomovemsg */
-#endif
     register int tmp;
     register int dam = d((int) mattk->damn, (int) mattk->damd);
     boolean fatal_gulp, u_digest = digests(g.youmonst.data);
@@ -4449,8 +4466,9 @@ gulpum(struct monst *mdef, struct attack *mattk)
                         && !(g.mvitals[monsndx(pd)].mvflags & G_NOCORPSE)) {
                         /* nutrition only if there can be a corpse */
                         u.uhunger += (pd->cnutrit + 1) / 2;
-                    } else
+                    } else {
                         tmp = 0;
+                    }
                     Sprintf(msgbuf, "You totally digest %s.", mon_nam(mdef));
                     if (tmp != 0) {
                         /* setting afternmv = end_engulf is tempting,
@@ -4464,6 +4482,9 @@ gulpum(struct monst *mdef, struct attack *mattk)
                         nomul(-tmp);
                         g.multi_reason = "digesting something";
                         g.nomovemsg = msgbuf;
+                        /* possible intrinsic once totally digested */
+                        g.corpsenm_digested = monsndx(pd);
+                        g.afternmv = Finish_digestion;
                     } else
                         pline1(msgbuf);
                     if (pd == &mons[PM_GREEN_SLIME]) {
@@ -4586,19 +4607,32 @@ missum(
         wakeup(mdef, TRUE);
 }
 
+/* check whether equipment protects against knockback */
 static boolean
 m_is_steadfast(struct monst *mtmp)
 {
     boolean is_u = (mtmp == &g.youmonst);
     struct obj *otmp = is_u ? uwep : MON_WEP(mtmp);
 
-    /* must be on the ground */
-    if (is_u ? (Flying || Levitation)
-             : (is_flyer(mtmp->data) || is_floater(mtmp->data)))
+    /* must be on the ground (or in water) */
+    if ((is_u ? (Flying || Levitation)
+              : (is_flyer(mtmp->data) || is_floater(mtmp->data)))
+        || Is_airlevel(&u.uz) /* air or cloud */
+        || (Is_waterlevel(&u.uz) && !is_pool(u.ux, u.uy))) /* air bubble */
         return FALSE;
 
     if (is_art(otmp, ART_GIANTSLAYER))
         return TRUE;
+
+    /* steadfast if carrying any loadstone (and not floating or flying);
+       'is_u' test not needed here; m_carrying() is 'youmonst' aware */
+    if (m_carrying(mtmp, LOADSTONE))
+        return TRUE;
+    /* when mounted and steed is target of knockback, check the rider for
+       a loadstone too (Giantslayer's protection doesn't extend to steed) */
+    if (u.usteed && mtmp == u.usteed && carrying(LOADSTONE))
+        return TRUE;
+
     return FALSE;
 }
 
@@ -4611,6 +4645,7 @@ mhitm_knockback(
     int *hitflags,        /* modified if magr or mdef dies */
     boolean weapon_used)  /* True: via weapon hit */
 {
+    char magrbuf[BUFSZ], mdefbuf[BUFSZ];
     struct obj *otmp;
     boolean u_agr = (magr == &g.youmonst);
     boolean u_def = (mdef == &g.youmonst);
@@ -4655,12 +4690,21 @@ mhitm_knockback(
         return FALSE;
 
     /* steadfast defender cannot be pushed around */
-    if (m_is_steadfast(mdef))
+    if (m_is_steadfast(mdef)) {
+        if (u_def || (u.usteed && mdef == u.usteed)) {
+            mdefbuf[0] = '\0';
+            if (u.usteed)
+                Snprintf(mdefbuf, sizeof mdefbuf, "and %s ",
+                         y_monnam(u.usteed));
+            You("%sdon't budge.", mdefbuf);
+        } else if (canseemon(mdef)) {
+            pline("%s doesn't budge.", Monnam(mdef));
+        }
         return FALSE;
+    }
 
     /* give the message */
     if (u_def || canseemon(mdef)) {
-        char magrbuf[BUFSZ], mdefbuf[BUFSZ];
         boolean dosteed = u_def && u.usteed;
 
         Strcpy(magrbuf, u_agr ? "You" : Monnam(magr));
@@ -4684,10 +4728,15 @@ mhitm_knockback(
 
     /* do the actual knockback effect */
     if (u_def) {
+        /* normally dx,dy indicates direction hero is throwing, zapping, &c
+           but here it is used to pass the preferred direction for dismount
+           to dismount_steed (used for DISMOUNT_KNOCKED only) */
+        u.dx = sgn(u.ux - magr->mx); /* [sgn() is superfluous here] */
+        u.dy = sgn(u.uy - magr->my); /* [ditto] */
         if (u.usteed)
             dismount_steed(DISMOUNT_KNOCKED);
         else
-            hurtle(u.ux - magr->mx, u.uy - magr->my, rnd(2), FALSE);
+            hurtle(u.dx, u.dy, rnd(2), FALSE);
 
         set_apparxy(magr); /* update magr's idea of where you are */
         if (!rn2(4))

@@ -154,9 +154,9 @@ moverock(void)
     register coordxy rx, ry, sx, sy;
     struct obj *otmp;
     struct trap *ttmp;
-    struct monst *mtmp;
+    struct monst *mtmp, *shkp;
     const char *what;
-    boolean firstboulder = TRUE;
+    boolean costly, firstboulder = TRUE;
     int res = 0;
 
     sx = u.ux + u.dx, sy = u.uy + u.dy; /* boulder starting position */
@@ -243,6 +243,8 @@ moverock(void)
                 || doorless_door(rx, ry)) && !sobj_at(BOULDER, rx, ry)) {
             ttmp = t_at(rx, ry);
             mtmp = m_at(rx, ry);
+            costly = (!otmp->no_charge && costly_spot(sx, sy)
+                      && shop_keeper(*in_rooms(sx, sy, SHOPBASE)));
 
             /* KMH -- Sokoban doesn't let you push boulders diagonally */
             if (Sokoban && u.dx && u.dy) {
@@ -353,7 +355,7 @@ moverock(void)
                               (ttmp->ttyp == TRAPDOOR) ? "trap door" : "hole",
                               surface(rx, ry));
                     deltrap(ttmp);
-                    delobj(otmp);
+                    useupf(otmp, 1L);
                     bury_objs(rx, ry);
                     levl[rx][ry].wall_info &= ~W_NONDIGGABLE;
                     levl[rx][ry].candig = 1;
@@ -380,6 +382,8 @@ moverock(void)
                     if (ttmp->ttyp == TELEP_TRAP) {
                         (void) rloco(otmp);
                     } else {
+                        if (costly)
+                            addtobill(otmp, FALSE, FALSE, FALSE);
                         obj_extract_self(otmp);
                         add_to_migration(otmp);
                         get_level(&dest, newlev);
@@ -410,13 +414,8 @@ moverock(void)
             }
 
             {
-#ifdef LINT /* static long lastmovetime; */
-                long lastmovetime;
-                lastmovetime = 0;
-#else
                 /* note: reset to zero after save/restore cycle */
                 static NEARDATA long lastmovetime;
-#endif
  dopush:
                 what = the(xname(otmp));
                 if (!u.usteed) {
@@ -443,6 +442,15 @@ moverock(void)
                 feel_location(sx, sy);
             } else {
                 newsym(sx, sy);
+            }
+            /* maybe adjust bill if boulder was pushed across shop boundary */
+            if (costly && !costly_spot(rx, ry)) {
+                addtobill(otmp, FALSE, FALSE, FALSE);
+            } else if (!costly && costly_spot(rx, ry) && otmp->unpaid
+                       && ((shkp = shop_keeper(*in_rooms(rx, ry, SHOPBASE)))
+                           != 0)
+                       && onshopbill(otmp, shkp, TRUE)) {
+                subfrombill(otmp, shkp);
             }
         } else {
  nopushmsg:
@@ -1684,7 +1692,10 @@ domove_bump_mon(struct monst *mtmp, int glyph)
    sets displaceu, if hero and monster could swap places instead.
 */
 static boolean
-domove_attackmon_at(struct monst *mtmp, coordxy x, coordxy y, boolean *displaceu)
+domove_attackmon_at(
+    struct monst *mtmp,
+    coordxy x, coordxy y,
+    boolean *displaceu)
 {
     /* only attack if we know it's there */
     /* or if we used the 'F' command to fight blindly */
@@ -1899,14 +1910,15 @@ domove_fight_empty(coordxy x, coordxy y)
     int glyph = !off_edge ? glyph_at(x, y) : GLYPH_UNEXPLORED;
 
     if (off_edge)
-        x = y = 0; /* for forcefight against the edge of the map; make
-                    * sure 'bad' coordinates are within array bounds in
-                    * case a bounds check gets overlooked */
+        x = 0, y = 1; /* for forcefight against the edge of the map; make
+                       * sure 'bad' coordinates are within array bounds in
+                       * case a bounds check gets overlooked; avoid <0,0>
+                       * because m_at() might find a vault guard there */
 
     /* specifying 'F' with no monster wastes a turn */
     if (g.context.forcefight
         /* remembered an 'I' && didn't use a move command */
-        || (glyph_is_invisible(glyph) && !g.context.nopick)) {
+        || (glyph_is_invisible(glyph) && !m_at(x, y) && !g.context.nopick)) {
         struct obj *boulder = 0;
         boolean explo = (Upolyd && attacktype(g.youmonst.data, AT_EXPL)),
                 solid = (off_edge || (!accessible(x, y)
@@ -2065,7 +2077,6 @@ slippery_ice_fumbling(void)
             || resists_cold(&g.youmonst) || Flying
             || is_floater(g.youmonst.data) || is_clinger(g.youmonst.data)
             || is_whirly(g.youmonst.data)) {
-            pline("skates!");
             on_ice = FALSE;
         } else if (!rn2(Cold_resistance ? 3 : 2)) {
             HFumbling |= FROMOUTSIDE;
@@ -2445,6 +2456,9 @@ domove_core(void)
     }
 
     if (displaceu && mtmp) {
+        boolean noticed_it = (canspotmon(mtmp) || glyph_is_invisible(glyph)
+                              || glyph_is_warning(glyph));
+
         remove_monster(u.ux, u.uy);
         place_monster(mtmp, u.ux0, u.uy0);
         newsym(u.ux, u.uy);
@@ -2452,7 +2466,10 @@ domove_core(void)
         /* monst still knows where hero is */
         mtmp->mux = u.ux, mtmp->muy = u.uy;
 
-        pline("%s swaps places with you...", Monnam(mtmp));
+        pline("%s swaps places with you...",
+              !noticed_it ? Something : Monnam(mtmp));
+        if (!canspotmon(mtmp))
+            map_invisible(u.ux0, u.uy0);
         /* monster chose to swap places; hero doesn't get any credit
            or blame if something bad happens to it */
         g.context.mon_moving = 1;
@@ -2918,7 +2935,7 @@ monstinroom(struct permonst *mdat, int roomno)
         if (DEADMONSTER(mtmp))
             continue;
         if (mtmp->data == mdat
-            && index(in_rooms(mtmp->mx, mtmp->my, 0), roomno + ROOMOFFSET))
+            && strchr(in_rooms(mtmp->mx, mtmp->my, 0), roomno + ROOMOFFSET))
             return mtmp;
     }
     return (struct monst *) 0;
@@ -2970,19 +2987,19 @@ in_rooms(register coordxy x, register coordxy y, register int typewanted)
     for (x = min_x; x <= max_x; x += step) {
         lev = &levl[x][min_y];
         y = 0;
-        if ((rno = lev[y].roomno) >= ROOMOFFSET && !index(ptr, rno)
+        if ((rno = lev[y].roomno) >= ROOMOFFSET && !strchr(ptr, rno)
             && goodtype(rno))
             *(--ptr) = rno;
         y += step;
         if (y > max_y_offset)
             continue;
-        if ((rno = lev[y].roomno) >= ROOMOFFSET && !index(ptr, rno)
+        if ((rno = lev[y].roomno) >= ROOMOFFSET && !strchr(ptr, rno)
             && goodtype(rno))
             *(--ptr) = rno;
         y += step;
         if (y > max_y_offset)
             continue;
-        if ((rno = lev[y].roomno) >= ROOMOFFSET && !index(ptr, rno)
+        if ((rno = lev[y].roomno) >= ROOMOFFSET && !strchr(ptr, rno)
             && goodtype(rno))
             *(--ptr) = rno;
     }
@@ -3035,11 +3052,11 @@ move_update(register boolean newlev)
     for (ptr1 = u.urooms, ptr2 = u.uentered,
          ptr3 = u.ushops, ptr4 = u.ushops_entered; *ptr1; ptr1++) {
         c = *ptr1;
-        if (!index(u.urooms0, c))
+        if (!strchr(u.urooms0, c))
             *ptr2++ = c;
         if (IS_SHOP(c - ROOMOFFSET)) {
             *ptr3++ = c;
-            if (!index(u.ushops0, c))
+            if (!strchr(u.ushops0, c))
                 *ptr4++ = c;
         }
     }
@@ -3047,7 +3064,7 @@ move_update(register boolean newlev)
 
     /* filter u.ushops0 -> u.ushops_left */
     for (ptr1 = u.ushops0, ptr2 = u.ushops_left; *ptr1; ptr1++)
-        if (!index(u.ushops, *ptr1))
+        if (!strchr(u.ushops, *ptr1))
             *ptr2++ = *ptr1;
     *ptr2 = '\0';
 }
@@ -3646,7 +3663,7 @@ maybe_wail(void)
 }
 
 void
-losehp(int n, const char *knam, boolean k_format)
+losehp(int n, const char *knam, schar k_format)
 {
 #if 0   /* code below is prepared to handle negative 'loss' so don't add this
          * until we've verified that no callers intentionally rely on that */

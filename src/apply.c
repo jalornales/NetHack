@@ -3288,15 +3288,16 @@ use_pole(struct obj *obj, boolean autohit)
     cc.y = u.uy;
     if (!find_poleable_mon(&cc, min_range, max_range) && hitm
         && !DEADMONSTER(hitm) && sensemon(hitm)
-        && distu(hitm->mx, hitm->my) <= max_range
-        && distu(hitm->mx, hitm->my) >= min_range) {
+        && mdistu(hitm) <= max_range && mdistu(hitm) >= min_range) {
         cc.x = hitm->mx;
         cc.y = hitm->my;
     }
     if (!autohit) {
-        getpos_sethilite(display_polearm_positions, get_valid_polearm_position);
+        getpos_sethilite(display_polearm_positions,
+                         get_valid_polearm_position);
         if (getpos(&cc, TRUE, "the spot to hit") < 0)
-            return (res|ECMD_CANCEL); /* ESC; uses turn iff polearm became wielded */
+            /* ESC; uses turn iff polearm became wielded */
+            return (res | ECMD_CANCEL);
     }
 
     glyph = glyph_at(cc.x, cc.y);
@@ -3537,7 +3538,8 @@ use_grapple(struct obj *obj)
     cc.y = u.uy;
     getpos_sethilite(NULL, can_grapple_location);
     if (getpos(&cc, TRUE, "the spot to hit") < 0)
-        return (res|ECMD_CANCEL); /* ESC; uses turn iff grapnel became wielded */
+        /* ESC; uses turn iff grapnel became wielded */
+        return (res | ECMD_CANCEL);
 
     /* Calculate range; unlike use_pole(), there's no minimum for range */
     typ = uwep_skill_type();

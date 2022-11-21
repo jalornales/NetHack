@@ -1134,13 +1134,46 @@ cond_menu(void)
         }
     } while (showmenu);
 
-    if (res > 0) {
+    if (res >= 0) {
         for (i = 0; i < CONDITION_COUNT; ++i)
             if (condtests[i].enabled != condtests[i].choice) {
                 condtests[i].enabled = condtests[i].choice;
                 g.context.botl = TRUE;
             }
     }
+    return;
+}
+
+/* called by all_options_conds() to get value for next cond_xyz option
+   so that #saveoptions can collect it and write the set into new RC file */
+boolean
+opt_next_cond(int indx, char *outbuf)
+{
+    *outbuf = '\0';
+    if (indx >= CONDITION_COUNT)
+        return FALSE;
+
+    /*
+     * The entries are returned in internal order which requires the
+     * least code.  It would be easy to sort them into alphabetic order
+     * (just sort all over again for every requested entry:
+     *  int i, sequence[CONDITION_COUNT]
+     *  for (i = 0; i < CONDITION_COUNT; ++i) sequence[i] = i;
+     *  qsort(sequence, ..., menualpha_cmp);
+     *  indx = sequence[indx];
+     *  Sprintf(outbuf, ...);
+     * with no need to hang on to 'sequence[]' between calls).
+     *
+     * But using 'severity order' isn't feasible unless the player has
+     * used 'mO' on conditions in this session.  Even then, they would
+     * revert to the default order (whether internal or alphabetical)
+     * if #saveoptions got used in some later session where doset()
+     * wasn't used to choose their preferred order.
+     */
+
+    Sprintf(outbuf, "%scond_%s", condtests[indx].enabled ? "" : "!",
+            condtests[indx].useroption);
+    return TRUE;
 }
 
 static boolean
@@ -2257,7 +2290,7 @@ has_ltgt_percentnumber(const char *str)
     const char *s = str;
 
     while (*s) {
-        if (!index("<>=-+0123456789%", *s))
+        if (!strchr("<>=-+0123456789%", *s))
             return FALSE;
         s++;
     }
@@ -2282,7 +2315,7 @@ splitsubfields(char *str, char ***sfarr, int maxsf)
 
     maxsf = (maxsf == 0) ? MAX_SUBFIELDS : min(maxsf, MAX_SUBFIELDS);
 
-    if (index(str, '+') || index(str, '&')) {
+    if (strchr(str, '+') || strchr(str, '&')) {
         char *c = str;
 
         sf = 0;
@@ -3580,7 +3613,7 @@ status_hilite_menu_add(int origfld)
                 goto choose_value;
             }
             /* restore suffix for use in color and attribute prompts */
-            if (!index(numstart, '%'))
+            if (!strchr(numstart, '%'))
                 Strcat(numstart, "%");
 
         /* reject negative values except for AC and >-1; reject 0 for < */

@@ -33,8 +33,7 @@ mb_trapped(struct monst *mtmp, boolean canseeit)
             pline("KABOOM!!  You see a door explode.");
         else if (!Deaf)
             You_hear("a %s explosion.",
-                     (distu(mtmp->mx, mtmp->my) > 7 * 7) ? "distant"
-                                                         : "nearby");
+                     (mdistu(mtmp) > 7 * 7) ? "distant" : "nearby");
     }
     wake_nearto(mtmp->mx, mtmp->my, 7 * 7);
     mtmp->mstun = 1;
@@ -153,7 +152,7 @@ dochugw(
         /* monster is hostile and can attack (or hallu distorts knowledge) */
         && (Hallucination || (!mtmp->mpeaceful && !noattacks(mtmp->data)))
         /* it's close enough to be a threat */
-        && distu(mtmp->mx, mtmp->my) <= (BOLT_LIM + 1) * (BOLT_LIM + 1)
+        && mdistu(mtmp) <= (BOLT_LIM + 1) * (BOLT_LIM + 1)
         /* and either couldn't see it before, or it was too far away */
         && (!already_saw_mon || !couldsee(x, y)
             || distu(x, y) > (BOLT_LIM + 1) * (BOLT_LIM + 1))
@@ -167,8 +166,10 @@ dochugw(
 }
 
 boolean
-onscary(coordxy x, coordxy y, struct monst* mtmp)
+onscary(coordxy x, coordxy y, struct monst *mtmp)
 {
+    struct engr *ep;
+
     /* creatures who are directly resistant to magical scaring:
      * humans aren't monsters
      * uniques have ascended their base monster instincts
@@ -208,14 +209,15 @@ onscary(coordxy x, coordxy y, struct monst* mtmp)
      * Elbereth doesn't work in Gehennom, the Elemental Planes, or the
      * Astral Plane; the influence of the Valar only reaches so far.
      */
-    return (sengr_at("Elbereth", x, y, TRUE)
-            && (u_at(x, y) || (Displaced && mtmp->mux == x && mtmp->muy == y))
+    return ((ep = sengr_at("Elbereth", x, y, TRUE)) != 0
+            && (u_at(x, y)
+                || (Displaced && mtmp->mux == x && mtmp->muy == y)
+                || (ep->guardobjects && vobj_at(x, y)))
             && !(mtmp->isshk || mtmp->isgd || !mtmp->mcansee
                  || mtmp->mpeaceful || mtmp->data->mlet == S_HUMAN
                  || mtmp->data == &mons[PM_MINOTAUR]
                  || Inhell || In_endgame(&u.uz)));
 }
-
 
 /* regenerate lost hit points */
 void
@@ -254,7 +256,7 @@ disturb(register struct monst *mtmp)
      *  Aggravate or mon is (dog or human) or
      *      (1/7 and mon is not mimicing furniture or object)
      */
-    if (couldsee(mtmp->mx, mtmp->my) && distu(mtmp->mx, mtmp->my) <= 100
+    if (couldsee(mtmp->mx, mtmp->my) && mdistu(mtmp) <= 100
         && (!Stealth || (mtmp->data == &mons[PM_ETTIN] && rn2(10)))
         && (!(mtmp->data->mlet == S_NYMPH
               || mtmp->data == &mons[PM_JABBERWOCK]
@@ -474,7 +476,7 @@ mind_blast(register struct monst* mtmp)
 
     if (canseemon(mtmp))
         pline("%s concentrates.", Monnam(mtmp));
-    if (distu(mtmp->mx, mtmp->my) > BOLT_LIM * BOLT_LIM) {
+    if (mdistu(mtmp) > BOLT_LIM * BOLT_LIM) {
         You("sense a faint wave of psychic energy.");
         return;
     }
@@ -779,6 +781,9 @@ dochug(register struct monst* mtmp)
                 newsym(mtmp->mx, mtmp->my);
             break;
         case MMOVE_MOVED: /* monster moved */
+            /* if confused grabber has wandered off, let go */
+            if (mtmp == u.ustuck && !next2u(mtmp->mx, mtmp->my))
+                unstuck(mtmp);
             /* Maybe it stepped on a trap and fell asleep... */
             if (helpless(mtmp))
                 return 0;
@@ -788,17 +793,11 @@ dochug(register struct monst* mtmp)
                             || attacktype(mdat, AT_WEAP)
                             || find_offensive(mtmp)))
                 break;
-            /* engulfer/grabber checks */
-            if (mtmp == u.ustuck) {
-                /* a monster that's digesting you can move at the
-                 * same time -dlc
-                 */
-                if (u.uswallow)
-                    return mattacku(mtmp);
-                /* if confused grabber has wandered off, let go */
-                if (!next2u(mtmp->mx, mtmp->my))
-                    unstuck(mtmp);
-            }
+            /* a monster that's digesting you can move at the
+             * same time -dlc
+             */
+            if (engulfing_u(mtmp))
+                return mattacku(mtmp);
             return 0;
         case MMOVE_DIED: /* monster died */
             return 1;
@@ -1333,18 +1332,18 @@ m_move(register struct monst* mtmp, register int after)
                     }
 
                     if (((likegold && otmp->oclass == COIN_CLASS)
-                         || (likeobjs && index(practical, otmp->oclass)
+                         || (likeobjs && strchr(practical, otmp->oclass)
                              && (otmp->otyp != CORPSE
                                  || (ptr->mlet == S_NYMPH
                                      && !is_rider(&mons[otmp->corpsenm]))))
-                         || (likemagic && index(magical, otmp->oclass))
+                         || (likemagic && strchr(magical, otmp->oclass))
                          || (uses_items && searches_for_item(mtmp, otmp))
                          || (likerock && otmp->otyp == BOULDER)
                          || (likegems && otmp->oclass == GEM_CLASS
                              && objects[otmp->otyp].oc_material != MINERAL)
                          || (conceals && !cansee(otmp->ox, otmp->oy))
                          || (ptr == &mons[PM_GELATINOUS_CUBE]
-                             && !index(indigestion, otmp->oclass)
+                             && !strchr(indigestion, otmp->oclass)
                              && !(otmp->otyp == CORPSE
                                   && touch_petrifies(&mons[otmp->corpsenm]))))
                         && touch_artifact(otmp, mtmp)) {

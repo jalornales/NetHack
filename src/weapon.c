@@ -165,7 +165,7 @@ hitval(struct obj *otmp, struct monst *mon)
     if (Is_weapon && otmp->blessed && mon_hates_blessings(mon))
         tmp += 2;
 
-    if (is_spear(otmp) && index(kebabable, ptr->mlet))
+    if (is_spear(otmp) && strchr(kebabable, ptr->mlet))
         tmp += 2;
 
     /* trident is highly effective against swimmers */
@@ -863,9 +863,7 @@ mon_wield_item(struct monst *mon)
             /* 3.6.3: artifact might be getting wielded by invisible monst */
             else if (cansee(mon->mx, mon->my))
                 pline("Light begins shining %s.",
-                      (distu(mon->mx, mon->my) <= 5 * 5)
-                          ? "nearby"
-                          : "in the distance");
+                      (mdistu(mon) <= 5 * 5) ? "nearby" : "in the distance");
         }
         obj->owornmask = W_WEP;
         return 1;
