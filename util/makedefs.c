@@ -35,6 +35,10 @@
 #define SpinCursor(x)
 #endif
 
+#ifdef MD_USE_TMPFILE_S
+#include <errno.h>
+#endif
+
 #define Fprintf (void) fprintf
 #define Fclose (void) fclose
 #define Unlink (void) unlink
@@ -374,11 +378,26 @@ getfp(const char* template, const char* tag, const char* mode, int flg)
 {
     char *name = name_file(template, tag);
     FILE *rv = (FILE *) 0;
-#ifndef HAS_NO_MKSTEMP
     boolean istemp = (flg & FLG_TEMPFILE) != 0;
+#if !defined(HAS_NO_MKSTEMP) && !defined(MD_USE_TMPFILE_S)
     char tmpfbuf[MAXFNAMELEN];
     int tmpfd;
+#endif
+#ifdef MD_USE_TMPFILE_S
+    errno_t err;
+#endif
 
+#if defined(MD_USE_TMPFILE_S)
+    if (istemp) {
+        err = tmpfile_s(&rv);
+#if defined(MSDOS) || defined(WIN32)
+        if (!err && (!strcmp(mode, WRTMODE) || !strcmp(mode, RDTMODE))) {
+           _setmode(fileno(rv), O_TEXT);
+        }
+#endif
+    } else
+#else    /* MD_USE_TMPFILE_S */
+#ifndef HAS_NO_MKSTEMP
     if (istemp) {
         (void) snprintf(tmpfbuf, sizeof tmpfbuf, DATA_TEMPLATE, "mdXXXXXX");
         tmpfd = mkstemp(tmpfbuf);
@@ -386,18 +405,17 @@ getfp(const char* template, const char* tag, const char* mode, int flg)
             rv = fdopen(tmpfd, WRTMODE); /* temp file is always read+write */
             Unlink(tmpfbuf);
         }
-    }
-    else
-#else
-        flg; // unused
+    } else
 #endif
-    rv = fopen(name, mode);
+#endif  /* MD_USE_TMPFILE_S */
+        rv = fopen(name, mode);
+
     if (!rv) {
-        Fprintf(stderr, "Can't open '%s'.\n",
-#ifndef HAS_NO_MKSTEMP
+        Fprintf(stderr, "Can't open '%s' (mode=%s).\n",
+#if !defined(HAS_NO_MKSTEMP) && !defined(MD_USE_TMPFILE_S)
                 istemp ? tmpfbuf :
 #endif
-                 name);
+                 name, mode);
         makedefs_exit(EXIT_FAILURE);
         /*NOTREACHED*/
     }
@@ -1077,11 +1095,11 @@ do_rumors(void)
             true_rumor_size, true_rumor_offset, false_rumor_count,
             false_rumor_size, false_rumor_offset, eof_offset);
     /* record the current position; true rumors will start here */
-    true_rumor_offset = ftell(tfp);
+    true_rumor_offset = (unsigned long) ftell(tfp);
 
-    false_rumor_offset = read_rumors_file(".tru", &true_rumor_count,
-                                          &true_rumor_size, true_rumor_offset,
-                                          MD_PAD_RUMORS);
+    false_rumor_offset = (unsigned long) read_rumors_file(".tru", &true_rumor_count,
+                                             &true_rumor_size, true_rumor_offset,
+                                             MD_PAD_RUMORS);
     if (!false_rumor_offset)
         goto rumors_failure;
 
@@ -1241,11 +1259,21 @@ do_date(void)
                     (unsigned long) clocktim);
             (void) fflush(stderr);
         }
+#if !defined(NOSTRFTIME)
+        if (!strftime(cbuf, sizeof cbuf, "%c", gmtime(&clocktim)))
+            cbuf[0] = '\0';
+#else
         Strcpy(cbuf, asctime(gmtime(&clocktim)));
+#endif  /* NOSTRFTIME */
     }
 #else
     /* ordinary build: use current date+time */
+#if !defined(NOSTRFTIME)
+    if (!strftime(cbuf, sizeof cbuf, "%c", localtime(&clocktim)))
+        cbuf[0] = '\0';
+#else
     Strcpy(cbuf, ctime(&clocktim));
+#endif /* NOSTRFTIME */
 #endif /* REPRODUCIBLE_BUILD */
 
     if ((c = strchr(cbuf, '\n')) != 0)
@@ -1979,7 +2007,7 @@ do_objs(void)
     for (i = 0; !i || objects[i].oc_class != ILLOBJ_CLASS; i++) {
         SpinCursor(3);
 
-        objects[i].oc_name_idx = objects[i].oc_descr_idx = i; /* init */
+        objects[i].oc_name_idx = objects[i].oc_descr_idx = (short) i;
         if (!(objnam = tmpdup(OBJ_NAME(objects[i]))))
             continue;
 

@@ -1054,6 +1054,20 @@ phrasing of the "you can't" message when attempting to name any monster
 	defined with a unique name or title sounded strange when rejecting
 	<space> to remove the existing name without assigning a new one
 some instances of using up or stealing shop-owned boulder didn't charge for it
+when hero hears an unseen monster reading a scroll, only describe the monster
+	acccurately if hero is not hallucinating and monster is same species
+	as hero's current form
+don't allow monsters to disarm hero with bullwhip if hero is engulfed
+teleporting an object out of a shop put it on the shop bill instead of dealing
+	with robbery
+map browsing during gold detection didn't describe fake gold marking traps
+	when detection was via cursed scroll
+if hero's action caused engulfer to expel swallowed hero, it might do so onto
+	a level teleporter and then have its memory accessed after being
+	freed when current level was saved in order to load destination level
+throwing recoil while levitating could send hero out of shop while carrying
+	unpaid items, triggering sanity check warnings; once outside, taking
+	a step other than back into the shop was treated as a robbery
 
 
 Fixes to 3.7.0-x Problems that Were Exposed Via git Repository
@@ -1422,6 +1436,11 @@ if hero's steed got hit by knockback effect, impossible "no monster to remove"
 the #saveoptions command included options changed via doset_simple() but not
 	ones changed via full doset()
 fix 'nethack --scores' as alias for 'nethack -s'
+adding command line 'nethack --usage' broke 'nethack -u name' (however,
+	'nethack -uname' still worked for names other than "sage")
+being hit by a big monster and getting knockback effect could send hero out
+	of a shop (or into its "free spot") while carrying unpaid goods;
+	robbery wasn't noticed until hero eventually moved to a different spot
 
 curses: 'msg_window' option wasn't functional for curses unless the binary
 	also included tty support
@@ -1515,6 +1534,7 @@ curses: if a menu of objects contains at least one iron ball, and player is
 	not already in the midst of entering a count, recognize '0' as a
 	group accelerator rather than the start of a count
 curses: obey timed_delay option
+curses: support tty-style extended role/race/&c selection at start of new game
 macOS: Xcode project was failing to build if the path to the NetHack source
 	tree contained a space; the issue was within some shell script code
 	contained within the project
@@ -1659,6 +1679,12 @@ user_sounds: move the message hook from inside individual window display ports
 	issue that the curses port on Windows not working with user_sounds
 Windows: update for new status condition fields
 Windows: include commented-out 'PORTABLE_DEVICE_PATHS' in sysconf.template
+Windows: When there was no interesting background in get_bk_glyph()
+	in display.c, a default value of GLYPH_UNEXPLORED was returned to
+	the caller and then passed on to the interface; the graphical
+	Windows version, NetHackW.exe, was trying to use the tile mapped to
+	GLYPH_UNEXPLORED as a background tile to merge with the
+	foreground tile, so check for GLYPH_UNEXPLORED and bypass that
 X11: substantial overhaul of status display, both 'fancy' and 'tty-style'
 X11: extend fancy status one-turn inverse video status-change highlighting to
 	hunger, encumbrance, and conditions
@@ -1877,6 +1903,8 @@ very large humanoids can wear mummy wrappings
 for ranger characters, shooting any type of arrow while wielding the Longbow
 	of Diana gets an extra +1 to multi-shot
 change the #vanquished command from debug-only to general user command
+have 'I u' mention whether there are any unpaid items on the floor (unusual
+	but not impossible); it doesn't itemize them or show shop price
 
 
 Platform- and/or Interface-Specific New Features

@@ -41,6 +41,7 @@
         char *          visctrl         (char)
         char *          strsubst        (char *, const char *, const char *)
         int             strNsubst       (char *,const char *,const char *,int)
+        const char *    findword        (const char *,const char *,int,boolean)
         const char *    ordin           (int)
         char *          sitoa           (int)
         int             sgn             (int)
@@ -615,6 +616,30 @@ strNsubst(
     return rcount;
 }
 
+/* search for a word in a space-separated list; returns non-Null if found */
+const char *
+findword(
+    const char *list,   /* string of space-separated words */
+    const char *word,   /* word to try to find */
+    int wordlen,        /* so that it isn't required to be \0 terminated */
+    boolean ignorecase) /* T: case-blind, F: case-sensitive */
+{
+    const char *p = list;
+
+    while (p) {
+        while (*p == ' ')
+            ++p;
+        if (!*p)
+            break;
+        if ((ignorecase ? !strncmpi(p, word, wordlen)
+                        : !strncmp(p, word, wordlen))
+            && (p[wordlen] == '\0' || p[wordlen] == ' '))
+            return p;
+        p = strchr(p + 1, ' ');
+    }
+    return (const char *) 0;
+}
+
 /* return the ordinal suffix of a number */
 const char *
 ordin(int n)               /* note: should be non-negative */
@@ -721,7 +746,7 @@ isqrt(int val)
 
 /* are two points lined up (on a straight line)? */
 boolean
-online2(int x0, int y0, int x1, int y1)
+online2(coordxy x0, coordxy y0, coordxy x1, coordxy y1)
 {
     int dx = x0 - x1, dy = y0 - y1;
     /*  If either delta is zero then they're on an orthogonal line,

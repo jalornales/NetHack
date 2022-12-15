@@ -1,4 +1,4 @@
-/* NetHack 3.7	extern.h	$NHDT-Date: 1657918089 2022/07/15 20:48:09 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.1132 $ */
+/* NetHack 3.7	extern.h	$NHDT-Date: 1670662098 2022/12/10 08:48:18 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.1204 $ */
 /* Copyright (c) Steve Creps, 1988.                               */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -154,8 +154,8 @@ extern void lift_covet_and_placebc(int);
 #endif
 extern void set_bc(int);
 extern void move_bc(int, int, coordxy, coordxy, coordxy, coordxy);
-extern boolean drag_ball(coordxy, coordxy, int *, coordxy *, coordxy *, coordxy *,
-                         coordxy *, boolean *, boolean);
+extern boolean drag_ball(coordxy, coordxy, int *, coordxy *, coordxy *,
+                         coordxy *, coordxy *, boolean *, boolean);
 extern void drop_ball(coordxy, coordxy);
 extern void drag_down(void);
 extern void bc_sanity_check(void);
@@ -648,8 +648,8 @@ extern int breaks(struct obj *, coordxy, coordxy);
 extern void release_camera_demon(struct obj *, coordxy, coordxy);
 extern void breakobj(struct obj *, coordxy, coordxy, boolean, boolean);
 extern boolean breaktest(struct obj *);
-extern boolean walk_path(coord *, coord *, boolean(*)(void *, coordxy, coordxy),
-                         genericptr_t);
+extern boolean walk_path(coord *, coord *,
+                         boolean(*)(void *, coordxy, coordxy), genericptr_t);
 extern boolean hurtle_jump(genericptr_t, coordxy, coordxy);
 extern boolean hurtle_step(genericptr_t, coordxy, coordxy);
 
@@ -784,12 +784,12 @@ extern void done_in_by(struct monst *, int);
 extern void done_object_cleanup(void);
 #endif /* !MAKEDEFS_C && MDLIB_C && !CPPREGEX_C */
 #if !defined(CPPREGEX_C)
-extern void panic(const char *, ...) PRINTF_F(1, 2) NORETURN;
+ATTRNORETURN extern void panic(const char *, ...) PRINTF_F(1, 2) NORETURN;
 #endif
 #if !defined(MAKEDEFS_C) && !defined(MDLIB_C) && !defined(CPPREGEX_C)
 extern void done(int);
 extern void container_contents(struct obj *, boolean, boolean, boolean);
-extern void nh_terminate(int) NORETURN;
+ATTRNORETURN extern void nh_terminate(int) NORETURN;
 extern void delayed_killer(int, int, const char *);
 extern struct kinfo *find_delayed_killer(int);
 extern void dealloc_killer(struct kinfo *);
@@ -1021,6 +1021,7 @@ extern char *tabexpand(char *);
 extern char *visctrl(char);
 extern char *strsubst(char *, const char *, const char *);
 extern int strNsubst(char *, const char *, const char *, int);
+extern const char *findword(const char *, const char *, int, boolean);
 extern const char *ordin(int);
 extern char *sitoa(int);
 extern int sgn(int);
@@ -1028,7 +1029,7 @@ extern int rounddiv(long, int);
 extern int dist2(coordxy, coordxy, coordxy, coordxy);
 extern int isqrt(int);
 extern int distmin(coordxy, coordxy, coordxy, coordxy);
-extern boolean online2(int, int, int, int);
+extern boolean online2(coordxy, coordxy, coordxy, coordxy);
 extern boolean pmatch(const char *, const char *);
 extern boolean pmatchi(const char *, const char *);
 extern boolean pmatchz(const char *, const char *);
@@ -1411,9 +1412,10 @@ extern void mazexy(coord *);
 extern void get_level_extends(coordxy *, coordxy *, coordxy *, coordxy *);
 extern void bound_digging(void);
 extern void mkportal(coordxy, coordxy, xint16, xint16);
-extern boolean bad_location(coordxy, coordxy, coordxy, coordxy, coordxy, coordxy);
-extern void place_lregion(coordxy, coordxy, coordxy, coordxy, coordxy, coordxy, coordxy,
-                          coordxy, xint16, d_level *);
+extern boolean bad_location(coordxy, coordxy, coordxy, coordxy, coordxy,
+                            coordxy);
+extern void place_lregion(coordxy, coordxy, coordxy, coordxy, coordxy,
+                          coordxy, coordxy, coordxy, xint16, d_level *);
 extern void fixup_special(void);
 extern void fumaroles(void);
 extern void movebubbles(void);
@@ -1480,6 +1482,7 @@ extern void set_bknown(struct obj *, unsigned);
 extern boolean is_flammable(struct obj *);
 extern boolean is_rottable(struct obj *);
 extern void place_object(struct obj *, coordxy, coordxy);
+extern void recreate_pile_at(coordxy, coordxy);
 extern void remove_object(struct obj *);
 extern void discard_minvent(struct monst *, boolean);
 extern void obj_extract_self(struct obj *);
@@ -1774,9 +1777,12 @@ extern int spitmm(struct monst *, struct attack *, struct monst *);
 extern int breamm(struct monst *, struct attack *, struct monst *);
 extern void m_useupall(struct monst *, struct obj *);
 extern void m_useup(struct monst *, struct obj *);
-extern void m_throw(struct monst *, coordxy, coordxy, coordxy, coordxy, int, struct obj *);
-extern void hit_bars(struct obj **, coordxy, coordxy, coordxy, coordxy, unsigned);
-extern boolean hits_bars(struct obj **, coordxy, coordxy, coordxy, coordxy, int, int);
+extern void m_throw(struct monst *, coordxy, coordxy, coordxy, coordxy,
+                    int, struct obj *);
+extern void hit_bars(struct obj **, coordxy, coordxy, coordxy, coordxy,
+                     unsigned);
+extern boolean hits_bars(struct obj **, coordxy, coordxy, coordxy, coordxy,
+                         int, int);
 
 /* ### muse.c ### */
 
@@ -1830,7 +1836,7 @@ extern void nhl_done(lua_State *);
 extern boolean nhl_loadlua(lua_State *, const char *);
 extern int nhl_pcall(lua_State *, int, int);
 extern boolean load_lua(const char *, nhl_sandbox_info *);
-extern void nhl_error(lua_State *, const char *) NORETURN;
+ATTRNORETURN extern void nhl_error(lua_State *, const char *) NORETURN;
 extern void lcheck_param_table(lua_State *);
 extern schar get_table_mapchr(lua_State *, const char *);
 extern schar get_table_mapchr_opt(lua_State *, const char *, schar);
@@ -1900,6 +1906,7 @@ extern void savenames(NHFILE *);
 extern void restnames(NHFILE *);
 extern void discover_object(int, boolean, boolean);
 extern void undiscover_object(int);
+extern boolean interesting_to_discover(int);
 extern int choose_disco_sort(int);
 extern int dodiscovered(void);
 extern int doclassdisco(void);
@@ -1962,6 +1969,7 @@ extern char *makeplural(const char *);
 extern char *makesingular(const char *);
 extern struct obj *readobjnam(char *, struct obj *);
 extern int rnd_class(int, int);
+extern const char *armor_simple_name(struct obj *);
 extern const char *suit_simple_name(struct obj *);
 extern const char *cloak_simple_name(struct obj *);
 extern const char *helm_simple_name(struct obj *);
@@ -2072,7 +2080,7 @@ extern void msmsg(const char *, ...) PRINTF_F(1, 2);
 extern void gettty(void);
 extern void settty(const char *);
 extern void setftty(void);
-extern void error(const char *, ...) PRINTF_F(1, 2) NORETURN;
+ATTRNORETURN extern void error(const char *, ...) PRINTF_F(1, 2) NORETURN;
 #if defined(TIMED_DELAY) && defined(_MSC_VER)
 extern void msleep(unsigned);
 #endif
@@ -2411,6 +2419,8 @@ extern void role_init(void);
 extern const char *Hello(struct monst *);
 extern const char *Goodbye(void);
 extern const struct Race *character_race(short);
+extern void genl_player_selection(void);
+extern int genl_player_setup(int);
 
 /* ### rumors.c ### */
 
@@ -2480,6 +2490,7 @@ extern boolean same_price(struct obj *, struct obj *);
 extern void shopper_financial_report(void);
 extern int inhishop(struct monst *);
 extern struct monst *shop_keeper(char);
+extern struct monst *find_objowner(struct obj *, coordxy x, coordxy y);
 extern boolean tended_shop(struct mkroom *);
 extern boolean onshopbill(struct obj *, struct monst *, boolean);
 extern boolean is_unpaid(struct obj *);
@@ -2518,6 +2529,7 @@ extern boolean is_fshk(struct monst *);
 extern void shopdig(int);
 extern void pay_for_damage(const char *, boolean);
 extern boolean costly_spot(coordxy, coordxy);
+extern boolean costly_adjacent(struct monst *, coordxy, coordxy);
 extern struct obj *shop_object(coordxy, coordxy);
 extern void price_quote(struct obj *);
 extern void shk_chat(struct monst *);
@@ -2569,6 +2581,12 @@ extern int add_sound_mapping(const char *);
 extern void play_sound_for_message(const char *);
 extern void maybe_play_sound(const char *);
 extern void release_sound_mappings(void);
+#if defined(WIN32) || defined(QT_GRAPHICS)
+extern void play_usersound(const char *, int);
+#endif
+#if defined(TTY_SOUND_ESCCODES)
+extern void play_usersound_via_idx(int, int);
+#endif
 #endif /* USER SOUNDS */
 
 /* ### sp_lev.c ### */
@@ -2585,8 +2603,8 @@ extern boolean mapfrag_match(struct mapfragment *, int, int);
 extern void flip_level(int, boolean);
 extern void flip_level_rnd(int, boolean);
 extern boolean check_room(coordxy *, coordxy *, coordxy *, coordxy *, boolean);
-extern boolean create_room(coordxy, coordxy, coordxy, coordxy, coordxy, coordxy, xint16,
-                           xint16);
+extern boolean create_room(coordxy, coordxy, coordxy, coordxy,
+                           coordxy, coordxy, xint16, xint16);
 extern boolean dig_corridor(coord *, coord *, boolean, schar, schar);
 extern void fill_special_room(struct mkroom *);
 extern void wallify_map(coordxy, coordxy, coordxy, coordxy);
@@ -2598,19 +2616,22 @@ extern void selection_clear(struct selectionvar *, int);
 extern struct selectionvar *selection_clone(struct selectionvar *);
 extern void selection_getbounds(struct selectionvar *, NhRect *);
 extern void set_selection_floodfillchk(int(*)(coordxy, coordxy));
-extern void selection_floodfill(struct selectionvar *, coordxy, coordxy, boolean);
+extern void selection_floodfill(struct selectionvar *, coordxy, coordxy,
+                                boolean);
 extern boolean pm_good_location(coordxy, coordxy, struct permonst *);
-extern void get_location_coord(coordxy *, coordxy *, int, struct mkroom *, long);
+extern void get_location_coord(coordxy *, coordxy *, int, struct mkroom *,
+                               long);
 extern void selection_setpoint(coordxy, coordxy, struct selectionvar *, int);
 extern struct selectionvar * selection_not(struct selectionvar *);
-extern struct selectionvar *selection_filter_percent(struct selectionvar *, int);
+extern struct selectionvar *selection_filter_percent(struct selectionvar *,
+                                                     int);
 extern int selection_rndcoord(struct selectionvar *, coordxy *, coordxy *,
                               boolean);
 extern void selection_do_grow(struct selectionvar *, int);
 extern void selection_do_line(coordxy, coordxy, coordxy, coordxy,
                               struct selectionvar *);
-extern void selection_do_randline(coordxy, coordxy, coordxy, coordxy, schar, schar,
-                                  struct selectionvar *);
+extern void selection_do_randline(coordxy, coordxy, coordxy, coordxy,
+                                  schar, schar, struct selectionvar *);
 extern struct selectionvar *selection_filter_mapchar(struct selectionvar *,
                                                      xint16, int);
 extern void set_floodfillchk_match_under(coordxy);
@@ -2810,7 +2831,8 @@ extern boolean grease_protect(struct obj *, const char *, struct monst *);
 extern struct trap *maketrap(coordxy, coordxy, int);
 extern d_level *clamp_hole_destination(d_level *);
 extern void fall_through(boolean, unsigned);
-extern struct monst *animate_statue(struct obj *, coordxy, coordxy, int, int *);
+extern struct monst *animate_statue(struct obj *, coordxy, coordxy,
+                                    int, int *);
 extern struct monst *activate_statue_trap(struct trap *, coordxy, coordxy,
                                           boolean);
 extern void set_utrap(unsigned, unsigned);
@@ -2998,7 +3020,7 @@ extern void settty(const char *);
 extern void setftty(void);
 extern void intron(void);
 extern void introff(void);
-extern void error (const char *, ...) PRINTF_F(1, 2) NORETURN;
+ATTRNORETURN extern void error(const char *, ...) PRINTF_F(1, 2) NORETURN;
 #ifdef ENHANCED_SYMBOLS
 extern void tty_utf8graphics_fixup(void);
 #endif
@@ -3046,7 +3068,8 @@ void free_all_glyphmap_u(void);
 int add_custom_urep_entry(const char *symset_name, int glyphidx,
                           uint32 utf32ch, const uint8 *utf8str, long ucolor,
                           enum graphics_sets which_set);
-int set_map_u(glyph_map *gm, uint32 utf32ch, const uint8 *utf8str, long ucolor);
+int set_map_u(glyph_map *gm, uint32 utf32ch, const uint8 *utf8str,
+              long ucolor);
 #endif /* ENHANCED_SYMBOLS */
 
 /* ### vault.c ### */
@@ -3150,8 +3173,8 @@ extern boolean authorize_wizard_mode(void);
 
 /* ### vmsmisc.c ### */
 
-extern void vms_abort(void) NORETURN;
-extern void vms_exit(int) NORETURN;
+ATTRNORETURN extern void vms_abort(void) NORETURN;
+ATTRNORETURN extern void vms_exit(int) NORETURN;
 #ifdef PANICTRACE
 extern void vms_traceback(int);
 #endif
@@ -3165,7 +3188,7 @@ extern void shuttty(const char *);
 extern void setftty(void);
 extern void intron(void);
 extern void introff(void);
-extern void error (const char *, ...) PRINTF_F(1, 2) NORETURN;
+ATTRNORETURN extern void error (const char *, ...) PRINTF_F(1, 2) NORETURN;
 #ifdef TIMED_DELAY
 extern void msleep(unsigned);
 #endif

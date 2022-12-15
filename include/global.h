@@ -254,7 +254,7 @@ typedef uchar nhsym;
 #endif
 
 #if defined(X11_GRAPHICS) || defined(QT_GRAPHICS) || defined(GNOME_GRAPHICS) \
-    || defined(WIN32)
+    || defined(MSWIN_GRAPHICS)
 #ifndef NO_TILE_C
 #ifndef USE_TILES
 #define USE_TILES /* glyphmap[] with prefilled tile mappings will be available */
@@ -405,7 +405,7 @@ extern struct nomakedefs_s nomakedefs;
 
 #define BUFSZ 256  /* for getlin buffers */
 #define QBUFSZ 128 /* for building question text */
-#define TBUFSZ 300 /* g.toplines[] buffer max msg: 3 81char names */
+#define TBUFSZ 300 /* gt.toplines[] buffer max msg: 3 81char names */
 /* plus longest prefix plus a few extra words */
 
 /* COLBUFSZ is the larger of BUFSZ and COLNO */
