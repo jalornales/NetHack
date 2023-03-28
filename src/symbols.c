@@ -229,7 +229,7 @@ assign_graphics(int whichset)
             gs.showsyms[i] = go.ov_rogue_syms[i] ? go.ov_rogue_syms[i]
                                            : gr.rogue_syms[i];
 
-#if defined(MSDOS) && defined(USE_TILES)
+#if defined(MSDOS) && defined(TILES_IN_GLYPHMAP)
         if (iflags.grmode)
             tileview(FALSE);
 #endif
@@ -242,7 +242,7 @@ assign_graphics(int whichset)
             gs.showsyms[i] = go.ov_primary_syms[i] ? go.ov_primary_syms[i]
                                              : gp.primary_syms[i];
 
-#if defined(MSDOS) && defined(USE_TILES)
+#if defined(MSDOS) && defined(TILES_IN_GLYPHMAP)
         if (iflags.grmode)
             tileview(TRUE);
 #endif
@@ -924,7 +924,7 @@ do_symset(boolean rogueflag)
                 big_desc = thissize;
         }
         if (!setcount) {
-            pline("There are no appropriate %s symbol sets available.",
+            There("are no appropriate %s symbol sets available.",
                   rogueflag ? "rogue level" : "primary");
             return TRUE;
         }
@@ -1010,7 +1010,7 @@ do_symset(boolean rogueflag)
         return TRUE;
     } else if (!gs.symset_list) {
         /* The symbols file was empty */
-        pline("There were no symbol sets found in \"%s\".", SYMBOLS);
+        There("were no symbol sets found in \"%s\".", SYMBOLS);
         return TRUE;
     }
 
@@ -1126,6 +1126,7 @@ shuffle_customizations(void)
 
         for (i = 0; i < NUM_OBJECTS; i++) {
             duplicate[i] = -1;
+            tmp_u[i] = (struct unicode_representation *) 0;
         }
         for (i = 0; i < NUM_OBJECTS; i++) {
             int idx = objects[i].oc_descr_idx;
@@ -1172,9 +1173,10 @@ find_matching_symset_customization(
     enum graphics_sets which_set)
 {
     struct symset_customization *gdc = &gs.sym_customizations[which_set];
+
     if ((gdc->custtype == custtype)
         && (strcmp(customization_name, gdc->customization_name) != 0))
-            return gdc->details;
+        return gdc->details;
     return (struct customization_detail *) 0;
 }
 

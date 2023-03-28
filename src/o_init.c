@@ -1,4 +1,4 @@
-/* NetHack 3.7	o_init.c	$NHDT-Date: 1646950588 2022/03/10 22:16:28 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.56 $ */
+/* NetHack 3.7	o_init.c	$NHDT-Date: 1672829455 2023/01/04 10:50:55 $  $NHDT-Branch: naming-overflow-fix $:$NHDT-Revision: 1.68 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2011. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -9,9 +9,12 @@ static void setgemprobs(d_level *);
 static void shuffle(int, int, boolean);
 static void shuffle_all(void);
 static int QSORTCALLBACK discovered_cmp(const genericptr, const genericptr);
+static char *sortloot_descr(int, char *);
+static char *disco_typename(int);
+static void disco_append_typename(char *, int);
 static char *oclass_to_name(char, char *);
 
-#ifdef USE_TILES
+#ifdef TILES_IN_GLYPHMAP
 extern glyph_map glyphmap[MAX_GLYPH];
 static void shuffle_tiles(void);
 
@@ -31,15 +34,17 @@ shuffle_tiles(void)
     short tmp_tilemap[2][NUM_OBJECTS];
 
     for (i = 0; i < NUM_OBJECTS; i++) {
-        tmp_tilemap[0][i] = glyphmap[objects[i].oc_descr_idx + GLYPH_OBJ_OFF].tileidx;
-        tmp_tilemap[1][i] = glyphmap[objects[i].oc_descr_idx + GLYPH_OBJ_PILETOP_OFF].tileidx;
+        tmp_tilemap[0][i] = glyphmap[objects[i].oc_descr_idx
+                                     + GLYPH_OBJ_OFF].tileidx;
+        tmp_tilemap[1][i] = glyphmap[objects[i].oc_descr_idx
+                                     + GLYPH_OBJ_PILETOP_OFF].tileidx;
     }
     for (i = 0; i < NUM_OBJECTS; i++) {
         glyphmap[i + GLYPH_OBJ_OFF].tileidx = tmp_tilemap[0][i];
         glyphmap[i + GLYPH_OBJ_PILETOP_OFF].tileidx = tmp_tilemap[1][i];
     }
 }
-#endif /* USE_TILES */
+#endif /* TILES_IN_GLYPHMAP */
 
 static void
 setgemprobs(d_level* dlev)
@@ -56,14 +61,14 @@ setgemprobs(d_level* dlev)
     for (j = 0; j < 9 - lev / 3; j++)
         objects[first + j].oc_prob = 0;
     first += j;
-    if (first > LAST_GEM || objects[first].oc_class != GEM_CLASS
+    if (first > LAST_REAL_GEM || objects[first].oc_class != GEM_CLASS
         || OBJ_NAME(objects[first]) == (char *) 0) {
         raw_printf("Not enough gems? - first=%d j=%d LAST_GEM=%d", first, j,
-                   LAST_GEM);
+                   LAST_REAL_GEM);
         wait_synch();
     }
-    for (j = first; j <= LAST_GEM; j++)
-        objects[j].oc_prob = (171 + j - first) / (LAST_GEM + 1 - first);
+    for (j = first; j <= LAST_REAL_GEM; j++)
+        objects[j].oc_prob = (171 + j - first) / (LAST_REAL_GEM + 1 - first);
 
     /* recompute GEM_CLASS total oc_prob - including rocks/stones */
     for (j = gb.bases[GEM_CLASS]; j < gb.bases[GEM_CLASS + 1]; j++)
@@ -122,17 +127,19 @@ init_objects(void)
 #define COPY_OBJ_DESCR(o_dst, o_src) o_dst.oc_descr_idx = o_src.oc_descr_idx
 #endif
 
-    /* bug fix to prevent "initialization error" abort on Intel Xenix.
-     * reported by mikew@semike
-     */
-    for (i = 0; i <= MAXOCLASSES; i++)
+    for (i = 0; i <= MAXOCLASSES; i++) {
         gb.bases[i] = 0;
+        if (i > 0 && i < MAXOCLASSES && objects[i].oc_class != i)
+            panic(
+              "init_objects: class for generic object #%d doesn't match (%d)",
+                  i, objects[i].oc_class);
+    }
     /* initialize object descriptions */
     for (i = 0; i < NUM_OBJECTS; i++)
         objects[i].oc_name_idx = objects[i].oc_descr_idx = i;
     /* init base; if probs given check that they add up to 1000,
        otherwise compute probs */
-    first = 0;
+    first = MAXOCLASSES;
     prevoclass = -1;
     while (first < NUM_OBJECTS) {
         oclass = objects[first].oc_class;
@@ -178,7 +185,9 @@ init_objects(void)
         prevoclass = (int) oclass;
     }
     /* extra entry allows deriving the range of a class via
-       bases[class] through bases[class+1]-1 for all classes */
+       bases[class] through bases[class+1]-1 for all classes
+       (except for ILLOBJ_CLASS which is separated from WEAPON_CLASS
+       by generic objects) */
     gb.bases[MAXOCLASSES] = NUM_OBJECTS;
     /* hypothetically someone might remove all objects of some class,
        or be adding a new class and not populated it yet, leaving gaps
@@ -188,7 +197,7 @@ init_objects(void)
             gb.bases[last] = gb.bases[last + 1];
 
     /* check objects[].oc_name_known */
-    for (i = 0; i < NUM_OBJECTS; ++i) {
+    for (i = MAXOCLASSES; i < NUM_OBJECTS; ++i) {
         int nmkn = objects[i].oc_name_known != 0;
 
         if (!OBJ_DESCR(objects[i]) ^ nmkn) {
@@ -208,7 +217,7 @@ init_objects(void)
 
     /* shuffle descriptions */
     shuffle_all();
-#ifdef USE_TILES
+#ifdef TILES_IN_GLYPHMAP
     shuffle_tiles();
 #endif
     objects[WAN_NOTHING].oc_dir = rn2(2) ? NODIR : IMMEDIATE;
@@ -224,13 +233,16 @@ init_oclass_probs(void)
     int oclass;
     for (oclass = 0; oclass < MAXOCLASSES; ++oclass) {
         sum = 0;
+        /* note: for ILLOBJ_CLASS, bases[oclass+1]-1 isn't the last item
+           in the class; but all the generic items have probability 0 so
+           adding them to 'sum' has no impact */
         for (i = gb.bases[oclass]; i < gb.bases[oclass + 1]; ++i) {
             sum += objects[i].oc_prob;
         }
         if (sum <= 0 && oclass != ILLOBJ_CLASS
             && gb.bases[oclass] != gb.bases[oclass + 1]) {
-            impossible("zero or negative probability total for oclass %d",
-                       oclass);
+            impossible("%s (%d) probability total for oclass %d",
+                       !sum ? "zero" : "negative", sum, oclass);
             /* gracefully fail by setting all members of this class to 1 */
             for (i = gb.bases[oclass]; i < gb.bases[oclass + 1]; ++i) {
                 objects[i].oc_prob = 1;
@@ -403,16 +415,21 @@ restnames(NHFILE* nhfp)
             }
         }
     }
-#ifdef USE_TILES
+#ifdef TILES_IN_GLYPHMAP
     shuffle_tiles();
 #endif
 }
 
 void
-discover_object(int oindx, boolean mark_as_known, boolean credit_hero)
+discover_object(
+    int oindx,
+    boolean mark_as_known,
+    boolean credit_hero)
 {
-    if (!objects[oindx].oc_name_known) {
-        register int dindx, acls = objects[oindx].oc_class;
+    if (!objects[oindx].oc_name_known
+        || (Role_if(PM_SAMURAI)
+            && Japanese_item_name(oindx, (const char *) 0))) {
+        int dindx, acls = objects[oindx].oc_class;
 
         /* Loop thru disco[] 'til we find the target (which may have been
            uname'd) or the next open slot; one or the other will be found
@@ -422,6 +439,11 @@ discover_object(int oindx, boolean mark_as_known, boolean credit_hero)
             if (gd.disco[dindx] == oindx)
                 break;
         gd.disco[dindx] = oindx;
+
+        /* if already known, we forced an item with a Japanese name into
+           disco[] but don't want to exercise wisdom or update perminv */
+        if (objects[oindx].oc_name_known)
+            return;
 
         if (mark_as_known) {
             objects[oindx].oc_name_known = 1;
@@ -470,6 +492,12 @@ undiscover_object(int oindx)
 boolean
 interesting_to_discover(int i)
 {
+    /* most players who don't speak Japanese manage to figure out what
+       gunyoki, osaku, and so forth mean, but treat them as pre-discovered
+       to be disclosed by '\' */
+    if (Role_if(PM_SAMURAI) && Japanese_item_name(i, (const char *) 0))
+        return TRUE;
+
     /* Pre-discovered objects are now printed with a '*' */
     return (boolean) (objects[i].oc_uname != (char *) 0
                       || (objects[i].oc_name_known
@@ -498,7 +526,7 @@ discovered_cmp(const genericptr v1, const genericptr v2)
 }
 
 static char *
-sortloot_descr(int otyp,char * outbuf)
+sortloot_descr(int otyp, char *outbuf)
 {
     Loot sl_cookie;
     struct obj o;
@@ -592,6 +620,62 @@ choose_disco_sort(
     return n;
 }
 
+/* augment obj_typename() with explanation of Japanese item names */
+static char *
+disco_typename(int otyp)
+{
+    char *result = obj_typename(otyp);
+
+    if (Role_if(PM_SAMURAI) && Japanese_item_name(otyp, (const char *) 0)) {
+        char buf[BUFSZ];
+        const char *actualn = (((otyp != MAGIC_HARP && otyp != WOODEN_HARP)
+                                || objects[otyp].oc_name_known)
+                               ? OBJ_NAME(objects[otyp])
+                               /* undiscovered harp (since wooden harp is
+                                  non-magic so pre-discovered, only applies
+                                  to magic harp and will only be seen if
+                                  magic harp has been 'called' something) */
+                               : "harp");
+
+        if (!actualn) { /* won't happen; used to pacify static analyzer */
+            ;
+        } else if (strstri(result, " called")) {
+            Sprintf(buf, " [%s] called", actualn);
+            (void) strsubst(result, " called", buf);
+        } else if (strstri(result, " (")) {
+            Sprintf(buf, " [%s] (", actualn);
+            (void) strsubst(result, " (", buf);
+        } else {
+            Sprintf(eos(result), " [%s]", actualn);
+        }
+    }
+    return result;
+}
+
+/* append typename(dis) to buf[], possibly truncating in the process */
+static void
+disco_append_typename(char *buf, int dis)
+{
+    unsigned len = (unsigned) strlen(buf);
+    char *p, *typnm = disco_typename(dis);
+
+    if (len + (unsigned) strlen(typnm) < BUFSZ) {
+        /* ordinary */
+        Strcat(buf, typnm);
+    } else if ((p = strrchr(typnm, '(')) != 0
+               && p > typnm && p[-1] == ' ' && strchr(p, ')') != 0) {
+        /* typename() returned "really long user-applied name (actual type)"
+           and we want to truncate from "really long user-applied name" while
+           keeping " (actual type)" intact */
+        --p; /* back up to space in front of open paren */
+        (void) strncat(buf, typnm, BUFSZ - 1 - (len + (unsigned) strlen(p)));
+        Strcat(buf, p);
+    } else {
+        /* unexpected; just truncate from end of typename */
+        (void) strncat(buf, typnm, BUFSZ - 1 - len);
+    }
+}
+
 /* the #known command - show discovered object types */
 int
 dodiscovered(void) /* free after Robert Viduya */
@@ -675,7 +759,7 @@ dodiscovered(void) /* free after Robert Viduya */
                 Strcpy(buf,  objects[dis].oc_pre_discovered ? "* " : "  ");
                 if (lootsort)
                     (void) sortloot_descr(dis, &buf[2]);
-                Strcat(buf, obj_typename(dis));
+                disco_append_typename(buf, dis);
 
                 if (!alphabetized && !lootsort)
                     putstr(tmpwin, 0, buf);
@@ -883,7 +967,7 @@ doclassdisco(void)
            but requires at least one artifact discovery for other styles
            [could fix that by forcing the 'a' choice into the pick-class
            menu when running in wizard mode] */
-        if (wizard && yn("Dump information about all artifacts?") == 'y') {
+        if (wizard && y_n("Dump information about all artifacts?") == 'y') {
             dump_artifact_info(tmpwin);
             ct = NROFARTIFACTS; /* non-zero vs zero is what matters below */
             break;
@@ -907,7 +991,7 @@ doclassdisco(void)
                 Strcpy(buf,  objects[dis].oc_pre_discovered ? "* " : "  ");
                 if (lootsort)
                     (void) sortloot_descr(dis, &buf[2]);
-                Strcat(buf, obj_typename(dis));
+                disco_append_typename(buf, dis);
 
                 if (!alphabetized && !lootsort)
                     putstr(tmpwin, 0, buf);
@@ -985,7 +1069,7 @@ rename_disco(void)
             any.a_int = dis;
             add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
                      ATR_NONE, clr,
-                     obj_typename(dis), MENU_ITEMFLAGS_NONE);
+                     disco_typename(dis), MENU_ITEMFLAGS_NONE);
         }
     }
     if (ct == 0) {

@@ -160,6 +160,18 @@ themeroom_fills = {
       end
    end,
 
+   -- Storeroom
+   function(rm)
+      local locs = selection.room():percentage(30);
+      local func = function(x,y)
+         if (percent(25)) then
+            des.object("chest");
+         else
+            des.monster({ class = "m", appear_as = "obj:chest" });
+         end
+      end;
+      locs:iterate(func);
+   end,
 };
 
 themerooms = {
@@ -185,7 +197,6 @@ themerooms = {
    end,
 
    -- Room in a room
-   -- FIXME: subroom location is too often left/top?
    function()
       des.room({ type = "ordinary", filled = 1,
                  contents = function()
@@ -216,6 +227,33 @@ themerooms = {
       });
    end,
 
+   -- Nesting rooms
+   function()
+      des.room({ type = "ordinary", w = 9 + nh.rn2(4), h = 9 + nh.rn2(4), filled = 1,
+                 contents = function(rm)
+                    local wid = math.random(math.floor(rm.width / 2), rm.width - 2);
+                    local hei = math.random(math.floor(rm.height / 2), rm.height - 2);
+                    des.room({ type = "ordinary", w = wid,h = hei, filled = 1,
+                               contents = function()
+                                  if (percent(90)) then
+                                     des.room({ type = "ordinary", filled = 1,
+                                                contents = function()
+                                                   des.door({ state="random", wall="all" });
+                                                   if (percent(15)) then
+                                                      des.door({ state="random", wall="all" });
+                                                   end
+                                                end
+                                     });
+                                  end
+                                  des.door({ state="random", wall="all" });
+                                  if (percent(15)) then
+                                     des.door({ state="random", wall="all" });
+                                  end
+                               end
+                    });
+                 end
+      });
+   end,
    {
       frequency = 6,
       contents = function()

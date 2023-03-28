@@ -27,7 +27,7 @@ char *translate_path_variables(const char *, char *);
 char *exename(void);
 boolean fakeconsole(void);
 void freefakeconsole(void);
-extern void nethack_exit(int) NORETURN;
+ATTRNORETURN extern void nethack_exit(int) NORETURN;
 #if defined(MSWIN_GRAPHICS)
 extern void mswin_destroy_reg(void);
 #endif
@@ -454,6 +454,8 @@ extern const char *known_restrictions[]; /* symbols.c */
  * WinMain exist, the resulting executable won't work correctly.
  */
 
+DISABLE_WARNING_UNREACHABLE_CODE
+
 #if defined(__MINGW32__) && defined(MSWIN_GRAPHICS)
 #define MAIN mingw_main
 #else
@@ -589,6 +591,10 @@ _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);*/
     }
     choose_windows(windowtype);
 
+#if defined(SND_LIB_WINDSOUND)
+    assign_soundlib(soundlib_windsound);
+#endif
+
     u.uhp = 1; /* prevent RIP on early quits */
     u.ux = 0;  /* prevent flush_screen() */
 
@@ -672,7 +678,7 @@ _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);*/
      *  new game or before a level restore on a saved game.
      */
     vision_init();
-    display_gamewindows();
+    init_sound_and_display_gamewindows();
     /*
      * First, try to find and restore a save file for specified character.
      * We'll return here if new game player_selection() renames the hero.
@@ -695,7 +701,7 @@ attempt_restore:
             if (discover)
                 You("are in non-scoring discovery mode.");
             if (discover || wizard) {
-                if (yn("Do you want to keep the save file?") == 'n')
+                if (y_n("Do you want to keep the save file?") == 'n')
                     (void) delete_savefile();
                 else {
                     nh_compress(fqname(gs.SAVEF, SAVEPREFIX, 0));
@@ -734,6 +740,8 @@ attempt_restore:
     /*NOTREACHED*/
     return 0;
 }
+
+RESTORE_WARNING_UNREACHABLE_CODE
 
 static void
 process_options(int argc, char * argv[])
@@ -1048,10 +1056,12 @@ void freefakeconsole(void)
 }
 #endif
 
+static boolean path_buffer_set = FALSE;
+static char path_buffer[MAX_PATH];
+
 char *
 get_executable_path(void)
 {
-    static char path_buffer[MAX_PATH];
 
 #ifdef UNICODE
     {
@@ -1069,7 +1079,18 @@ get_executable_path(void)
     if (seperator)
         *seperator = '\0';
 
+    path_buffer_set = TRUE;
     return path_buffer;
+}
+
+char *
+windows_exepath(void)
+{
+    char *p = (char *) 0;
+
+    if (path_buffer_set)
+        p = path_buffer;
+    return p;
 }
 
 char *
@@ -1462,7 +1483,7 @@ other_self_recover_prompt(void)
     c = 'n';
     ct = 0;
     if (iflags.window_inited || WINDOWPORT(curses)) {
-        c = yn("There are files from a game in progress under your name. "
+        c = y_n("There are files from a game in progress under your name. "
                "Recover?");
     } else {
         c = 'n';
@@ -1489,7 +1510,7 @@ other_self_recover_prompt(void)
     }
     if (pl == 1 && (c == 'n' || c == 'N')) {
         /* no to recover */
-        c = yn("Are you sure you wish to destroy the old game, rather than try to "
+        c = y_n("Are you sure you wish to destroy the old game, rather than try to "
                   "recover it? [yn] ");
         pl = 2;
         if (!ismswin && !iscurses) {

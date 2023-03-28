@@ -45,7 +45,7 @@ static int potion_dip(struct obj *obj, struct obj *potion);
 /* used to indicate whether quaff or dip has skipped an opportunity to
    use a fountain or such, in order to vary the feedback if hero lacks
    any potions [reinitialized every time it's used so does not need to
-   be placed in struct instance_globals g] */
+   be placed in struct instance_globals gd] */
 static int drink_ok_extra = 0;
 
 /* force `val' to be within valid range for intrinsic timeout value */
@@ -538,7 +538,7 @@ dodrink(void)
         if (IS_FOUNTAIN(levl[u.ux][u.uy].typ)
             /* not as low as floor level but similar restrictions apply */
             && can_reach_floor(FALSE)) {
-            if (yn("Drink from the fountain?") == 'y') {
+            if (y_n("Drink from the fountain?") == 'y') {
                 drinkfountain();
                 return ECMD_TIME;
             }
@@ -548,7 +548,7 @@ dodrink(void)
         if (IS_SINK(levl[u.ux][u.uy].typ)
             /* not as low as floor level but similar restrictions apply */
             && can_reach_floor(FALSE)) {
-            if (yn("Drink from the sink?") == 'y') {
+            if (y_n("Drink from the sink?") == 'y') {
                 drinksink();
                 return ECMD_TIME;
             }
@@ -556,7 +556,7 @@ dodrink(void)
         }
         /* Or are you surrounded by water? */
         if (Underwater && !u.uswallow) {
-            if (yn("Drink the water around you?") == 'y') {
+            if (y_n("Drink the water around you?") == 'y') {
                 pline("Do you know what lives in this water?");
                 return ECMD_TIME;
             }
@@ -1422,7 +1422,7 @@ healup(int nhp, int nxtra, boolean curesick, boolean cureblind)
         }
     }
     if (cureblind) {
-        /* 3.6.1: it's debatible whether healing magic should clean off
+        /* 3.6.1: it's debatable whether healing magic should clean off
            mundane 'dirt', but if it doesn't, blindness isn't cured */
         u.ucreamed = 0;
         make_blinded(0L, TRUE);
@@ -1625,6 +1625,7 @@ potionhit(struct monst *mon, struct obj *obj, int how)
             hit_saddle = TRUE;
         distance = distu(tx, ty);
         if (!cansee(tx, ty)) {
+            Soundeffect(se_potion_crash_and_break, 60);
             pline("Crash!");
         } else {
             char *mnam = mon_nam(mon);
@@ -1641,6 +1642,7 @@ potionhit(struct monst *mon, struct obj *obj, int how)
             } else {
                 Strcpy(buf, mnam);
             }
+            Soundeffect(se_potion_crash_and_break, 60);
             pline_The("%s crashes on %s and breaks into shards.", botlnam,
                       buf);
         }
@@ -2248,7 +2250,7 @@ dodip(void)
             Snprintf(qbuf, sizeof(qbuf), "%s%s into the fountain?", Dip_,
                      Verbose(3, dodip1) ? obuf : shortestname);
             /* "Dip <the object> into the fountain?" */
-            if (yn(qbuf) == 'y') {
+            if (y_n(qbuf) == 'y') {
                 obj->pickup_prev = 0;
                 dipfountain(obj);
                 return ECMD_TIME;
@@ -2260,7 +2262,7 @@ dodip(void)
             Snprintf(qbuf, sizeof(qbuf), "%s%s into the %s?", Dip_,
                      Verbose(3, dodip2) ? obuf : shortestname, pooltype);
             /* "Dip <the object> into the {pool, moat, &c}?" */
-            if (yn(qbuf) == 'y') {
+            if (y_n(qbuf) == 'y') {
                 if (Levitation) {
                     floating_above(pooltype);
                 } else if (u.usteed && !is_swimmer(u.usteed->data)
@@ -2718,6 +2720,7 @@ djinni_from_bottle(struct obj *obj)
         chance = (chance == 0) ? rn2(4) : 4;
     /* 0,1,2,3,4:  b=80%,5,5,5,5; nc=20%,20,20,20,20; c=5%,5,5,5,80 */
 
+    SetVoice(mtmp, 0, 80, 0);
     switch (chance) {
     case 0:
         verbalize("I am in your debt.  I will grant one wish!");

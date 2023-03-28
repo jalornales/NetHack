@@ -411,7 +411,7 @@ newman(void)
     polyman("You feel like a new %s!", newform);
 
     newgend = poly_gender();
-    /* note: newman() bypasses achievemnts for new ranks attained and
+    /* note: newman() bypasses achievements for new ranks attained and
        doesn't log "new <form>" when that isn't accompanied by level change */
     if (newlvl != oldlvl)
         livelog_printf(LL_MINORAC, "became experience level %d as a new %s",
@@ -449,7 +449,7 @@ polyself(int psflags)
             controllable_poly = Polymorph_control && !(Stunned || Unaware);
 
     if (Unchanging) {
-        pline("You fail to transform!");
+        You("fail to transform!");
         return;
     }
     /* being Stunned|Unaware doesn't negate this aspect of Poly_control */
@@ -626,7 +626,7 @@ polyself(int psflags)
             if (controllable_poly) {
                 Sprintf(buf, "Become %s?",
                         an(pmname(&mons[mntmp], gvariant)));
-                if (yn(buf) != 'y')
+                if (y_n(buf) != 'y')
                     return;
             }
         }
@@ -1254,6 +1254,10 @@ rehumanize(void)
             gk.killer.format = NO_KILLER_PREFIX;
             Strcpy(gk.killer.name, "killed while stuck in creature form");
             done(DIED);
+            /* can get to here if declining to die in explore or wizard
+               mode; since we're wearing an amulet of unchanging we can't
+               be wearing an amulet of life-saving */
+            return; /* don't rehumanize after all */
         } else if (uamul && uamul->otyp == AMULET_OF_UNCHANGING) {
             Your("%s %s!", simpleonames(uamul), otense(uamul, "fail"));
             uamul->dknown = 1;
@@ -1274,7 +1278,8 @@ rehumanize(void)
         /* can only happen if some bit of code reduces u.uhp
            instead of u.mh while poly'd */
         Your("old form was not healthy enough to survive.");
-        Sprintf(gk.killer.name, "reverting to unhealthy %s form", gu.urace.adj);
+        Sprintf(gk.killer.name, "reverting to unhealthy %s form",
+                gu.urace.adj);
         gk.killer.format = KILLED_BY;
         done(DIED);
     }
@@ -1559,7 +1564,7 @@ dogaze(void)
                     Sprintf(qbuf, "Really %s %s?",
                             (adtyp == AD_CONF) ? "confuse" : "attack",
                             mon_nam(mtmp));
-                    if (yn(qbuf) != 'y')
+                    if (y_n(qbuf) != 'y')
                         continue;
                 }
                 setmangry(mtmp, TRUE);

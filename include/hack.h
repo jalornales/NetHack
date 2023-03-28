@@ -122,7 +122,7 @@ enum cost_alteration_types {
 /* bitmask flags for corpse_xname();
    PFX_THE takes precedence over ARTICLE, NO_PFX takes precedence over both */
 #define CXN_NORMAL 0    /* no special handling */
-#define CXN_SINGULAR 1  /* override quantity if greather than 1 */
+#define CXN_SINGULAR 1  /* override quantity if greater than 1 */
 #define CXN_NO_PFX 2    /* suppress "the" from "the Unique Monst */
 #define CXN_PFX_THE 4   /* prefix with "the " (unless pname) */
 #define CXN_ARTICLE 8   /* include a/an/the prefix */
@@ -227,6 +227,7 @@ enum misc_arti_nums {
 #include "region.h"
 #include "trap.h"
 #include "display.h"
+#include "sndprocs.h"
 #include "decl.h"
 #include "timeout.h"
 
@@ -447,13 +448,13 @@ typedef uint32_t mmflags_nht;     /* makemon MM_ flags */
 #define MMOVE_NOMOVES 4 /* monster has no valid locations to move to */
 
 /*** some utility macros ***/
-#define yn(query) yn_function(query, ynchars, 'n', TRUE)
+#define y_n(query) yn_function(query, ynchars, 'n', TRUE)
 #define ynq(query) yn_function(query, ynqchars, 'q', TRUE)
 #define ynaq(query) yn_function(query, ynaqchars, 'y', TRUE)
 #define nyaq(query) yn_function(query, ynaqchars, 'n', TRUE)
 #define nyNaq(query) yn_function(query, ynNaqchars, 'n', TRUE)
 #define ynNaq(query) yn_function(query, ynNaqchars, 'y', TRUE)
-/* YN() is same as yn() except doesn't save the response in do-again buffer */
+/* YN() is same as y_n() except doesn't save the response in do-again buffer */
 #define YN(query) yn_function(query, ynchars, 'n', FALSE)
 
 /* Macros for scatter */
@@ -496,6 +497,9 @@ typedef uint32_t mmflags_nht;     /* makemon MM_ flags */
 #define OVERRIDE_MSGTYPE 2
 #define SUPPRESS_HISTORY 4
 #define URGENT_MESSAGE   8
+#define PLINE_VERBALIZE 16
+#define PLINE_SPEECH    32
+#define NO_CURS_ON_U    64
 
 /* get_count flags */
 #define GC_NOFLAGS   0
@@ -516,8 +520,19 @@ enum nhcore_calls {
     NHCORE_RESTORE_OLD_GAME,
     NHCORE_MOVELOOP_TURN,
     NHCORE_GAME_EXIT,
+    NHCORE_GETPOS_TIP,
 
     NUM_NHCORE_CALLS
+};
+
+/* Lua callbacks. TODO: Merge with NHCORE */
+enum nhcb_calls {
+    NHCB_CMD_BEFORE = 0,
+    NHCB_LVL_ENTER,
+    NHCB_LVL_LEAVE,
+    NHCB_END_TURN,
+
+    NUM_NHCB
 };
 
 /* Macros for messages referring to hands, eyes, feet, etc... */
@@ -580,6 +595,7 @@ enum bodypart_types {
 #define MKTRAP_MAZEFLAG      0x1 /* trap placed on coords as if in maze */
 #define MKTRAP_NOSPIDERONWEB 0x2 /* web will not generate a spider */
 #define MKTRAP_SEEN          0x4 /* trap is seen */
+#define MKTRAP_NOVICTIM      0x8 /* no victim corpse or items on it */
 
 #define MON_POLE_DIST 5 /* How far monsters can use pole-weapons */
 #define PET_MISSILE_RANGE2 36 /* Square of distance within which pets shoot */
@@ -594,11 +610,12 @@ enum bodypart_types {
 /* flags for hero_breaks() and hits_bars(); BRK_KNOWN* let callers who have
    already called breaktest() prevent it from being called again since it
    has a random factor which makes it be non-deterministic */
-#define BRK_BY_HERO        1
-#define BRK_FROM_INV       2
-#define BRK_KNOWN2BREAK    4
-#define BRK_KNOWN2NOTBREAK 8
+#define BRK_BY_HERO        0x01
+#define BRK_FROM_INV       0x02
+#define BRK_KNOWN2BREAK    0x04
+#define BRK_KNOWN2NOTBREAK 0x08
 #define BRK_KNOWN_OUTCOME  (BRK_KNOWN2BREAK | BRK_KNOWN2NOTBREAK)
+#define BRK_MELEE          0x10
 
 /* extended command return values */
 #define ECMD_OK     0x00 /* cmd done successfully */
@@ -622,7 +639,7 @@ enum getobj_callback_returns {
      * floor before getobj. */
     GETOBJ_EXCLUDE_NONINVENT = -2,
     /* invalid because it is an inaccessible or unwanted piece of gear, but
-     * psuedo-valid for the purposes of allowing the player to select it and
+     * pseudo-valid for the purposes of allowing the player to select it and
      * getobj to return it if there is a prompt instead of getting "silly
      * thing", in order for the getobj caller to present a specific failure
      * message. Other than that, the only thing this does differently from
@@ -630,7 +647,7 @@ enum getobj_callback_returns {
      * else to foo". */
     GETOBJ_EXCLUDE_INACCESS = -1,
     /* invalid for purposes of not showing a prompt if nothing is valid but
-     * psuedo-valid for selecting - identical to GETOBJ_EXCLUDE_INACCESS but
+     * pseudo-valid for selecting - identical to GETOBJ_EXCLUDE_INACCESS but
      * without the "else" in "You don't have anything else to foo". */
     GETOBJ_EXCLUDE_SELECTABLE = 0,
     /* valid - invlet not presented in the summary or the ? menu as a
@@ -661,12 +678,12 @@ enum getobj_callback_returns {
 #define BZ_U_SPELL(bztyp) (10 + (bztyp))
 /* hero breathing as a monster */
 #define BZ_U_BREATH(bztyp) (20 + (bztyp))
+/* monster shooting a wand */
+#define BZ_M_WAND(bztyp) (-0 - (bztyp))
 /* monster casting a spell */
 #define BZ_M_SPELL(bztyp) (-10 - (bztyp))
 /* monster breathing */
 #define BZ_M_BREATH(bztyp) (-20 - (bztyp))
-/* monster shooting a wand */
-#define BZ_M_WAND(bztyp) (-30 - (bztyp))
 
 /*
  * option setting restrictions

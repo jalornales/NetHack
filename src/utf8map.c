@@ -371,14 +371,14 @@ init_glyph_cache(void)
 
 void free_glyphid_cache(void)
 {
-    int glyph;
+    size_t idx;
 
     if (!glyphid_cache)
         return;
-    for (glyph = 0; glyph < MAX_GLYPH; ++glyph) {
-        if (glyphid_cache[glyph].id) {
-            free(glyphid_cache[glyph].id);
-            glyphid_cache[glyph].id = (char *) 0;
+    for (idx = 0; idx < glyphid_cache_size; ++idx) {
+        if (glyphid_cache[idx].id) {
+            free(glyphid_cache[idx].id);
+            glyphid_cache[idx].id = (char *) 0;
         }
     }
     free(glyphid_cache);
@@ -789,11 +789,11 @@ parse_id(const char *id, struct find_struct *findwhat)
                         else if (i == LAND_MINE)
                             buf2 = "unset ";
                         buf3 = (i == SCR_BLANK_PAPER) ? "blank scroll"
-                                 : (i == SPE_BLANK_PAPER)
-                                     ? "blank spellbook"
-                                     : (i == SLIME_MOLD)
-                                     ? "slime mold"
-                                     : obj_descr[i].oc_name;
+                               : (i == SPE_BLANK_PAPER) ? "blank spellbook"
+                                 : (i == SLIME_MOLD) ? "slime mold"
+                                   : obj_descr[i].oc_name
+                                     ? obj_descr[i].oc_name
+                                     : obj_descr[i].oc_descr;
                         Strcpy(buf[0], "G_");
                         if (glyph_is_normal_piletop_obj(glyph))
                             Strcat(buf[0], "piletop_");

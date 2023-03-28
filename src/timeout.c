@@ -851,14 +851,21 @@ fall_asleep(int how_long, boolean wakeup_msg)
     stop_occupation();
     nomul(how_long);
     gm.multi_reason = "sleeping";
-    /* generally don't notice sounds while sleeping */
+#if 0   /* this was broken; the fix for 'how_long' will result in changed
+         * behavior for sounds that don't go through You_hear() so needs
+         * testing */
+    /* You_hear() produces "You dream that you hear ..." when sleeping;
+       other sound messages will either honor or ignore Deaf */
     if (wakeup_msg && gm.multi == how_long) {
         /* caller can follow with a direct call to Hear_again() if
            there's a need to override this when wakeup_msg is true */
-        incr_itimeout(&HDeaf, how_long);
+        /* 3.7: how_long is negative so wasn't actually incrementing the
+           deafness timeout when it used to be passed as-is */
+        incr_itimeout(&HDeaf, abs(how_long));
         gc.context.botl = TRUE;
         ga.afternmv = Hear_again; /* this won't give any messages */
     }
+#endif
     /* early wakeup from combat won't be possible until next monster turn */
     u.usleep = gm.moves;
     gn.nomovemsg = wakeup_msg ? "You wake up." : You_can_move_again;
@@ -1005,10 +1012,13 @@ hatch_egg(anything *arg, long timeout)
                 You_see("%s %s out of your pack!", monnambuf,
                         locomotion(mon->data, "drop"));
             if (yours) {
-                pline("%s cries sound like \"%s%s\"",
+                pline("%s %s %s like \"%s%s\"",
                       siblings ? "Their" : "Its",
+                      ing_suffix(cry_sound(mon)),
+                      (is_silent(mon->data) || Deaf) ? "seems" : "sounds",
                       flags.female ? "mommy" : "daddy", egg->spe ? "." : "?");
             } else if (mon->data->mlet == S_DRAGON && !Deaf) {
+                SetVoice(mon, 0, 80, 0);
                 verbalize("Gleep!"); /* Mything eggs :-) */
             }
             break;
@@ -1696,8 +1706,8 @@ do_storms(void)
     int dirx, diry;
     int count;
 
-    /* no lightning if not the air level or too often, even then */
-    if (!Is_airlevel(&u.uz) || rn2(8))
+    /* no lightning if not stormy level or too often, even then */
+    if (!gl.level.flags.stormy || rn2(8))
         return;
 
     /* the number of strikes is 8-log2(nstrike) */
@@ -1711,15 +1721,18 @@ do_storms(void)
         if (count < 100) {
             dirx = rn2(3) - 1;
             diry = rn2(3) - 1;
-            if (dirx != 0 || diry != 0)
-                buzz(-15, /* "monster" LIGHTNING spell */
-                     8, x, y, dirx, diry);
+            if (dirx != 0 || diry != 0) {
+                /* BZ_M_SPELL(BZ_OFS_AD(AD_ELEC)): monster LIGHTNING spell */
+                gb.buzzer = 0; /* unspecified attacker */
+                buzz(BZ_M_SPELL(BZ_OFS_AD(AD_ELEC)), 8, x, y, dirx, diry);
+            }
         }
     }
 
     if (levl[u.ux][u.uy].typ == CLOUD) {
         /* Inside a cloud during a thunder storm is deafening. */
         /* Even if already deaf, we sense the thunder's vibrations. */
+        Soundeffect(se_kaboom_boom_boom, 80);
         pline("Kaboom!!!  Boom!!  Boom!!");
         incr_itimeout(&HDeaf, rn1(20, 30));
         gc.context.botl = TRUE;
@@ -1891,7 +1904,7 @@ wiz_timeout_queue(void)
     putstr(win, 0, "");
     print_queue(win, gt.timer_base);
 
-    /* Timed properies:
+    /* Timed properties:
      * check every one; the majority can't obtain temporary timeouts in
      * normal play but those can be forced via the #wizintrinsic command.
      */
@@ -2513,7 +2526,7 @@ timer_stats(const char* hdrfmt, char *hdrbuf, long *count, long *size)
 
 RESTORE_WARNING_FORMAT_NONLITERAL
 
-/* reset all timers that are marked for reseting */
+/* reset all timers that are marked for resetting */
 void
 relink_timers(boolean ghostly)
 {

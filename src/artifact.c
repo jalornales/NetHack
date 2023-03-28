@@ -213,6 +213,8 @@ mk_artifact(
             otmp = mksobj((int) a->otyp, TRUE, FALSE);
 
         if (otmp) {
+            /* prevent erosion from generating */
+            otmp->oeroded = otmp->oeroded2 = 0;
             otmp = oname(otmp, a->name, ONAME_NO_FLAGS);
             otmp->oartifact = m;
             /* set existence and reason for creation bits */
@@ -1819,6 +1821,7 @@ arti_invoke(struct obj *obj)
             otmp->blessed = obj->blessed;
             otmp->cursed = obj->cursed;
             otmp->bknown = obj->bknown;
+            otmp->oeroded = otmp->oeroded2 = 0;
             if (obj->blessed) {
                 if (otmp->spe < 0)
                     otmp->spe = 0;
@@ -1983,23 +1986,24 @@ artifact_light(struct obj *obj)
 }
 
 /* KMH -- Talking artifacts are finally implemented */
-void
+int
 arti_speak(struct obj *obj)
 {
-    register const struct artifact *oart = get_artifact(obj);
+    const struct artifact *oart = get_artifact(obj);
     const char *line;
     char buf[BUFSZ];
 
     /* Is this a speaking artifact? */
     if (!oart || !(oart->spfx & SPFX_SPEAK))
-        return;
+        return ECMD_OK; /* nothing happened */
 
     line = getrumor(bcsign(obj), buf, TRUE);
     if (!*line)
         line = "NetHack rumors file closed for renovation.";
     pline("%s:", Tobjnam(obj, "whisper"));
+    SetVoice((struct monst *) 0, 0, 80, voice_talking_artifact);
     verbalize1(line);
-    return;
+    return ECMD_TIME;
 }
 
 boolean

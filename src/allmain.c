@@ -14,6 +14,7 @@
 
 static void moveloop_preamble(boolean);
 static void u_calc_moveamt(int);
+static void maybe_do_tutorial(void);
 #ifdef POSITIONBAR
 static void do_positionbar(void);
 #endif
@@ -303,7 +304,7 @@ moveloop_core(void)
                     }
                 }
 
-                if (Searching && gm.multi >= 0)
+                if (!gl.level.flags.noautosearch && Searching && gm.multi >= 0)
                     (void) dosearch0(1);
                 if (Warning)
                     warnreveal();
@@ -329,16 +330,11 @@ moveloop_core(void)
 /* XXX This should be recoded to use something like regions - a list of
  * things that are active and need to be handled that is dynamically
  * maintained and not a list of special cases. */
-                /* underwater and waterlevel vision are done here */
+                /* vision will be updated as bubbles move */
                 if (Is_waterlevel(&u.uz) || Is_airlevel(&u.uz))
                     movebubbles();
-                else if (Is_firelevel(&u.uz))
+                else if (gl.level.flags.fumaroles)
                     fumaroles();
-                else if (Underwater)
-                    under_water(0);
-                /* vision while buried done here */
-                else if (u.uburied)
-                    under_ground(0);
 
                 /* when immobile, count is in turns */
                 if (gm.multi < 0) {
@@ -359,7 +355,7 @@ moveloop_core(void)
 
         gh.hero_seq++; /* moves*8 + n for n == 1..7 */
 
-        /* although we checked for encumberance above, we need to
+        /* although we checked for encumbrance above, we need to
            check again for message purposes, as the weight of
            inventory may have changed in, e.g., nh_timeout(); we do
            need two checks here so that the player gets feedback
@@ -390,6 +386,12 @@ moveloop_core(void)
         /* when/if hero escapes from lava, he can't just stay there */
         else if (!u.umoved)
             (void) pooleffects(FALSE);
+
+        /* vision while buried or underwater is updated here */
+        if (Underwater)
+            under_water(0);
+        else if (u.uburied)
+            under_ground(0);
 
     } /* actual time passed */
 
@@ -497,12 +499,41 @@ moveloop_core(void)
         /* [should this be flush_screen() instead?] */
         display_nhwindow(WIN_MAP, FALSE);
     }
+
+    if (gl.luacore && nhcb_counts[NHCB_END_TURN]) {
+        lua_getglobal(gl.luacore, "nh_callback_run");
+        lua_pushstring(gl.luacore, nhcb_name[NHCB_END_TURN]);
+        nhl_pcall(gl.luacore, 1, 0);
+    }
+}
+
+static void
+maybe_do_tutorial(void)
+{
+    s_level *sp = find_level("tut-1");
+
+    if (!sp)
+        return;
+
+    if (ask_do_tutorial()) {
+        assign_level(&u.ucamefrom, &u.uz);
+        u.nofollowers = TRUE;
+        schedule_goto(&sp->dlevel, UTOTYPE_NONE, (char *) 0, (char *) 0);
+        deferred_goto();
+        vision_recalc(0);
+        docrt();
+        u.nofollowers = FALSE;
+    }
 }
 
 void
 moveloop(boolean resuming)
 {
     moveloop_preamble(resuming);
+
+    if (!resuming)
+        maybe_do_tutorial();
+
     for (;;) {
         moveloop_core();
     }
@@ -619,9 +650,18 @@ stop_occupation(void)
 }
 
 void
-display_gamewindows(void)
+init_sound_and_display_gamewindows(void)
 {
     int menu_behavior = MENU_BEHAVE_STANDARD;
+
+    activate_chosen_soundlib();
+
+    if (iflags.wc_splash_screen && !flags.randomall) {
+        SoundAchievement(0, sa2_splashscreen, 0);
+        /* ToDo: new splash screen invocation will go here */
+    } else {
+        SoundAchievement(0, sa2_newgame_nosplash, 0);
+    }
 
     WIN_MESSAGE = create_nhwindow(NHW_MESSAGE);
     if (VIA_WINDOWPORT()) {
@@ -643,8 +683,8 @@ display_gamewindows(void)
 
 #ifdef MAC
     /* This _is_ the right place for this - maybe we will
-     * have to split display_gamewindows into create_gamewindows
-     * and show_gamewindows to get rid of this ifdef...
+     * have to split init_sound_and_display_gamewindows into
+     * create_gamewindows and show_gamewindows to get rid of this ifdef...
      */
     if (!strcmp(windowprocs.name, "mac"))
         SanePositions();
@@ -777,7 +817,7 @@ welcome(boolean new_game) /* false => restoring an old game */
         livelog_printf(LL_ACHIEVE, "%s the%s entered the dungeon",
                        gp.plname, buf);
     } else {
-        /* if restroing in Gehennom, give same hot/smoky message as when
+        /* if restoring in Gehennom, give same hot/smoky message as when
            first entering it */
         hellish_smoke_mesg();
     }
@@ -1054,11 +1094,22 @@ dump_enums(void)
     static const char *const titles[NUM_ENUM_DUMPS] = {
         "monnums", "objects_nums" , "misc_object_nums"
     };
+#define dump_om(om) { om, #om }
     static const struct enum_dump omdump[] = {
-        { LAST_GEM, "LAST_GEM" },
-        { NUM_GLASS_GEMS, "NUM_GLASS_GEMS" },
-        { MAXSPELL, "MAXSPELL" },
+        dump_om(FIRST_AMULET),
+        dump_om(LAST_AMULET),
+        dump_om(FIRST_SPELL),
+        dump_om(LAST_SPELL),
+        dump_om(MAXSPELL),
+        dump_om(FIRST_REAL_GEM),
+        dump_om(LAST_REAL_GEM),
+        dump_om(FIRST_GLASS_GEM),
+        dump_om(LAST_GLASS_GEM),
+        dump_om(NUM_REAL_GEMS),
+        dump_om(NUM_GLASS_GEMS),
+        dump_om(MAX_GLYPH),
     };
+#undef dump_om
     static const struct enum_dump *const ed[NUM_ENUM_DUMPS] = {
         monsdump, objdump, omdump
     };
@@ -1066,16 +1117,16 @@ dump_enums(void)
     static int szd[NUM_ENUM_DUMPS] = {
         SIZE(monsdump), SIZE(objdump), SIZE(omdump)
     };
-    int i, j;
+    const char *nmprefix;
+    int i, j, nmwidth;
 
     for (i = 0; i < NUM_ENUM_DUMPS; ++ i) {
         raw_printf("enum %s = {", titles[i]);
         for (j = 0; j < szd[i]; ++j) {
-            raw_printf("    %s%s = %i%s",
-                       (j == szd[i] - 1) ? "" : pfx[i],
-                       ed[i][j].nm,
-                       ed[i][j].val,
-                       (j == szd[i] - 1) ? "" : ",");
+            nmprefix = (j == szd[i] - 1) ? "" : pfx[i]; /* "" or "PM_" */
+            nmwidth = 27 - (int) strlen(nmprefix); /* 27 or 24 */
+            raw_printf("    %s%*s = %3d,",
+                       nmprefix, -nmwidth, ed[i][j].nm, ed[i][j].val);
        }
         raw_print("};");
         raw_print("");

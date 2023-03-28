@@ -40,7 +40,7 @@ static void zerocomp_bwrite(int, genericptr_t, unsigned int);
 static void zerocomp_bputc(int);
 #endif
 
-#if defined(UNIX) || defined(VMS) || defined(__EMX__) || defined(WIN32)
+#if defined(HANGUPHANDLING)
 #define HUP if (!gp.program_state.done_hup)
 #else
 #define HUP
@@ -51,18 +51,21 @@ int
 dosave(void)
 {
     clear_nhwindow(WIN_MESSAGE);
-    if (yn("Really save?") == 'n') {
+    if (y_n("Really save?") == 'n') {
         clear_nhwindow(WIN_MESSAGE);
         if (gm.multi > 0)
             nomul(0);
     } else {
         clear_nhwindow(WIN_MESSAGE);
         pline("Saving...");
-#if defined(UNIX) || defined(VMS) || defined(__EMX__)
+#if defined(HANGUPHANDLING)
         gp.program_state.done_hup = 0;
 #endif
         if (dosave0()) {
             u.uhp = -1; /* universal game's over indicator */
+            if (soundprocs.sound_exit_nhsound)
+                (*soundprocs.sound_exit_nhsound)("dosave");
+
             /* make sure they see the Saving message */
             display_nhwindow(WIN_MESSAGE, TRUE);
             exit_nhwindows("Be seeing you...");
@@ -118,7 +121,7 @@ dosave0(void)
             close_nhfile(nhfp);
             clear_nhwindow(WIN_MESSAGE);
             There("seems to be an old save file.");
-            if (yn("Overwrite the old file?") == 'n') {
+            if (y_n("Overwrite the old file?") == 'n') {
                 nh_compress(fq_save);
                 goto done;
             }
@@ -271,7 +274,7 @@ save_gamelog(NHFILE *nhfp)
 }
 
 static void
-savegamestate(NHFILE* nhfp)
+savegamestate(NHFILE *nhfp)
 {
     unsigned long uid;
 
@@ -327,20 +330,24 @@ savegamestate(NHFILE* nhfp)
     save_oracles(nhfp);
     if (gu.ustuck_id) {
         if (nhfp->structlevel)
-            bwrite(nhfp->fd, (genericptr_t) &gu.ustuck_id, sizeof gu.ustuck_id);
+            bwrite(nhfp->fd, (genericptr_t) &gu.ustuck_id,
+                   sizeof gu.ustuck_id);
     }
     if (gu.usteed_id) {
         if (nhfp->structlevel)
-            bwrite(nhfp->fd, (genericptr_t) &gu.usteed_id, sizeof gu.usteed_id);
+            bwrite(nhfp->fd, (genericptr_t) &gu.usteed_id,
+                   sizeof gu.usteed_id);
     }
     if (nhfp->structlevel) {
-        bwrite(nhfp->fd, (genericptr_t) gp.pl_character, sizeof gp.pl_character);
+        bwrite(nhfp->fd, (genericptr_t) gp.pl_character,
+               sizeof gp.pl_character);
         bwrite(nhfp->fd, (genericptr_t) gp.pl_fruit, sizeof gp.pl_fruit);
     }
     savefruitchn(nhfp);
     savenames(nhfp);
     save_msghistory(nhfp);
     save_gamelog(nhfp);
+    save_luadata(nhfp);
     if (nhfp->structlevel)
         bflush(nhfp->fd);
     gp.program_state.saving--;
@@ -1205,6 +1212,9 @@ freedynamicdata(void)
     free_dungeons();
     free_CapMons();
     free_rect();
+    freeroleoptvals(); /* saveoptvals(&tnhfp) */
+    cmdq_clear(CQ_CANNED);
+    cmdq_clear(CQ_REPEAT);
 
     /* some pointers in iflags */
     if (iflags.wc_font_map)

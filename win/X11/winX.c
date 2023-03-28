@@ -16,6 +16,14 @@
 #define SHORT_FILENAMES
 #endif
 
+/* Can't use #ifdef LINUX because no header files have been processed yet.
+ * This is needed to ensure the prototype for seteuid() is picked up when
+ * the header files are processed.
+ */
+#ifdef __linux__
+#define _POSIX_C_SOURCE 200809
+#endif
+
 #include <X11/Intrinsic.h>
 #include <X11/StringDefs.h>
 #include <X11/Shell.h>
@@ -46,7 +54,10 @@
 #undef SHORT_FILENAMES /* hack.h will reset via global.h if necessary */
 #endif
 
+#define X11_BUILD
 #include "hack.h"
+#undef X11_BUILD
+
 #include "winX.h"
 #include "dlb.h"
 #include "xwindow.h"
@@ -93,10 +104,12 @@ static int X11_io_error_handler(Display *);
 
 static int (*old_error_handler)(Display *, XErrorEvent *);
 
+#if defined(HANGUPHANDLING)
 #if !defined(NO_SIGNAL) && defined(SAFERHANGUP)
 #if XtSpecificationRelease >= 6
 #define X11_HANGUP_SIGNAL
 static XtSignalId X11_sig_id;
+#endif
 #endif
 #endif
 
@@ -1305,13 +1318,21 @@ X11_doprev_message(void)
     return 0;
 }
 
+/* issue a beep to alert the user about something */
 void
 X11_nhbell(void)
 {
-    /* We can't use XBell until toplevel has been initialized. */
-    if (x_inited)
-        XBell(XtDisplay(toplevel), 0);
-    /* else print ^G ?? */
+    if (!flags.silent) {
+        /* We can't use XBell until toplevel has been initialized. */
+        if (x_inited) {
+            XBell(XtDisplay(toplevel), 0);
+#if 0
+        } else {
+            /* raw_print() uses puts() so appends a newline */
+            X11_raw_print("\a"); /* '\a' == '\007' (^G), ascii BEL */
+#endif
+        }
+    }
 }
 
 void
@@ -1334,8 +1355,10 @@ X11_mark_synch(void)
 void
 X11_wait_synch(void)
 {
-    if (x_inited)
+    if (x_inited) {
+        X11_mark_synch();
         XFlush(XtDisplay(toplevel));
+    }
 }
 
 /* Both resume_ and suspend_ are called from ioctl.c and unixunix.c. */
@@ -1509,16 +1532,27 @@ static void
 X11_error_handler(String str)
 {
     nhUse(str);
+#if defined(HANGUPHANDLING)
     hangup(1);
-    nh_terminate(EXIT_FAILURE);
+#ifdef SAFERHANGUP /* keeps going after hangup() for '#if SAFERHANGUP' */
+    end_of_input();
+#endif
+#endif
     /*NOTREACHED*/
+    nh_terminate(EXIT_FAILURE);
 }
 
 static int
 X11_io_error_handler(Display *display)
 {
     nhUse(display);
+#if defined(HANGUPHANDLING)
     hangup(1);
+#ifdef SAFERHANGUP /* keeps going after hangup() for '#if SAFERHANGUP' */
+    end_of_input();
+#endif
+#endif
+    /*NOREACHED*/ /* but not declared NORETURN */
     return 0;
 }
 
@@ -1745,7 +1779,9 @@ X11_hangup(Widget w, XEvent *event, String *params, Cardinal *num_params)
     nhUse(params);
     nhUse(num_params);
 
+#if defined(HANGUPHANDLING)
     hangup(1); /* 1 is commonly SIGHUP, but ignored anyway */
+#endif
     exit_x_event = TRUE;
 }
 

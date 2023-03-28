@@ -13,10 +13,14 @@ static void dosinkring(struct obj *);
 static int drop(struct obj *);
 static int menudrop_split(struct obj *, long);
 static boolean engulfer_digests_food(struct obj *);
+static boolean danger_uprops(void);
 static int wipeoff(void);
 static int menu_drop(int);
+static boolean u_stuck_cannot_go(const char *);
 static NHFILE *currentlevel_rewrite(void);
+static void familiar_level_msg(void);
 static void final_level(void);
+static void temperature_change_msg(schar);
 
 /* static boolean badspot(coordxy,coordxy); */
 
@@ -108,6 +112,11 @@ boulder_hits_pool(
                           the(xname(otmp)), fills_up ? "fills" : "falls into",
                           what);
                 } else if (!Deaf) {
+                    if (lava) {
+                        Soundeffect(se_sizzling, 100);
+                    } else {
+                        Soundeffect(se_splash, 100);
+                    }
                     You_hear("a%s splash.", lava ? " sizzling" : "");
                 }
                 wake_nearto(rx, ry, 40);
@@ -222,6 +231,7 @@ flooreffects(struct obj *obj, coordxy x, coordxy y, const char *verb)
         }
         if (*verb) {
             if (Blind && u_at(x, y)) {
+                Soundeffect(se_crashing_boulder, 100);
                 You_hear("a CRASH! beneath you.");
             } else if (!Blind && cansee(x, y)) {
                 pline_The("boulder %s%s.",
@@ -232,6 +242,7 @@ flooreffects(struct obj *obj, coordxy x, coordxy y, const char *verb)
                               : (ttyp == HOLE) ? "plugs a hole"
                                                : "fills a pit");
             } else {
+                Soundeffect(se_boulder_drop, 100);
                 You_hear("a boulder %s.", verb);
             }
         }
@@ -267,11 +278,13 @@ flooreffects(struct obj *obj, coordxy x, coordxy y, const char *verb)
     } else if (u_at(x, y) && (t = t_at(x, y)) != 0
                && (uteetering_at_seen_pit(t) || uescaped_shaft(t))) {
         if (is_pit(t->ttyp)) {
-            if (Blind && !Deaf)
+            if (Blind && !Deaf) {
+                Soundeffect(se_item_tumble_downwards, 50);
                 You_hear("%s tumble downwards.", the(xname(obj)));
-            else
+            } else {
                 pline("%s into %s pit.", Tobjnam(obj, "tumble"),
                       the_your[t->madeby_u]);
+            }
         } else if (ship_object(obj, x, y, FALSE)) {
             /* ship_object will print an appropriate "the item falls
              * through the hole" message, so no need to do it here. */
@@ -456,6 +469,7 @@ dosinkring(struct obj *obj)
         pline("Static electricity surrounds the sink.");
         break;
     case RIN_CONFLICT:
+        Soundeffect(se_drain_noises, 50);
         You_hear("loud noises coming from the drain.");
         break;
     case RIN_SUSTAIN_ABILITY: /* KMH */
@@ -567,11 +581,12 @@ dosinkring(struct obj *obj)
             break;
         }
     }
-    if (ideed)
+    if (ideed) {
         trycall(obj);
-    else if (!nosink)
+    } else if (!nosink) {
+        Soundeffect(se_ring_in_drain, 50);
         You_hear("the ring bouncing down the drainpipe.");
-
+    }
     if (!rn2(20) && !nosink) {
         pline_The("sink backs up, leaving %s.", doname(obj));
         obj->in_use = FALSE;
@@ -593,6 +608,19 @@ canletgo(struct obj *obj, const char *word)
     if (obj->owornmask & (W_ARMOR | W_ACCESSORY)) {
         if (*word)
             Norep("You cannot %s %s you are wearing.", word, something);
+        return FALSE;
+    }
+    if (obj == uwep && welded(uwep)) {
+        /* no weldmsg(), so uwep->bknown might become set silently
+           if word is "" */
+        if (*word) {
+            const char *hand = body_part(HAND);
+
+            if (bimanual(uwep))
+                hand = makeplural(hand);
+            Norep("You cannot %s %s welded to your %s.", word, something,
+                  hand);
+        }
         return FALSE;
     }
     if (obj->otyp == LOADSTONE && obj->cursed) {
@@ -898,6 +926,7 @@ menu_drop(int retry)
             } else if (pick_list[i].item.a_int == 'P') {
                 justpicked_quan = max(0, pick_list[i].count);
                 drop_justpicked = TRUE;
+                drop_everything = FALSE;
                 add_valid_menu_class(pick_list[i].item.a_int);
             } else {
                 add_valid_menu_class(pick_list[i].item.a_int);
@@ -992,6 +1021,26 @@ menu_drop(int retry)
     return (n_dropped ? ECMD_TIME : ECMD_OK);
 }
 
+static boolean
+u_stuck_cannot_go(const char *updn)
+{
+    if (u.ustuck) {
+        if (u.uswallow || !sticks(gy.youmonst.data)) {
+            You("are %s, and cannot go %s.",
+                !u.uswallow ? "being held"
+                : digests(u.ustuck->data) ? "swallowed"
+                : "engulfed", updn);
+            return TRUE;
+        } else {
+            struct monst *mtmp = u.ustuck;
+
+            set_ustuck((struct monst *) 0);
+            You("release %s.", mon_nam(mtmp));
+        }
+    }
+    return FALSE;
+}
+
 /* the #down command */
 int
 dodown(void)
@@ -1076,20 +1125,8 @@ dodown(void)
         return ECMD_TIME; /* came out of hiding; need '>' again to go down */
     }
 
-    if (u.ustuck) {
-        if (u.uswallow || !sticks(gy.youmonst.data)) {
-            You("are %s, and cannot go down.",
-                !u.uswallow ? "being held"
-                : digests(u.ustuck->data) ? "swallowed"
-                  : "engulfed");
-            return ECMD_TIME;
-        } else {
-            struct monst *mtmp = u.ustuck;
-
-            set_ustuck((struct monst *) 0);
-            You("release %s.", mon_nam(mtmp));
-        }
-    }
+    if (u_stuck_cannot_go("down"))
+        return ECMD_TIME;
 
     if (!stairs_down && !ladder_down) {
         trap = t_at(u.ux, u.uy);
@@ -1111,7 +1148,7 @@ dodown(void)
     if (on_level(&valley_level, &u.uz) && !u.uevent.gehennom_entered) {
         You("are standing at the gate to Gehennom.");
         pline("Unspeakable cruelty and harm lurk down there.");
-        if (yn("Are you sure you want to enter?") != 'y')
+        if (y_n("Are you sure you want to enter?") != 'y')
             return ECMD_OK;
         pline("So be it.");
         u.uevent.gehennom_entered = 1; /* don't ask again */
@@ -1131,7 +1168,7 @@ dodown(void)
 
             You("don't fit %s easily.", down_or_thru);
             Sprintf(qbuf, "Try to squeeze %s?", down_or_thru);
-            if (yn(qbuf) == 'y') {
+            if (y_n(qbuf) == 'y') {
                 if (!rn2(3)) {
                     actn = "manage to squeeze";
                     losehp(Maybe_Half_Phys(rnd(4)),
@@ -1186,20 +1223,10 @@ doup(void)
     if (stucksteed(TRUE)) {
         return ECMD_OK;
     }
-    if (u.ustuck) {
-        if (u.uswallow || !sticks(gy.youmonst.data)) {
-            You("are %s, and cannot go up.",
-                !u.uswallow ? "being held"
-                : digests(u.ustuck->data) ? "swallowed"
-                  : "engulfed");
-            return ECMD_TIME;
-        } else {
-            struct monst *mtmp = u.ustuck;
 
-            set_ustuck((struct monst *) 0);
-            You("release %s.", mon_nam(mtmp));
-        }
-    }
+    if (u_stuck_cannot_go("up"))
+        return ECMD_TIME;
+
     if (near_capacity() > SLT_ENCUMBER) {
         /* No levitation check; inv_weight() already allows for it */
         Your("load is too heavy to climb the %s.",
@@ -1209,7 +1236,7 @@ doup(void)
     if (ledger_no(&u.uz) == 1) {
         if (iflags.debug_fuzzer)
             return ECMD_OK;
-        if (yn("Beware, there will be no return!  Still climb?") != 'y')
+        if (y_n("Beware, there will be no return!  Still climb?") != 'y')
             return ECMD_OK;
     }
     if (!next_to_u()) {
@@ -1323,7 +1350,36 @@ u_collide_m(struct monst *mtmp)
     }
 }
 
-DISABLE_WARNING_FORMAT_NONLITERAL
+static void
+familiar_level_msg(void)
+{
+    static const char *const fam_msgs[4] = {
+        "You have a sense of deja vu.",
+        "You feel like you've been here before.",
+        "This place %s familiar...", 0 /* no message */
+    };
+    static const char *const halu_fam_msgs[4] = {
+        "Whoa!  Everything %s different.",
+        "You are surrounded by twisty little passages, all alike.",
+        "Gee, this %s like uncle Conan's place...", 0 /* no message */
+    };
+    const char *mesg;
+    char buf[BUFSZ];
+    int which = rn2(4);
+
+    if (Hallucination)
+        mesg = halu_fam_msgs[which];
+    else
+        mesg = fam_msgs[which];
+    if (mesg && strchr(mesg, '%')) {
+        DISABLE_WARNING_FORMAT_NONLITERAL
+        Sprintf(buf, mesg, !Blind ? "looks" : "seems");
+        RESTORE_WARNING_FORMAT_NONLITERAL
+        mesg = buf;
+    }
+    if (mesg)
+        pline1(mesg);
+}
 
 void
 goto_level(
@@ -1346,6 +1402,7 @@ goto_level(
     char *annotation;
     int dist = depth(newlevel) - depth(&u.uz);
     boolean do_fall_dmg = FALSE;
+    schar prev_temperature = gl.level.flags.temperature;
 
     if (dunlev(newlevel) > dunlevs_in_dungeon(newlevel))
         newlevel->dlevel = dunlevs_in_dungeon(newlevel);
@@ -1424,6 +1481,12 @@ goto_level(
     if (on_level(newlevel, &u.uz))
         return; /* this can happen */
 
+    if (gl.luacore && nhcb_counts[NHCB_LVL_LEAVE]) {
+        lua_getglobal(gl.luacore, "nh_callback_run");
+        lua_pushstring(gl.luacore, nhcb_name[NHCB_LVL_LEAVE]);
+        nhl_pcall(gl.luacore, 1, 0);
+    }
+
     /* tethered movement makes level change while trapped feasible */
     if (u.utrap && u.utraptype == TT_BURIEDBALL)
         buried_ball_to_punishment(); /* (before we save/leave old level) */
@@ -1454,7 +1517,8 @@ goto_level(
     set_ustuck((struct monst *) 0); /* clear u.ustuck and u.uswallow */
     set_uinwater(0); /* u.uinwater = 0 */
     u.uundetected = 0; /* not hidden, even if means are available */
-    keepdogs(FALSE);
+    if (!u.nofollowers)
+        keepdogs(FALSE);
     recalc_mapseen(); /* recalculate map overview before we leave the level */
     /*
      *  We no longer see anything on the level.  Make sure that this
@@ -1554,6 +1618,7 @@ goto_level(
     if (portal && !In_endgame(&u.uz)) {
         /* find the portal on the new level */
         register struct trap *ttrap;
+        struct stairway *stway;
 
         for (ttrap = gf.ftrap; ttrap; ttrap = ttrap->ntrap)
             if (ttrap->ttyp == MAGIC_PORTAL)
@@ -1566,8 +1631,13 @@ goto_level(
                    after already getting expelled once. The portal back
                    doesn't exist anymore - see expulsion(). */
                 u_on_rndspot(0);
+            } else if ((stway = stairway_find_dir(TRUE)) != 0) {
+                /* returning from tutorial via portal */
+                u_on_newpos(stway->sx, stway->sy);
             } else {
-                panic("goto_level: no corresponding portal!");
+                if (!iflags.debug_fuzzer)
+                    impossible("goto_level: no corresponding portal!");
+                u_on_rndspot(0);
             }
         } else {
             seetrap(ttrap);
@@ -1612,7 +1682,8 @@ goto_level(
                 You("fall down the %s.", ga.at_ladder ? "ladder" : "stairs");
                 if (Punished) {
                     drag_down();
-                    ballrelease(FALSE);
+                    if (!welded(uball))
+                        ballrelease(FALSE);
                 }
                 /* falling off steed has its own losehp() call */
                 if (u.usteed)
@@ -1632,7 +1703,7 @@ goto_level(
     } else { /* trap door or level_tele or In_endgame */
         u_on_rndspot((up ? 1 : 0) | (was_in_W_tower ? 2 : 0));
         if (falling) {
-            if (Punished)
+            if (Punished && !welded(uball))
                 ballfall();
             selftouch("Falling, you");
             do_fall_dmg = TRUE;
@@ -1661,7 +1732,7 @@ goto_level(
     /* initial movement of bubbles just before vision_recalc */
     if (Is_waterlevel(&u.uz) || Is_airlevel(&u.uz))
         movebubbles();
-    else if (Is_firelevel(&u.uz))
+    else if (gl.level.flags.fumaroles)
         fumaroles();
 
     /* Reset the screen. */
@@ -1695,9 +1766,9 @@ goto_level(
 #ifdef MICRO
             display_nhwindow(WIN_MESSAGE, FALSE);
 #endif
+            Soundeffect(se_groans_and_moans, 25);
             You_hear("groans and moans everywhere.");
-        } else
-            hellish_smoke_mesg(); /* "It is hot here.  You smell smoke..." */
+        }
 
         record_achievement(ACH_HELL); /* reached Gehennom */
     }
@@ -1705,32 +1776,8 @@ goto_level(
     if (Inhell && !Is_valley(&u.uz))
         u.uevent.gehennom_entered = 1;
 
-    if (familiar) {
-        static const char *const fam_msgs[4] = {
-            "You have a sense of deja vu.",
-            "You feel like you've been here before.",
-            "This place %s familiar...", 0 /* no message */
-        };
-        static const char *const halu_fam_msgs[4] = {
-            "Whoa!  Everything %s different.",
-            "You are surrounded by twisty little passages, all alike.",
-            "Gee, this %s like uncle Conan's place...", 0 /* no message */
-        };
-        const char *mesg;
-        char buf[BUFSZ];
-        int which = rn2(4);
-
-        if (Hallucination)
-            mesg = halu_fam_msgs[which];
-        else
-            mesg = fam_msgs[which];
-        if (mesg && strchr(mesg, '%')) {
-            Sprintf(buf, mesg, !Blind ? "looks" : "seems");
-            mesg = buf;
-        }
-        if (mesg)
-            pline1(mesg);
-    }
+    if (familiar)
+        familiar_level_msg();
 
     /* special location arrival messages/events */
     if (In_endgame(&u.uz)) {
@@ -1744,13 +1791,11 @@ goto_level(
         }
     } else if (In_quest(&u.uz)) {
         onquest(); /* might be reaching locate|goal level */
-    } else if (In_V_tower(&u.uz)) {
-        if (newdungeon && In_hell(&u.uz0))
-            pline_The("heat and smoke are gone.");
     } else if (Is_knox(&u.uz)) {
         /* alarm stops working once Croesus has died */
         if (new || !gm.mvitals[PM_CROESUS].died) {
             You("have penetrated a high security area!");
+            Soundeffect(se_alarm, 100);
             pline("An alarm sounds!");
             for (mtmp = fmon; mtmp; mtmp = mtmp->nmon) {
                 if (DEADMONSTER(mtmp))
@@ -1787,6 +1832,8 @@ goto_level(
             }
         }
     }
+
+    temperature_change_msg(prev_temperature);
 
     /* this was originally done earlier; moved here to be logged after
        any achievement related to entering a dungeon branch
@@ -1836,16 +1883,34 @@ goto_level(
     return;
 }
 
-RESTORE_WARNING_FORMAT_NONLITERAL
-
 /* give a message when entering a Gehennom level other than the Valley;
    also given if restoring a game in that situation */
 void
 hellish_smoke_mesg(void)
 {
-    if (Inhell && !Is_valley(&u.uz))
-        pline("It is hot here.  You %s smoke...",
+    if (gl.level.flags.temperature)
+        pline("It is %s here.",
+              gl.level.flags.temperature > 0 ? "hot" : "cold");
+
+    if (In_hell(&u.uz) && gl.level.flags.temperature > 0)
+        You("%s smoke...",
               olfaction(gy.youmonst.data) ? "smell" : "sense");
+}
+
+/* give a message when the level temperature is different from previous */
+static void
+temperature_change_msg(schar prev_temperature)
+{
+    if (prev_temperature != gl.level.flags.temperature) {
+        if (gl.level.flags.temperature)
+            hellish_smoke_mesg();
+        else if (prev_temperature > 0)
+            pline_The("heat %s gone.",
+                      In_hell(&u.uz0)
+                      ? "and smoke are" : "is");
+        else if (prev_temperature < 0)
+            You("are out of the cold.");
+    }
 }
 
 /* usually called from goto_level(); might be called from Sting_effects() */
@@ -2035,8 +2100,10 @@ revive_corpse(struct obj *corpse)
                     pline("%s claws itself out of the ground!",
                           canspotmon(mtmp) ? Amonnam(mtmp) : Something);
                     newsym(mtmp->mx, mtmp->my);
-                } else if (mdistu(mtmp) < 5*5)
+                } else if (mdistu(mtmp) < 5*5) {
+                    Soundeffect(se_scratching, 50);
                     You_hear("scratching noises.");
+                }
                 break;
             }
             /*FALLTHRU*/
@@ -2118,19 +2185,32 @@ zombify_mon(anything *arg, long timeout)
     }
 }
 
-boolean
-cmd_safety_prevention(const char *cmddesc, const char *act, int *flagcounter)
+/* return TRUE if hero properties are dangerous to hero */
+static boolean
+danger_uprops(void)
 {
-    if (flags.safe_wait && !iflags.menu_requested
-        && !gm.multi && monster_nearby()) {
+    return (Stoned || Slimed || Strangled || Sick);
+}
+
+boolean
+cmd_safety_prevention(const char *ucverb, const char *cmddesc,
+                      const char *act, int *flagcounter)
+{
+    if (flags.safe_wait && !iflags.menu_requested && !gm.multi) {
         char buf[QBUFSZ];
 
         buf[0] = '\0';
         if (iflags.cmdassist || !(*flagcounter)++)
             Sprintf(buf, "  Use '%s' prefix to force %s.",
                     visctrl(cmd_from_func(do_reqmenu)), cmddesc);
-        Norep("%s%s", act, buf);
-        return TRUE;
+
+        if (monster_nearby()) {
+            Norep("%s%s", act, buf);
+            return TRUE;
+        } else if (danger_uprops()) {
+            Norep("%s doesn't feel like a good idea right now.", ucverb);
+            return TRUE;
+        }
     }
     *flagcounter = 0;
     return FALSE;
@@ -2141,7 +2221,7 @@ cmd_safety_prevention(const char *cmddesc, const char *act, int *flagcounter)
 int
 donull(void)
 {
-    if (cmd_safety_prevention("a no-op (to rest)",
+    if (cmd_safety_prevention("Waiting", "a no-op (to rest)",
                           "Are you waiting to get hit?",
                           &gd.did_nothing_flag))
         return ECMD_OK;

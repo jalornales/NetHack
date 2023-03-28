@@ -5,6 +5,8 @@
 
 #include "hack.h"
 
+static boolean may_generate_eroded(struct obj *);
+static void mkobj_erosions(struct obj *);
 static void mkbox_cnts(struct obj *);
 static unsigned nextoid(struct obj *, struct obj *);
 static int item_on_ice(struct obj *);
@@ -165,6 +167,54 @@ free_omailcmd(struct obj *otmp)
     if (otmp->oextra && OMAILCMD(otmp)) {
         free((genericptr_t) OMAILCMD(otmp));
         OMAILCMD(otmp) = (char *) 0;
+    }
+}
+
+/* can object be generated eroded? */
+static boolean
+may_generate_eroded(struct obj *otmp)
+{
+    /* initial hero inventory */
+    if (gm.moves <= 1 && !gi.in_mklev)
+        return FALSE;
+    /* already erodeproof or cannot be eroded */
+    if (otmp->oerodeproof || !erosion_matters(otmp) || !is_damageable(otmp))
+        return FALSE;
+    /* part of a monster's body and produced when it dies */
+    if (otmp->otyp == WORM_TOOTH || otmp->otyp == UNICORN_HORN)
+        return FALSE;
+    /* artifacts cannot be generated eroded  */
+    if (otmp->oartifact)
+        return FALSE;
+    return TRUE;
+}
+
+/* random chance of applying erosions/grease to object */
+static void
+mkobj_erosions(struct obj *otmp)
+{
+    if (may_generate_eroded(otmp)) {
+        /* A small fraction of non-artifact items will generate eroded or
+         * possibly erodeproof. An item that generates eroded will never be
+         * erodeproof, and vice versa. */
+        if (!rn2(100)) {
+            otmp->oerodeproof = 1;
+        } else {
+            if (!rn2(80) && (is_flammable(otmp) || is_rustprone(otmp))) {
+                do {
+                    otmp->oeroded++;
+                } while (otmp->oeroded < 3 && !rn2(9));
+            }
+            if (!rn2(80) && (is_rottable(otmp) || is_corrodeable(otmp))) {
+                do {
+                    otmp->oeroded2++;
+                } while (otmp->oeroded2 < 3 && !rn2(9));
+            }
+        }
+        /* and an extremely small fraction of the time, erodable items
+         * will generate greased */
+        if (!rn2(1000))
+            otmp->greased = 1;
     }
 }
 
@@ -734,6 +784,9 @@ costly_alteration(struct obj *obj, int alter_type)
     case OBJ_INVENT:
         if (learn_bknown)
             set_bknown(obj, 1);
+        if (shkp) {
+            SetVoice(shkp, 0, 80, 0);
+        }
         verbalize("You %s %s %s, you pay for %s!",
                   alteration_verbs[alter_type], those, simpleonames(obj),
                   them);
@@ -743,6 +796,9 @@ costly_alteration(struct obj *obj, int alter_type)
         if (learn_bknown)
             obj->bknown = 1; /* ok to bypass set_bknown() here */
         if (costly_spot(u.ux, u.uy) && objroom == *u.ushops) {
+            if (shkp) {
+                SetVoice(shkp, 0, 80, 0);
+            }
             verbalize("You %s %s, you pay for %s!",
                       alteration_verbs[alter_type], those, them);
             bill_dummy_object(obj);
@@ -789,7 +845,7 @@ unknow_object(struct obj *obj)
     obj->known = objects[obj->otyp].oc_uses_known ? 0 : 1;
 }
 
-/* mksobj(): create a specific type of object; result it always non-Null */
+/* mksobj(): create a specific type of object; result is always non-Null */
 struct obj *
 mksobj(int otyp, boolean init, boolean artif)
 {
@@ -891,7 +947,7 @@ mksobj(int otyp, boolean init, boolean artif)
             if (Is_pudding(otmp)) {
                 otmp->globby = 1;
                 /* for emphasis; glob quantity is always 1 and weight varies
-                   when other globs coallesce with it or this one shrinks */
+                   when other globs coalesce with it or this one shrinks */
                 otmp->quan = 1L;
                 /* 3.7: globs in 3.6.x left owt as 0 and let weight() fix
                    that up during 'obj->owt = weight(obj)' below, but now
@@ -1096,6 +1152,8 @@ mksobj(int otyp, boolean init, boolean artif)
             /*NOTREACHED*/
         }
     }
+
+    mkobj_erosions(otmp);
 
     /* some things must get done (corpsenm, timers) even if init = 0 */
     switch ((otmp->oclass == POTION_CLASS && otmp->otyp != POT_OIL)
@@ -1753,7 +1811,7 @@ weight(struct obj *obj)
                    obj->quan, simpleonames(obj));
         return 0;
     }
-    /* glob absorpsion means that merging globs combines their weight
+    /* glob absorption means that merging globs combines their weight
        while quantity stays 1; mksobj(), obj_absorb(), and shrink_glob()
        manage glob->owt and there is nothing for weight() to do except
        return the current value as-is */
@@ -2114,6 +2172,12 @@ place_object(struct obj *otmp, coordxy x, coordxy y)
                : impossible;
         (*func)("place_object: \"%s\" [%d] off map <%d,%d>",
                 safe_typename(otmp->otyp), otmp->where, x, y);
+
+        /* we'll only get to here if we've issued a warning (and fuzzer
+           is not running since it escalates impossible to panic), so
+           x,y has failed isok() but is within array bounds for the map;
+           in other words, x specifies column 0 which should not happen
+           but we let the game keep going */
     }
     if (otmp->where != OBJ_FREE)
         panic("place_object: obj \"%s\" [%d] not free",
@@ -2571,6 +2635,12 @@ dealloc_obj(struct obj *obj)
         obj->where = OBJ_LUAFREE;
         return;
     }
+#ifdef DEBUG
+    /* clobber out of date information contained in the about-to-become
+       stale memory; do this before 'free()' in case a debugging malloc
+       implementation overwrites the memory with something else */
+    *obj = cg.zeroobj;
+#endif
     free((genericptr_t) obj);
 }
 
@@ -2618,7 +2688,7 @@ hornoplenty(
            confers ownership of the created item to the shopkeeper */
         if (horn->unpaid)
             addtobill(obj, FALSE, FALSE, tipping);
-        /* if it ended up on bill, we don't want "(unpaid, N zorkids)"
+        /* if it ended up on bill, we don't want "(unpaid, N zorkmids)"
            being included in its formatted name during next message */
         iflags.suppress_price++;
         if (!tipping) {
@@ -2737,15 +2807,20 @@ obj_sanity_check(void)
     /* objects temporarily freed from invent/floor lists;
        they should have arrived somewhere by the time we get called */
     if (gt.thrownobj)
-        insane_object(gt.thrownobj, ofmt3, "gt.thrownobj sanity",
+        insane_object(gt.thrownobj, ofmt3, "thrownobj sanity",
                       (struct monst *) 0);
     if (gk.kickedobj)
-        insane_object(gk.kickedobj, ofmt3, "gk.kickedobj sanity",
+        insane_object(gk.kickedobj, ofmt3, "kickedobj sanity",
+                      (struct monst *) 0);
+    /* returning_missile temporarily remembers thrownobj and should be
+       Null in between moves */
+    if (iflags.returning_missile)
+        insane_object(gk.kickedobj, ofmt3, "returning_missile sanity",
                       (struct monst *) 0);
     /* gc.current_wand isn't removed from invent while in use, but should
        be Null between moves when we're called */
     if (gc.current_wand)
-        insane_object(gc.current_wand, ofmt3, "gc.current_wand sanity",
+        insane_object(gc.current_wand, ofmt3, "current_wand sanity",
                       (struct monst *) 0);
 }
 
@@ -3492,6 +3567,7 @@ pudding_merge_message(struct obj *otmp, struct obj *otmp2)
                   inpack ? " inside your pack" : "");
         }
     } else {
+        Soundeffect(se_faint_sloshing, 25);
         You_hear("a faint sloshing sound.");
     }
 }

@@ -1,4 +1,4 @@
-/* NetHack 3.7	end.c	$NHDT-Date: 1646322468 2022/03/03 15:47:48 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.240 $ */
+/* NetHack 3.7	end.c	$NHDT-Date: 1674546299 2023/01/24 07:44:59 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.265 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -29,7 +29,7 @@ static void disclose(int, boolean);
 static void get_valuables(struct obj *);
 static void sort_valuables(struct valuable_data *, int);
 static void artifact_score(struct obj *, boolean, winid);
-static void really_done(int) NORETURN;
+ATTRNORETURN static void really_done(int) NORETURN;
 static void savelife(int);
 static boolean should_query_disclose_option(int, char *);
 #ifdef DUMPLOG
@@ -38,7 +38,7 @@ static void dump_plines(void);
 static void dump_everything(int, time_t);
 
 #if defined(__BEOS__) || defined(MICRO) || defined(OS2) || defined(WIN32)
-extern void nethack_exit(int) NORETURN;
+ATTRNORETURN extern void nethack_exit(int) NORETURN;
 #else
 #define nethack_exit exit
 #endif
@@ -359,6 +359,9 @@ done2(void)
 #ifndef NO_SIGNAL
             (void) signal(SIGINT, (SIG_RET_TYPE) done1);
 #endif
+            if (soundprocs.sound_exit_nhsound)
+                (*soundprocs.sound_exit_nhsound)("done2");
+
             exit_nhwindows((char *) 0);
             NH_abort();
         } else if (c == 'q')
@@ -388,7 +391,9 @@ done_intr(int sig_unused UNUSED)
 static void
 done_hangup(int sig)
 {
+#ifdef HANGUPHANDLING
     gp.program_state.done_hup++;
+#endif
     sethanguphandler((void (*)(int)) SIG_IGN);
     done_intr(sig);
     return;
@@ -404,9 +409,8 @@ done_in_by(struct monst *mtmp, int how)
 {
     char buf[BUFSZ];
     struct permonst *mptr = mtmp->data,
-                    *champtr = ((mtmp->cham >= LOW_PM)
-                                   ? &mons[mtmp->cham]
-                                   : mptr);
+                    *champtr = (mtmp->cham >= LOW_PM) ? &mons[mtmp->cham]
+                                                      : mptr;
     boolean distorted = (boolean) (Hallucination && canspotmon(mtmp)),
             mimicker = (M_AP_TYPE(mtmp) == M_AP_MONSTER),
             imitator = (mptr != champtr || mimicker);
@@ -437,7 +441,7 @@ done_in_by(struct monst *mtmp, int how)
     if (imitator) {
         char shape[BUFSZ];
         const char *realnm = pmname(champtr, Mgender(mtmp)),
-                             *fakenm = pmname(mptr, Mgender(mtmp));
+                   *fakenm = pmname(mptr, Mgender(mtmp));
         boolean alt = is_vampshifter(mtmp);
 
         if (mimicker) {
@@ -493,7 +497,8 @@ done_in_by(struct monst *mtmp, int how)
     /* might need to fix up multi_reason if 'mtmp' caused the reason */
     if (gm.multi_reason
         && gm.multi_reason > gm.multireasonbuf
-        && gm.multi_reason < gm.multireasonbuf + sizeof gm.multireasonbuf - 1) {
+        && gm.multi_reason
+           < gm.multireasonbuf + sizeof gm.multireasonbuf - 1) {
         char reasondummy, *p;
         unsigned reasonmid = 0;
 
@@ -505,13 +510,13 @@ done_in_by(struct monst *mtmp, int how)
          * death reason becomes "Killed by a ghoul, while paralyzed."
          * instead of "Killed by a ghoul, while paralyzed by a ghoul."
          * (3.6.x gave "Killed by a ghoul, while paralyzed by a monster."
-         * which is potenitally misleading when the monster is also
+         * which is potentially misleading when the monster is also
          * the killer.)
          *
          * Note that if the hero is life-saved and then killed again
          * before the helplessness has cleared, the second death will
          * report the truncated helplessness reason even if some other
-         * monster peforms the /coup de grace/.
+         * monster performs the /coup de grace/.
          */
         if (sscanf(gm.multireasonbuf, "%u:%c", &reasonmid, &reasondummy) == 2
             && mtmp->m_id == reasonmid) {
@@ -608,6 +613,8 @@ panic VA_DECL(const char *, str)
     if (iflags.window_inited) {
         raw_print("\r\nOops...");
         wait_synch(); /* make sure all pending output gets flushed */
+        if (soundprocs.sound_exit_nhsound)
+            (*soundprocs.sound_exit_nhsound)("panic");
         exit_nhwindows((char *) 0);
         iflags.window_inited = 0; /* they're gone; force raw_print()ing */
     }
@@ -656,11 +663,7 @@ panic VA_DECL(const char *, str)
     {
         char buf[BUFSZ];
 
-#if !defined(NO_VSNPRINTF)
         (void) vsnprintf(buf, sizeof buf, str, VA_ARGS);
-#else
-        Vsprintf(buf, str, VA_ARGS);
-#endif
         raw_print(buf);
         paniclog("panic", buf);
     }
@@ -934,7 +937,7 @@ savelife(int how)
           "killed by <something>, while "
        in high scores entry, if any, and in logfile (but not on tombstone) */
     gm.multi_reason = Role_if(PM_TOURIST) ? "being toyed with by Fate"
-                                         : "attempting to cheat Death";
+                                          : "attempting to cheat Death";
 
     if (u.utrap && u.utraptype == TT_LAVA)
         reset_utrap(FALSE);
@@ -979,8 +982,9 @@ get_valuables(struct obj *list) /* inventory or container contents */
                 ga.amulets[i].typ = obj->otyp;
             } else
                 ga.amulets[i].count += obj->quan; /* always adds one */
-        } else if (obj->oclass == GEM_CLASS && obj->otyp < LUCKSTONE) {
-            i = min(obj->otyp, LAST_GEM + 1) - FIRST_GEM;
+        } else if (obj->oclass == GEM_CLASS && obj->otyp <= LAST_GLASS_GEM) {
+            /* last+1: combine all glass gems into one slot */
+            i = min(obj->otyp, LAST_REAL_GEM + 1) - FIRST_REAL_GEM;
             if (!gg.gems[i].count) {
                 gg.gems[i].count = obj->quan;
                 gg.gems[i].typ = obj->otyp;
@@ -995,8 +999,9 @@ get_valuables(struct obj *list) /* inventory or container contents */
  *  as easily use qsort, but we don't care about efficiency here.
  */
 static void
-sort_valuables(struct valuable_data list[],
-               int size) /* max value is less than 20 */
+sort_valuables(
+    struct valuable_data list[],
+    int size) /* max value is less than 20 */
 {
     register int i, j;
     struct valuable_data ltmp;
@@ -1006,12 +1011,11 @@ sort_valuables(struct valuable_data list[],
         if (list[i].count == 0)
             continue;   /* empty slot */
         ltmp = list[i]; /* structure copy */
-        for (j = i; j > 0; --j)
+        for (j = i; j > 0; --j) {
             if (list[j - 1].count >= ltmp.count)
                 break;
-            else {
-                list[j] = list[j - 1];
-            }
+            list[j] = list[j - 1];
+        }
         list[j] = ltmp;
     }
     return;
@@ -1427,12 +1431,15 @@ really_done(int how)
         && !(gm.mvitals[u.umonnum].mvflags & G_NOCORPSE)) {
         /* Base corpse on race when not poly'd since original u.umonnum
            is based on role, and all role monsters are human. */
-        int mnum = !Upolyd ? gu.urace.mnum : u.umonnum;
+        int mnum = !Upolyd ? gu.urace.mnum : u.umonnum,
+            was_already_grave = IS_GRAVE(levl[u.ux][u.uy].typ);
 
         corpse = mk_named_object(CORPSE, &mons[mnum], u.ux, u.uy, gp.plname);
         Sprintf(pbuf, "%s, ", gp.plname);
         formatkiller(eos(pbuf), sizeof pbuf - Strlen(pbuf), how, TRUE);
         make_grave(u.ux, u.uy, pbuf);
+        if (IS_GRAVE(levl[u.ux][u.uy].typ) && !was_already_grave)
+            levl[u.ux][u.uy].emptygrave = 1; /* corpse isn't buried */
     }
     pbuf[0] = '\0'; /* clear grave text; also lint suppression */
 
@@ -1613,7 +1620,8 @@ really_done(int how)
 
                 if (count == 0L)
                     continue;
-                if (objects[typ].oc_class != GEM_CLASS || typ <= LAST_GEM) {
+                if (objects[typ].oc_class != GEM_CLASS
+                    || typ <= LAST_REAL_GEM) {
                     otmp = mksobj(typ, FALSE, FALSE);
                     discover_object(otmp->otyp, TRUE, FALSE);
                     otmp->known = 1;  /* for fake amulets */
@@ -1670,6 +1678,11 @@ really_done(int how)
         destroy_nhwindow(endwin);
 
     dump_close_log();
+
+    /* shut down soundlib */
+    if (soundprocs.sound_exit_nhsound)
+        (*soundprocs.sound_exit_nhsound)("really_done");
+
     /*
      * "So when I die, the first thing I will see in Heaven is a score list?"
      *

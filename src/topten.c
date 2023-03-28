@@ -434,7 +434,7 @@ encodeconduct(void)
        reporting "obeyed sokoban rules" is misleading if sokoban wasn't
        completed or at least attempted; however, suppressing that when
        sokoban was never entered, as we do here, risks reporting
-       "violated sokoban rules" when no such thing occured; this can
+       "violated sokoban rules" when no such thing occurred; this can
        be disambiguated in xlogfile post-processors by testing the
        entered-sokoban bit in the 'achieve' field */
     if (!u.uconduct.sokocheat && sokoban_in_play())
@@ -644,7 +644,7 @@ topten(int how, time_t when)
         gt.toptenwin = create_nhwindow(NHW_TEXT);
     }
 
-#if defined(UNIX) || defined(VMS) || defined(__EMX__)
+#if defined(HANGUPHANDLING)
 #define HUP if (!gp.program_state.done_hup)
 #else
 #define HUP
@@ -1029,8 +1029,14 @@ outentry(int rank, struct toptenentry *t1, boolean so)
     Strcat(linebuf, ".");
 
     /* Quit, starved, ascended, and escaped contain no second line */
-    if (second_line)
-        Sprintf(eos(linebuf), "  %c%s.", highc(*(t1->death)), t1->death + 1);
+    if (second_line) {
+        bp = eos(linebuf);
+        Sprintf(bp, "  %c%s.", highc(*(t1->death)), t1->death + 1);
+        /* fix up "Killed by Mr. Asidonhopo; the shopkeeper"; that starts
+           with a comma but has it changed to semi-colon to keep the comma
+           out of 'record'; change it back for display */
+        (void) strsubst(bp, "; the ", ", the ");
+    }
 
     lngr = (int) strlen(linebuf);
     if (t1->hp <= 0)
@@ -1038,9 +1044,9 @@ outentry(int rank, struct toptenentry *t1, boolean so)
     else
         Sprintf(hpbuf, "%d", t1->hp);
     /* beginning of hp column after padding (not actually padded yet) */
-    hppos = COLNO - (sizeof("  Hp [max]") - 1); /* sizeof(str) includes \0 */
+    hppos = COLNO - (int) (sizeof "  Hp [max]" - sizeof "");
     while (lngr >= hppos) {
-        for (bp = eos(linebuf); !(*bp == ' ' && (bp - linebuf < hppos)); bp--)
+        for (bp = eos(linebuf); !(*bp == ' ' && bp - linebuf < hppos); bp--)
             ;
         /* special case: word is too long, wrap in the middle */
         if (linebuf + 15 >= bp)

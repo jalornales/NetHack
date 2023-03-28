@@ -45,6 +45,14 @@ const int shield_static[SHIELD_COUNT] = {
     S_ss1, S_ss2, S_ss3, S_ss2, S_ss1, S_ss2, S_ss4,
 };
 
+const char * const nhcb_name[NUM_NHCB] = {
+    "cmd_before",
+    "level_enter",
+    "level_leave",
+    "end_turn",
+};
+
+int nhcb_counts[NUM_NHCB] = DUMMY;
 
 NEARDATA const struct c_color_names c_color_names = {
     "black",  "amber", "golden", "light blue", "red",   "green",
@@ -206,6 +214,9 @@ const struct instance_globals_a g_init_a = {
     UNDEFINED_VALUE, /* abort_looting */
     /* shk.c */
     FALSE, /* auto_credit */
+    /* sounds.c */
+    soundlib_nosound, /* enum soundlib_ids active_soundlib */
+
     /* trap.c */
     { 0, 0, FALSE }, /* acid_ctx */
     TRUE, /* havestate*/
@@ -241,6 +252,9 @@ const struct instance_globals_b g_init_b = {
     UNDEFINED_PTR, /* bbubbles */
     /* pickup.c */
     FALSE, /* bucx_filter */
+    /* zap.c */
+    NULL, /* buzzer -- monst that zapped/cast/breathed to initiate buzz() */
+
     TRUE, /* havestate*/
     IVMAGIC  /* b_magic to validate that structure layout has been preserved */
 };
@@ -284,6 +298,8 @@ const struct instance_globals_c g_init_c = {
     FALSE, /* class_filter */
     /* questpgr.c */
     UNDEFINED_VALUES, /* cvt_buf */
+    /* sounds.c */
+    soundlib_nosound, /* chosen_soundlib */
     UNDEFINED_PTR, /* coder */
     /* uhitm.c */
     NON_PM, /* corpsenm_digested */
@@ -360,6 +376,7 @@ const struct instance_globals_g g_init_g = {
     { { { 0 } } }, /* gbuf */
     UNDEFINED_VALUES, /* gbuf_start */
     UNDEFINED_VALUES, /* gbug_stop */
+
     /* do_name.c */
     UNDEFINED_PTR, /* gloc_filter_map */
     UNDEFINED_VALUE, /* gloc_filter_floodfill_match_glyph */
@@ -397,6 +414,9 @@ const struct instance_globals_h g_init_h = {
               * higher if polymorphed into something that's even faster */
     /* dog.c */
     DUMMY, /* horsename */
+    /* mhitu.c */
+    0U, /* hitmsg_mid */
+    NULL, /* hitmsg_prev */
     /* save.c */
     TRUE, /* havestate*/
     IVMAGIC  /* h_magic to validate that structure layout has been preserved */
@@ -587,6 +607,7 @@ const struct instance_globals_o g_init_o = {
     UNDEFINED_PTR, /* occupation */
     0, /* occtime */
     UNDEFINED_VALUE, /* otg_temp */
+    NULL, /* otg_otmp */
     NULL, /* occtxt */
     /* symbols.c */
     DUMMY, /* ov_primary_syms */
@@ -596,6 +617,7 @@ const struct instance_globals_o g_init_o = {
     /* o_init.c */
     DUMMY, /* oclass_prob_totals */
     /* options.c */
+    0, /* opt_phase */
     FALSE, /* opt_initial */
     FALSE, /* opt_from_file */
     FALSE, /* opt_need_redraw */
@@ -802,7 +824,6 @@ const struct instance_globals_v g_init_v = {
       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, /* valset */
     /* end.c */
     { UNDEFINED_VALUES }, /* valuables */
-    VANQ_MLVL_MNDX,   /* vanq_sortmode */
     /* mhitm.c */
     FALSE, /* vis */
     /* mklev.c */
@@ -818,6 +839,7 @@ const struct instance_globals_v g_init_v = {
     UNDEFINED_PTR, /* viz_rmin */
     UNDEFINED_PTR, /* viz_rmax */
     FALSE, /* vision_full_recalc */
+    UNDEFINED_VALUES,  /* voice */
     TRUE, /* havestate*/
     IVMAGIC  /* v_magic to validate that structure layout has been preserved */
 };
@@ -834,6 +856,9 @@ const struct instance_globals_w g_init_w = {
     UNDEFINED_VALUE, /* wc */
     /* mkmaze.c */
     UNDEFINED_PTR, /* wportal */
+    /* new */
+    { wdmode_traditional, NO_COLOR },       /* wsettings */
+
     TRUE, /* havestate*/
     IVMAGIC  /* w_magic used to validate that structure layout has been preserved */
 };
@@ -1028,5 +1053,18 @@ decl_globals_init(void)
 #ifndef NO_VERBOSE_GRANULARITY
 long verbosity_suppressions[vb_elements] = { 0L, 0L, 0L, 0L, 0L, };
 #endif
+
+/* gcc 12.2's static analyzer thinks that some fields of gc.context.victual
+   are uninitialized when compiling 'bite(eat.c)' but that's impossible;
+   it is defined at global scope so guaranteed to be given implicit
+   initialization for fields that aren't explicitly initialized (all of
+   'context'); having bite() pass &gc.context.victual to this no-op
+   eliminates the analyzer's very verbose complaint */
+void
+sa_victual(
+    volatile struct victual_info *context_victual UNUSED)
+{
+    return;
+}
 
 /*decl.c*/

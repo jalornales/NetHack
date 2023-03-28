@@ -99,9 +99,6 @@
 #define DEFAULT_WC_TILED_MAP /* Default to tiles if users doesn't say \
                                 wc_ascii_map */
 #endif
-#ifndef NOUSER_SOUNDS
-#define USER_SOUNDS /* Use sounds */
-#endif
 #ifndef USE_XPM
 #define USE_XPM           /* Use XPM format for images (required) */
 #endif
@@ -669,8 +666,8 @@ typedef unsigned char uchar;
 /* End of Section 4 */
 
 #ifdef TTY_TILES_ESCCODES
-# ifndef USE_TILES
-#  define USE_TILES
+# ifndef TILES_IN_GLYPHMAP
+#  define TILES_IN_GLYPHMAP
 # endif
 #endif
 

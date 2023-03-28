@@ -1,4 +1,4 @@
-/* NetHack 3.7	objnam.c	$NHDT-Date: 1654557302 2022/06/06 23:15:02 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.368 $ */
+/* NetHack 3.7	objnam.c	$NHDT-Date: 1672829441 2023/01/04 10:50:41 $  $NHDT-Branch: naming-overflow-fix $:$NHDT-Revision: 1.386 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2011. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -35,6 +35,7 @@ struct _readobjnam_data {
 static char *strprepend(char *, const char *);
 static char *nextobuf(void);
 static void releaseobuf(char *);
+static void xcalled(char *, int, const char *, const char *);
 static char *xname_flags(struct obj *, unsigned);
 static char *minimal_xname(struct obj *);
 static void add_erosion_words(struct obj *, char *);
@@ -73,21 +74,22 @@ struct Jitem {
              && typ != SAPPHIRE && typ != BLACK_OPAL && typ != EMERALD \
              && typ != OPAL)))
 
-static struct Jitem Japanese_items[] = { { SHORT_SWORD, "wakizashi" },
-                                             { BROADSWORD, "ninja-to" },
-                                             { FLAIL, "nunchaku" },
-                                             { GLAIVE, "naginata" },
-                                             { LOCK_PICK, "osaku" },
-                                             { WOODEN_HARP, "koto" },
-                                             { KNIFE, "shito" },
-                                             { PLATE_MAIL, "tanko" },
-                                             { HELMET, "kabuto" },
-                                             { LEATHER_GLOVES, "yugake" },
-                                             { FOOD_RATION, "gunyoki" },
-                                             { POT_BOOZE, "sake" },
-                                             { 0, "" } };
-
-static const char *Japanese_item_name(int i);
+static const struct Jitem Japanese_items[] = {
+    { SHORT_SWORD, "wakizashi" },
+    { BROADSWORD, "ninja-to" },
+    { FLAIL, "nunchaku" },
+    { GLAIVE, "naginata" },
+    { LOCK_PICK, "osaku" },
+    { WOODEN_HARP, "koto" },
+    { MAGIC_HARP, "magic koto" },
+    { KNIFE, "shito" },
+    { PLATE_MAIL, "tanko" },
+    { HELMET, "kabuto" },
+    { LEATHER_GLOVES, "yugake" },
+    { FOOD_RATION, "gunyoki" },
+    { POT_BOOZE, "sake" },
+    { 0, "" }
+};
 
 static char *
 strprepend(char *s,const char * pref)
@@ -176,8 +178,17 @@ obj_typename(int otyp)
     const char *un = ocl->oc_uname;
     int nn = ocl->oc_name_known;
 
-    if (Role_if(PM_SAMURAI) && Japanese_item_name(otyp))
-        actualn = Japanese_item_name(otyp);
+    if (Role_if(PM_SAMURAI)) {
+        actualn = Japanese_item_name(otyp, actualn);
+        if (otyp == WOODEN_HARP || otyp == MAGIC_HARP)
+            dn = "koto";
+    }
+    /* generic items don't have an actual-name; we shouldn't ever be called
+       for those; pacify static analyzer without resorting to impossible() */
+    if (!actualn)
+        actualn = (otyp > 0 && otyp < MAXOCLASSES) ? "generic" : "object?";
+
+    buf[0] = '\0'; /* redundant */
     switch (ocl->oc_class) {
     case COIN_CLASS:
         Strcpy(buf, "coin");
@@ -208,7 +219,7 @@ obj_typename(int otyp)
         else
             Strcpy(buf, "amulet");
         if (un)
-            Sprintf(eos(buf), " called %s", un);
+            xcalled(buf, BUFSZ - (dn ? (int) strlen(dn) + 3 : 0), "", un);
         if (dn)
             Sprintf(eos(buf), " (%s)", dn);
         return buf;
@@ -217,8 +228,8 @@ obj_typename(int otyp)
             Strcpy(buf, actualn);
             if (GemStone(otyp))
                 Strcat(buf, " stone");
-            if (un)
-                Sprintf(eos(buf), " called %s", un);
+            if (un) /* 3: length of " (" + ")" which will enclose 'dn' */
+                xcalled(buf, BUFSZ - (dn ? (int) strlen(dn) + 3 : 0), "", un);
             if (dn)
                 Sprintf(eos(buf), " (%s)", dn);
         } else {
@@ -227,7 +238,7 @@ obj_typename(int otyp)
                 Strcat(buf,
                        (ocl->oc_material == MINERAL) ? " stone" : " gem");
             if (un)
-                Sprintf(eos(buf), " called %s", un);
+                xcalled(buf, BUFSZ, "", un);
         }
         return buf;
     }
@@ -238,8 +249,8 @@ obj_typename(int otyp)
         else
             Sprintf(eos(buf), " of %s", actualn);
     }
-    if (un)
-        Sprintf(eos(buf), " called %s", un);
+    if (un) /* 3: length of " (" + ")" which will enclose 'dn' */
+        xcalled(buf, BUFSZ - (dn ? (int) strlen(dn) + 3 : 0), "", un);
     if (dn)
         Sprintf(eos(buf), " (%s)", dn);
     return buf;
@@ -309,7 +320,7 @@ distant_name(
          * (r * r) * 2 - r: instead of a square extending from the hero,
          * round the corners (so shorter distance imposed for diagonal).
          *
-         * distu() matrix convering a range of 3+ for one quadrant:
+         * distu() matrix covering a range of 3+ for one quadrant:
          *  16 17  -  -  -
          *   9 10 13 18  -
          *   4  5  8 13  -
@@ -489,6 +500,24 @@ reorder_fruit(boolean forward)
     }
 }
 
+/* add "<pfx> called <sfx>" to end of buf, truncating if necessary */
+static void
+xcalled(
+    char *buf,       /* eos(obuf) or eos(&obuf[PREFIX]) */
+    int siz,         /* BUFSZ or BUFSZ-PREFIX */
+    const char *pfx, /* usually class string, sometimes more specific */
+    const char *sfx) /* user assigned type name */
+{
+    int bufsiz = siz - 1 - (int) strlen(buf),
+        pfxlen = (int) (strlen(pfx) + sizeof " called " - sizeof "");
+
+    if (pfxlen > bufsiz)
+        panic("xcalled: not enough room for prefix (%d > %d)",
+              pfxlen, bufsiz);
+
+    Sprintf(eos(buf), "%s called %.*s", pfx, bufsiz - pfxlen, sfx);
+}
+
 char *
 xname(struct obj* obj)
 {
@@ -512,9 +541,16 @@ xname_flags(
     boolean known, dknown, bknown;
 
     buf = nextobuf() + PREFIX; /* leave room for "17 -3 " */
-    if (Role_if(PM_SAMURAI) && Japanese_item_name(typ))
-        actualn = Japanese_item_name(typ);
-    /* As of 3.6.2: this used to be part of 'dn's initialization, but it
+    if (Role_if(PM_SAMURAI)) {
+        actualn = Japanese_item_name(typ, actualn);
+        if (typ == WOODEN_HARP || typ == MAGIC_HARP)
+            dn = "koto";
+    }
+    /* generic items don't have an actual-name; we shouldn't ever be called
+       for those; pacify static analyzer without resorting to impossible() */
+    if (!actualn)
+        actualn = (typ > 0 && typ < MAXOCLASSES) ? "generic" : "object?";
+    /* 3.6.2: this used to be part of 'dn's initialization, but it
        needs to come after possibly overriding 'actualn' */
     if (!dn)
         dn = actualn;
@@ -576,7 +612,7 @@ xname_flags(
         else if (nn)
             Strcpy(buf, actualn);
         else if (un)
-            Sprintf(buf, "amulet called %s", un);
+            xcalled(buf, BUFSZ - PREFIX, "amulet", un);
         else
             Sprintf(buf, "%s amulet", dn);
         break;
@@ -595,11 +631,9 @@ xname_flags(
             Strcat(buf, dn);
         else if (nn)
             Strcat(buf, actualn);
-        else if (un) {
-            Strcat(buf, dn);
-            Strcat(buf, " called ");
-            Strcat(buf, un);
-        } else
+        else if (un)
+            xcalled(buf, BUFSZ - PREFIX, dn, un);
+        else
             Strcat(buf, dn);
 
         if (typ == FIGURINE && omndx != NON_PM) {
@@ -634,7 +668,7 @@ xname_flags(
         if (nn)
             Strcat(buf, actualn);
         else if (un)
-            Sprintf(eos(buf), "%s called %s", armor_simple_name(obj), un);
+            xcalled(buf, BUFSZ - PREFIX, armor_simple_name(obj), un);
         else
             Strcat(buf, dn);
         break;
@@ -734,8 +768,7 @@ xname_flags(
                 }
                 Strcat(buf, actualn);
             } else {
-                Strcat(buf, " called ");
-                Strcat(buf, un);
+                xcalled(buf, BUFSZ - PREFIX, "", un);
             }
         } else {
             Strcat(buf, dn);
@@ -750,8 +783,7 @@ xname_flags(
             Strcat(buf, " of ");
             Strcat(buf, actualn);
         } else if (un) {
-            Strcat(buf, " called ");
-            Strcat(buf, un);
+            xcalled(buf, BUFSZ - PREFIX, "", un);
         } else if (ocl->oc_magic) {
             Strcat(buf, " labeled ");
             Strcat(buf, dn);
@@ -766,7 +798,7 @@ xname_flags(
         else if (nn)
             Sprintf(buf, "wand of %s", actualn);
         else if (un)
-            Sprintf(buf, "wand called %s", un);
+            xcalled(buf, BUFSZ - PREFIX, "wand", un);
         else
             Sprintf(buf, "%s wand", dn);
         break;
@@ -777,7 +809,7 @@ xname_flags(
             else if (nn)
                 Strcpy(buf, actualn);
             else if (un)
-                Sprintf(buf, "novel called %s", un);
+                xcalled(buf, BUFSZ - PREFIX, "novel", un);
             else
                 Sprintf(buf, "%s book", dn);
             break;
@@ -789,7 +821,7 @@ xname_flags(
                 Strcpy(buf, "spellbook of ");
             Strcat(buf, actualn);
         } else if (un) {
-            Sprintf(buf, "spellbook called %s", un);
+            xcalled(buf, BUFSZ - PREFIX, "spellbook", un);
         } else
             Sprintf(buf, "%s spellbook", dn);
         break;
@@ -799,7 +831,7 @@ xname_flags(
         else if (nn)
             Sprintf(buf, "ring of %s", actualn);
         else if (un)
-            Sprintf(buf, "ring called %s", un);
+            xcalled(buf, BUFSZ - PREFIX, "ring", un);
         else
             Sprintf(buf, "%s ring", dn);
         break;
@@ -810,7 +842,7 @@ xname_flags(
             Strcpy(buf, rock);
         } else if (!nn) {
             if (un)
-                Sprintf(buf, "%s called %s", rock, un);
+                xcalled(buf, BUFSZ - PREFIX, rock, un);
             else
                 Sprintf(buf, "%s %s", dn, rock);
         } else {
@@ -863,7 +895,8 @@ xname_flags(
         Strcat(buf, " named ");
  nameit:
         obufp = eos(buf);
-        Strcat(buf, ONAME(obj));
+        (void) strncat(buf, ONAME(obj),
+                       BUFSZ - 1 - PREFIX - (unsigned) strlen(buf));
         /* downcase "The" in "<quest-artifact-item> named The ..." */
         if (obj->oartifact && !strncmp(obufp, "The ", 4))
             *obufp = lowc(*obufp); /* = 't'; */
@@ -1850,7 +1883,7 @@ just_an(char *outbuf, const char *str)
 }
 
 char *
-an(const char* str)
+an(const char *str)
 {
     char *buf = nextobuf();
 
@@ -1859,11 +1892,11 @@ an(const char* str)
         return strcpy(buf, "an []");
     }
     (void) just_an(buf, str);
-    return strcat(buf, str);
+    return strncat(buf, str, BUFSZ - 1 - Strlen(buf));
 }
 
 char *
-An(const char* str)
+An(const char *str)
 {
     char *tmp = an(str);
 
@@ -1934,9 +1967,7 @@ the(const char* str)
         Strcpy(buf, "the ");
     else
         buf[0] = '\0';
-    Strcat(buf, str);
-
-    return buf;
+    return strncat(buf, str, BUFSZ - 1 - Strlen(buf));
 }
 
 char *
@@ -2123,7 +2154,7 @@ ansimpleoname(struct obj* obj)
        any `known' and `dknown' checking necessary) */
     if (otyp == FAKE_AMULET_OF_YENDOR)
         otyp = AMULET_OF_YENDOR;
-    if (objects[otyp].oc_unique
+    if (objects[otyp].oc_unique && OBJ_NAME(objects[otyp])
         && !strcmp(simpleoname, OBJ_NAME(objects[otyp]))) {
         /* the() will allocate another obuf[]; we want to avoid using two */
         Strcpy(simpleoname, obufp = the(simpleoname));
@@ -2372,9 +2403,9 @@ static const char *const as_is[] = {
 /* singularize/pluralize decisions common to both makesingular & makeplural */
 static boolean
 singplur_lookup(
-char *basestr, char *endstring,    /* base string, pointer to eos(string) */
-boolean to_plural,            /* true => makeplural, false => makesingular */
-const char *const *alt_as_is) /* another set like as_is[] */
+    char *basestr, char *endstring,  /* base string, pointer to eos(string) */
+    boolean to_plural,         /* true => makeplural, false => makesingular */
+    const char *const *alt_as_is)    /* another set like as_is[] */
 {
     const struct sing_plur *sp;
     const char *same, *other, *const *as;
@@ -3141,7 +3172,7 @@ rnd_otyp_by_namedesc(
         lo = gb.bases[(uchar) oclass];
         hi = gb.bases[(uchar) oclass + 1] - 1;
     } else {
-        lo = STRANGE_OBJECT + 1;
+        lo = MAXOCLASSES; /* STRANGE_OBJECT + 1; */
         hi = NUM_OBJECTS - 1;
     }
     /* FIXME:
@@ -3275,12 +3306,13 @@ wizterrainwish(struct _readobjnam_data *d)
         madeterrain = TRUE;
 
     /* also matches "molten lava" */
-    } else if (!BSTRCMPI(bp, p - 4, "lava")) {
-        lev->typ = LAVAPOOL;
+    } else if (!BSTRCMPI(bp, p - 4, "lava")
+               || !BSTRCMPI(bp, p - 12, "wall of lava")) {
+        lev->typ = !BSTRCMPI(bp, p - 12, "wall of lava") ? LAVAWALL : LAVAPOOL;
         lev->flags = 0;
         del_engr_at(x, y);
         pline("A pool of molten lava.");
-        if (!(Levitation || Flying))
+        if (!(Levitation || Flying) || lev->typ == LAVAWALL)
             pooleffects(FALSE);
         madeterrain = TRUE;
     } else if (!BSTRCMPI(bp, p - 3, "ice")) {
@@ -3332,7 +3364,7 @@ wizterrainwish(struct _readobjnam_data *d)
         lev->flags = 0;
         /* [FIXME: if this isn't a wall or door location where 'horizontal'
             is already set up, that should be calculated for this spot.
-            Unforutnately, it can be tricky; placing one in open space
+            Unfortunately, it can be tricky; placing one in open space
             and then another adjacent might need to recalculate first one.] */
         pline("Iron bars.");
         madeterrain = TRUE;
@@ -3830,10 +3862,12 @@ readobjnam_postparse1(struct _readobjnam_data *d)
      */
     if ((d->p = strstri(d->bp, " named ")) != 0) {
         *d->p = 0;
+        /* note: if 'name' is too long, oname() will truncate it */
         d->name = d->p + 7;
     }
     if ((d->p = strstri(d->bp, " called ")) != 0) {
         *d->p = 0;
+        /* note: if 'un' is too long, obj lookup just won't match anything */
         d->un = d->p + 8;
         /* "helmet called telepathy" is not "helmet" (a specific type)
          * "shield called reflection" is not "shield" (a general type)
@@ -4264,7 +4298,7 @@ readobjnam_postparse2(struct _readobjnam_data *d)
             s += 9;
         if (!strcmpi(s, "glass")) { /* choose random color */
             /* 9 different kinds */
-            d->typ = LAST_GEM + rnd(NUM_GLASS_GEMS);
+            d->typ = FIRST_GLASS_GEM + rn2(NUM_GLASS_GEMS);
             if (objects[d->typ].oc_class == GEM_CLASS)
                 return 2; /*goto typfnd;*/
             else
@@ -4292,7 +4326,7 @@ readobjnam_postparse3(struct _readobjnam_data *d)
 
     /* check real names of gems first */
     if (!d->oclass && d->actualn) {
-        for (i = gb.bases[GEM_CLASS]; i <= LAST_GEM; i++) {
+        for (i = gb.bases[GEM_CLASS]; i <= LAST_REAL_GEM; i++) {
             register const char *zn;
 
             if ((zn = OBJ_NAME(objects[i])) != 0 && !strcmpi(d->actualn, zn)) {
@@ -4322,10 +4356,10 @@ readobjnam_postparse3(struct _readobjnam_data *d)
     d->typ = 0;
 
     if (d->actualn) {
-        struct Jitem *j = Japanese_items;
+        const struct Jitem *j = Japanese_items;
 
         while (j->item) {
-            if (d->actualn && !strcmpi(d->actualn, j->name)) {
+            if (!strcmpi(d->actualn, j->name)) {
                 d->typ = j->item;
                 return 2; /*goto typfnd;*/
             }
@@ -4609,7 +4643,7 @@ readobjnam(char *bp, struct obj *no_wish)
                 rn1cnt = 6 - d.gsize;
             if (d.cnt > rn1cnt
                 && (!wizard || gp.program_state.wizkit_wishing
-                    || yn("Override glob weight limit?") != 'y'))
+                    || y_n("Override glob weight limit?") != 'y'))
                 d.cnt = rn1cnt;
             d.otmp->owt *= (unsigned) d.cnt;
         }
@@ -4639,7 +4673,7 @@ readobjnam(char *bp, struct obj *no_wish)
     }
 
     if (d.spesgn == 0) {
-        /* spe not specifed; retain the randomly assigned value */
+        /* spe not specified; retain the randomly assigned value */
         d.spe = d.otmp->spe;
     } else if (wizard) {
         ; /* no restrictions except SPE_LIM */
@@ -4813,6 +4847,8 @@ readobjnam(char *bp, struct obj *no_wish)
 
     /* set eroded and erodeproof */
     if (erosion_matters(d.otmp)) {
+        /* wished-for item shouldn't be eroded unless specified */
+        d.otmp->oeroded = d.otmp->oeroded2 = 0;
         if (d.eroded && (is_flammable(d.otmp) || is_rustprone(d.otmp)))
             d.otmp->oeroded = d.eroded;
         if (d.eroded2 && (is_corrodeable(d.otmp) || is_rottable(d.otmp)))
@@ -4956,17 +4992,17 @@ rnd_class(int first, int last)
     return (first == last) ? first : STRANGE_OBJECT;
 }
 
-static const char *
-Japanese_item_name(int i)
+const char *
+Japanese_item_name(int i, const char *ordinaryname)
 {
-    struct Jitem *j = Japanese_items;
+    const struct Jitem *j = Japanese_items;
 
     while (j->item) {
         if (i == j->item)
             return j->name;
         j++;
     }
-    return (const char *) 0;
+    return ordinaryname;
 }
 
 const char *

@@ -65,7 +65,7 @@ main(void)
      */
     vision_init();
 
-    display_gamewindows();
+    init_sound_and_display_gamewindows();
 
     set_playmode(); /* sets plname to "wizard" for wizard mode */
     /* strip role,race,&c suffix; calls askname() if plname[] is empty
@@ -99,7 +99,7 @@ attempt_restore:
             if (discover)
                 You("are in non-scoring discovery mode.");
             if (discover || wizard) {
-                if (yn("Do you want to keep the save file?") == 'n')
+                if (y_n("Do you want to keep the save file?") == 'n')
                     (void) delete_savefile();
                 else {
                     nh_compress(fqname(gs.SAVEF, SAVEPREFIX, 0));

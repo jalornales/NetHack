@@ -173,7 +173,7 @@ tshirt_text(struct obj* tshirt, char* buf)
            Theory" although they didn't create it (and an actual T-shirt
            with pentagonal diagram showing which choices defeat which) */
         "rock--paper--scissors--lizard--Spock!",
-        /* "All men must die -- all men must serve" challange and response
+        /* "All men must die -- all men must serve" challenge and response
            from book series _A_Song_of_Ice_and_Fire_ by George R.R. Martin,
            TV show "Game of Thrones" (probably an actual T-shirt too...) */
         "/Valar morghulis/ -- /Valar dohaeris/",
@@ -583,7 +583,7 @@ doread(void)
            maintained illiterate conduct so far, and this mail
            scroll didn't come from bones, ask for confirmation */
         if (!u.uconduct.literate) {
-            if (!scroll->spe && yn(
+            if (!scroll->spe && y_n(
              "Reading mail will violate \"illiterate\" conduct.  Read anyway?"
                                    ) != 'y')
                 return ECMD_OK;
@@ -1349,10 +1349,16 @@ seffect_scare_monster(struct obj **sobjp)
                 ct++; /* pets don't laugh at you */
         }
     }
-    if (otyp == SCR_SCARE_MONSTER || !ct)
+    if (otyp == SCR_SCARE_MONSTER || !ct) {
+        if (confused || scursed) {
+            Soundeffect(se_sad_wailing, 50);
+        } else {
+            Soundeffect(se_maniacal_laughter, 50);
+        }
         You_hear("%s %s.", (confused || scursed) ? "sad wailing"
                  : "maniacal laughter",
                  !ct ? "in the distance" : "close by");
+    }
 }
 
 static void
@@ -1793,11 +1799,23 @@ seffect_earth(struct obj **sobjp)
         int nboulders = 0;
 
         /* Identify the scroll */
-        if (u.uswallow)
+        if (u.uswallow) {
             You_hear("rumbling.");
-        else
-            pline_The("%s rumbles %s you!", ceiling(u.ux, u.uy),
+        } else {
+            if (!avoid_ceiling(&u.uz)) {
+                pline_The("%s rumbles %s you!", ceiling(u.ux, u.uy),
+                          sblessed ? "around" : "above");
+            } else {
+                char matbuf[BUFSZ];
+                const char *const avalanche = "avalanche";
+
+                Sprintf(matbuf, "%s",
+                        sblessed ? makeplural(avalanche) : an(avalanche));
+                pline("%s of boulders %s %s you!",
+                      upstart(matbuf), vtense(matbuf, "materialize"),
                       sblessed ? "around" : "above");
+            }
+        }
         gk.known = 1;
         sokoban_guilt();
 
@@ -2727,6 +2745,7 @@ do_genocide(
                      */
                     if (Verbose(3, do_genocide))
                         pline("A thunderous voice booms through the caverns:");
+                    SetVoice((struct monst *) 0, 0, 80, voice_deity);
                     verbalize("No, mortal!  That will not be done.");
                 }
                 continue;
@@ -2967,7 +2986,7 @@ create_particular_parse(
         d->saddled = TRUE;
         (void) memset(tmpp, ' ', sizeof "saddled " - 1);
     }
-    /* state -- limited number of possibilitie supported */
+    /* state -- limited number of possibilities supported */
     if ((tmpp = strstri(bufp, "sleeping ")) != 0) {
         d->sleeping = TRUE;
         (void) memset(tmpp, ' ', sizeof "sleeping " - 1);
@@ -3014,7 +3033,7 @@ create_particular_parse(
      * If d->fem is already set to MALE or FEMALE at this juncture, it means
      * one of those terms was explicitly specified.
      */
-    if (d->fem == MALE || d->fem == FEMALE) {     /* explicity expressed */
+    if (d->fem == MALE || d->fem == FEMALE) {     /* explicitly expressed */
         if ((gender_name_var != NEUTRAL) && (d->fem != gender_name_var)) {
             /* apparent selection incompatibility */
             d->genderconf = gender_name_var;        /* resolve later */
@@ -3064,7 +3083,7 @@ create_particular_creation(
             Sprintf(buf, "Creating %s instead; force %s?",
                     mons[d->which].pmnames[NEUTRAL],
                     mons[firstchoice].pmnames[NEUTRAL]);
-            if (yn(buf) == 'y')
+            if (y_n(buf) == 'y')
                 d->which = firstchoice;
         }
         whichpm = &mons[d->which];
@@ -3077,7 +3096,7 @@ create_particular_creation(
         else if (d->randmonst)
             whichpm = rndmonst();
         if (d->genderconf == -1) {
-            /* no confict exists between explicit gender term and
+            /* no conflict exists between explicit gender term and
                the specified monster name */
             if (d->fem != -1 && (!whichpm || (!is_male(whichpm)
                                               && !is_female(whichpm))))

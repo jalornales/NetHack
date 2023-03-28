@@ -74,8 +74,8 @@ putmesg(const char *line)
     if ((gp.pline_flags & SUPPRESS_HISTORY) != 0
         && (windowprocs.wincap2 & WC2_SUPPRESS_HIST) != 0)
         attr |= ATR_NOHISTORY;
-
     putstr(WIN_MESSAGE, attr, line);
+    SoundSpeak(line);
 }
 
 static void vpline(const char *, va_list);
@@ -99,9 +99,7 @@ vpline(const char *line, va_list the_args)
     char pbuf[BIGBUFSZ]; /* will get chopped down to BUFSZ-1 if longer */
     int ln;
     int msgtyp;
-#if !defined(NO_VSNPRINTF)
     int vlen = 0;
-#endif
     boolean no_repeat;
 
     if (!line || !*line)
@@ -114,7 +112,6 @@ vpline(const char *line, va_list the_args)
         return;
 
     if (strchr(line, '%')) {
-#if !defined(NO_VSNPRINTF)
         vlen = vsnprintf(pbuf, sizeof(pbuf), line, the_args);
 #if (NH_DEVEL_STATUS != NH_STATUS_RELEASED) && defined(DEBUG)
         if (vlen >= (int) sizeof pbuf)
@@ -122,9 +119,6 @@ vpline(const char *line, va_list the_args)
                   "pline", sizeof pbuf, vlen);
 #else
         nhUse(vlen);
-#endif
-#else
-        Vsprintf(pbuf, line, the_args);
 #endif
         line = pbuf;
     }
@@ -185,7 +179,7 @@ vpline(const char *line, va_list the_args)
     if (gv.vision_full_recalc)
         vision_recalc(0);
     if (u.ux)
-        flush_screen(1); /* %% */
+        flush_screen((gp.pline_flags & NO_CURS_ON_U) ? 0 : 1); /* %% */
 
     putmesg(line);
 
@@ -198,8 +192,11 @@ vpline(const char *line, va_list the_args)
     (void) strncpy(gp.prevmsg, line, BUFSZ), gp.prevmsg[BUFSZ - 1] = '\0';
     if (msgtyp == MSGTYP_STOP)
         display_nhwindow(WIN_MESSAGE, TRUE); /* --more-- */
-
  pline_done:
+#ifdef SND_SPEECH
+    /* clear the SPEECH flag so caller never has to */
+    gp.pline_flags &= ~PLINE_SPEECH;
+#endif
     --in_pline;
 }
 
@@ -351,7 +348,7 @@ You_hear(const char *line, ...)
     va_list the_args;
     char *tmp;
 
-    if (Deaf || !flags.acoustics)
+    if ((Deaf && !Unaware) || !flags.acoustics)
         return;
     va_start(the_args, line);
     if (Underwater)
@@ -392,11 +389,13 @@ verbalize(const char *line, ...)
     char *tmp;
 
     va_start(the_args, line);
+    gp.pline_flags |= PLINE_VERBALIZE;
     tmp = You_buf((int) strlen(line) + sizeof "\"\"");
     Strcpy(tmp, "\"");
     Strcat(tmp, line);
     Strcat(tmp, "\"");
     vpline(tmp, the_args);
+    gp.pline_flags &= ~PLINE_VERBALIZE;
     va_end(the_args);
 }
 
@@ -476,11 +475,7 @@ vraw_printf(const char *line, va_list the_args)
     char pbuf[BIGBUFSZ]; /* will be chopped down to BUFSZ-1 if longer */
 
     if (strchr(line, '%')) {
-#if !defined(NO_VSNPRINTF)
         (void) vsnprintf(pbuf, sizeof(pbuf), line, the_args);
-#else
-        Vsprintf(pbuf, line, the_args);
-#endif
         line = pbuf;
     }
     if ((int) strlen(line) > BUFSZ - 1) {
@@ -508,11 +503,7 @@ impossible(const char *s, ...)
         panic("impossible called impossible");
 
     gp.program_state.in_impossible = 1;
-#if !defined(NO_VSNPRINTF)
     (void) vsnprintf(pbuf, sizeof(pbuf), s, the_args);
-#else
-    Vsprintf(pbuf, s, the_args);
-#endif
     va_end(the_args);
     pbuf[BUFSZ - 1] = '\0'; /* sanity */
     paniclog("impossible", pbuf);
@@ -609,12 +600,9 @@ config_error_add(const char *str, ...)
 static void
 vconfig_error_add(const char *str, va_list the_args)
 {       /* start of vconf...() or of nested block in USE_OLDARG's conf...() */
-#if !defined(NO_VSNPRINTF)
     int vlen = 0;
-#endif
     char buf[BIGBUFSZ]; /* will be chopped down to BUFSZ-1 if longer */
 
-#if !defined(NO_VSNPRINTF)
     vlen = vsnprintf(buf, sizeof buf, str, the_args);
 #if (NH_DEVEL_STATUS != NH_STATUS_RELEASED) && defined(DEBUG)
     if (vlen >= (int) sizeof buf)
@@ -622,9 +610,6 @@ vconfig_error_add(const char *str, va_list the_args)
               "config_error_add", sizeof buf, vlen);
 #else
     nhUse(vlen);
-#endif
-#else
-    Vsprintf(buf, str, the_args);
 #endif
     buf[BUFSZ - 1] = '\0';
     config_erradd(buf);

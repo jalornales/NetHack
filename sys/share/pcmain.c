@@ -25,7 +25,7 @@
 #endif
 
 #if defined(MICRO) || defined(OS2)
-void nethack_exit(int) NORETURN;
+ATTRNORETURN void nethack_exit(int) NORETURN;
 #else
 #define nethack_exit exit
 #endif
@@ -448,7 +448,7 @@ _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);*/
      */
     vision_init();
 
-    display_gamewindows();
+    init_sound_and_display_gamewindows();
 /*
  * First, try to find and restore a save file for specified character.
  * We'll return here if new game player_selection() renames the hero.
@@ -472,7 +472,7 @@ attempt_restore:
             if (discover)
                 You("are in non-scoring discovery mode.");
             if (discover || wizard) {
-                if (yn("Do you want to keep the save file?") == 'n')
+                if (y_n("Do you want to keep the save file?") == 'n')
                     (void) delete_savefile();
                 else {
                     nh_compress(fqname(gs.SAVEF, SAVEPREFIX, 0));

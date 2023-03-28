@@ -1,4 +1,4 @@
-/* NetHack 3.7	cmd.c	$NHDT-Date: 1661240704 2022/08/23 07:45:04 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.616 $ */
+/* NetHack 3.7	cmd.c	$NHDT-Date: 1678312816 2023/03/08 22:00:16 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.666 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2013. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -43,7 +43,7 @@ extern int dofire(void);             /**/
 extern int dothrow(void);            /**/
 extern int doeat(void);              /**/
 extern int done2(void);              /**/
-extern int vanquished(void);         /**/
+extern int dovanquished(void);       /**/
 extern int doengrave(void);          /**/
 extern int dopickup(void);           /**/
 extern int ddoinv(void);             /**/
@@ -482,6 +482,15 @@ can_do_extcmd(const struct ext_func_tab *extcmd)
 {
     int ecflags = extcmd->flags;
 
+    if (gl.luacore && nhcb_counts[NHCB_CMD_BEFORE]) {
+        lua_getglobal(gl.luacore, "nh_callback_run");
+        lua_pushstring(gl.luacore, nhcb_name[NHCB_CMD_BEFORE]);
+        lua_pushstring(gl.luacore, extcmd->ef_txt);
+        nhl_pcall(gl.luacore, 2, 1);
+        if (!lua_toboolean(gl.luacore, -1))
+            return FALSE;
+    }
+
     if (!wizard && (ecflags & WIZMODECMD)) {
         pline(unavailcmd, extcmd->ef_txt);
         return FALSE;
@@ -655,7 +664,7 @@ doextlist(void)
                     /* first try case-insensitive substring match */
                     && !strstri(efp->ef_txt, searchbuf)
                     && !strstri(efp->ef_desc, searchbuf)
-                    /* wildcard support; most interfaces use case-insensitve
+                    /* wildcard support; most interfaces use case-insensitive
                        pmatch rather than regexp for menu searching */
                     && !pmatchi(searchbuf, efp->ef_txt)
                     && !pmatchi(searchbuf, efp->ef_desc))
@@ -1207,18 +1216,23 @@ wiz_makemap(void)
     return ECMD_OK;
 }
 
-/* the #wizmap command - reveal the level map and any traps on it */
+/* the #wizmap command - reveal the level map
+   and any traps or engravings on it */
 static int
 wiz_map(void)
 {
     if (wizard) {
         struct trap *t;
+        struct engr *ep;
         long save_Hconf = HConfusion, save_Hhallu = HHallucination;
 
         HConfusion = HHallucination = 0L;
         for (t = gf.ftrap; t != 0; t = t->ntrap) {
             t->tseen = 1;
             map_trap(t, TRUE);
+        }
+        for (ep = head_engr; ep != 0; ep = ep->nxt_engr) {
+            map_engraving(ep, TRUE);
         }
         do_mapping();
         HConfusion = save_Hconf;
@@ -1562,7 +1576,7 @@ wiz_fuzzer(void)
 {
     if (flags.suppress_alert < FEATURE_NOTICE_VER(3,7,0)) {
         pline("The fuzz tester will make NetHack execute random keypresses.");
-        pline("There is no conventional way out of this mode.");
+        There("is no conventional way out of this mode.");
     }
     if (paranoid_query(TRUE, "Do you want to start fuzz testing?"))
         iflags.debug_fuzzer = TRUE; /* Thoth, take the reins */
@@ -1916,38 +1930,56 @@ DISABLE_WARNING_CONDEXPR_IS_CONSTANT
 static int
 wiz_smell(void)
 {
-    int ans = 0;
-    int mndx;  /* monster index */
-    coord cc;  /* screen pos of unknown glyph */
-    int glyph; /* glyph at selected position */
+    struct monst *mtmp; /* monster being smelled */
+    struct permonst *mptr;
+    int ans, glyph;
+    coord cc; /* screen pos to sniff */
+    boolean is_you;
 
     cc.x = u.ux;
     cc.y = u.uy;
-    mndx = 0; /* gcc -Wall lint */
     if (!olfaction(gy.youmonst.data)) {
         You("are incapable of detecting odors in your present form.");
         return ECMD_OK;
     }
 
-    pline("You can move the cursor to a monster that you want to smell.");
+    You("can move the cursor to a monster that you want to smell.");
     do {
         pline("Pick a monster to smell.");
         ans = getpos(&cc, TRUE, "a monster");
         if (ans < 0 || cc.x < 0) {
             return ECMD_CANCEL; /* done */
         }
-        /* Convert the glyph at the selected position to a mndxbol. */
+        is_you = FALSE;
+        if (u_at(cc.x, cc.y)) {
+            if (u.usteed) {
+                mptr = u.usteed->data;
+            } else {
+                mptr = gy.youmonst.data;
+                is_you = TRUE;
+            }
+        } else if ((mtmp = m_at(cc.x, cc.y)) != (struct monst *) 0) {
+            mptr = mtmp->data;
+        } else {
+            mptr = (struct permonst *) 0;
+        }
+        /* Buglet: mapping or unmapping "remembered, unseen monster" should
+           cause time to elapse; since we're in wizmode, don't bother */
         glyph = glyph_at(cc.x, cc.y);
-        if (glyph_is_monster(glyph))
-            mndx = glyph_to_mon(glyph);
-        else
-            mndx = 0;
         /* Is it a monster? */
-        if (mndx) {
-            if (!usmellmon(&mons[mndx]))
-                pline("That monster seems to give off no smell.");
-        } else
-            pline("That is not a monster.");
+        if (mptr) {
+            if (is_you)
+                You("surreptitiously sniff under your %s.", body_part(ARM));
+            if (!usmellmon(mptr))
+                pline("%s to not give off any smell.",
+                      is_you ? "You seem" : "That monster seems");
+            if (!glyph_is_monster(glyph))
+                map_invisible(cc.x, cc.y);
+        } else {
+            You("don't smell any monster there.");
+            if (glyph_is_invisible(glyph))
+                unmap_invisible(cc.x, cc.y);
+        }
     } while (TRUE);
     return ECMD_OK;
 }
@@ -2549,6 +2581,9 @@ struct ext_func_tab extcmdlist[] = {
               doforce, AUTOCOMPLETE, NULL },
     { ';',    "glance", "show what type of thing a map symbol corresponds to",
               doquickwhatis, IFBURIED | GENERALCMD, NULL },
+    { M('g'), "genocided",
+              "list monsters that have been genocided or become extinct",
+              dogenocided, IFBURIED | AUTOCOMPLETE, NULL },
     { '?',    "help", "give a help message",
               dohelp, IFBURIED | GENERALCMD, NULL },
     { '\0',   "herecmdmenu", "show menu of commands you can do here",
@@ -3586,6 +3621,29 @@ cmd_from_func(int (*fn)(void))
     return '\0';
 }
 
+/* return visual interpretation of the key bound to extended command,
+   or the ext cmd name if not bound to any key. */
+char *
+cmd_from_ecname(const char *ecname)
+{
+    static char cmdnamebuf[QBUFSZ];
+    const struct ext_func_tab *extcmd;
+
+    for (extcmd = extcmdlist; extcmd->ef_txt; ++extcmd)
+        if (!strcmp(extcmd->ef_txt, ecname)) {
+            char key = cmd_from_func(extcmd->ef_funct);
+
+            if (key)
+                Sprintf(cmdnamebuf, "%s", visctrl(key));
+            else
+                Sprintf(cmdnamebuf, "#%s", ecname);
+            return cmdnamebuf;
+        }
+
+    cmdnamebuf[0] = '\0';
+    return cmdnamebuf;
+}
+
 static const char *
 ecname_from_fn(int (*fn)(void))
 {
@@ -4038,14 +4096,14 @@ RESTORE_WARNING_FORMAT_NONLITERAL
 static int
 wiz_display_macros(void)
 {
+    static const char display_issues[] = "Display macro issues:";
     char buf[BUFSZ];
     winid win;
-    int test, trouble = 0, no_glyph = NO_GLYPH, max_glyph = MAX_GLYPH;
-    static const char *const display_issues = "Display macro issues:";
+    int glyph, test, trouble = 0, no_glyph = NO_GLYPH, max_glyph = MAX_GLYPH;
 
     win = create_nhwindow(NHW_TEXT);
 
-    for (int glyph = 0; glyph < MAX_GLYPH; ++glyph) {
+    for (glyph = 0; glyph < MAX_GLYPH; ++glyph) {
         /* glyph_is_cmap / glyph_to_cmap() */
         if (glyph_is_cmap(glyph)) {
             test = glyph_to_cmap(glyph);
@@ -4159,6 +4217,8 @@ wiz_mon_diff(void)
 static void
 you_sanity_check(void)
 {
+    struct monst *mtmp;
+
     if (u.uswallow && !u.ustuck) {
         /* this probably ought to be panic() */
         impossible("sanity_check: swallowed by nothing?");
@@ -4168,6 +4228,12 @@ you_sanity_check(void)
         u.uswldtim = 0;
         docrt();
     }
+    if ((mtmp = m_at(u.ux, u.uy)) != 0) {
+        /* u.usteed isn't on the map */
+        if (u.ustuck != mtmp)
+            impossible("sanity_check: you over monster");
+    }
+
     (void) check_invent_gold("invent");
 }
 
@@ -4181,6 +4247,7 @@ sanity_check(void)
     light_sources_sanity_check();
     bc_sanity_check();
     trap_sanity_check();
+    engraving_sanity_check();
 }
 
 /* qsort() comparison routine for use in list_migrating_mons() */
@@ -4582,7 +4649,8 @@ reset_commands(boolean initial)
 #endif
             /* FIXME: NHKF_DOINV2 ought to be implemented instead of this */
             c = M('0') & 0xff;
-            gc.Cmd.commands[c] = gc.Cmd.pcHack_compat ? gc.Cmd.commands['I'] : 0;
+            gc.Cmd.commands[c] = gc.Cmd.pcHack_compat ? gc.Cmd.commands['I']
+                                                      : 0;
         }
         /* phone keypad layout (only applicable for num_pad) */
         flagtemp = (iflags.num_pad_mode & 2) ? gc.Cmd.num_pad : FALSE;
@@ -5139,6 +5207,7 @@ getdir(const char *s)
     }
 
  retry:
+    gp.program_state.getting_a_command = 1; /* arrow key support for curses */
     if (gi.in_doagain || *readchar_queue)
         dirsym = readchar();
     else
@@ -5811,7 +5880,7 @@ act_on_act(
 
     switch (act) {
     case MCMD_TRAVEL:
-        /* FIXME: player has explicilty picked "travel to this location"
+        /* FIXME: player has explicitly picked "travel to this location"
            from the menu but it will only work if flags.travelcmd is True.
            That option is intended as way to guard against stray mouse
            clicks and shouldn't inhibit explicit travel. */
@@ -5996,7 +6065,7 @@ there_cmd_menu(coordxy x, coordxy y, int mod)
 
     if (!K) {
         /* no menu options, try to move */
-        if (next2u(x, y) && !test_move(u.ux, u.uy, dx, dy, TEST_MOVE)) {
+        if (next2u(x, y) && test_move(u.ux, u.uy, dx, dy, TEST_MOVE)) {
             int dir = xytod(dx, dy);
 
             cmdq_add_ec(CQ_CANNED, move_funcs[dir][MV_WALK]);
@@ -6169,7 +6238,7 @@ get_count(
             inkey = '\0';
         } else {
             gp.program_state.getting_a_command = 1; /* readchar altmeta
-                                                    * compatibility */
+                                                     * compatibility */
             key = readchar();
         }
 
@@ -6230,8 +6299,8 @@ parse(void)
     flush_screen(1); /* Flush screen buffer. Put the cursor on the hero. */
 
     gp.program_state.getting_a_command = 1; /* affects readchar() behavior for
-                                            * ESC iff 'altmeta' option is On;
-                                            * reset to 0 by readchar() */
+                                             * ESC iff 'altmeta' option is On;
+                                             * reset to 0 by readchar() */
     if (!gc.Cmd.num_pad || (foo = readchar()) == gc.Cmd.spkeys[NHKF_COUNT]) {
         foo = get_count((char *) 0, '\0', LARGEST_INT,
                         &gc.command_count, GC_NOFLAGS);
@@ -6290,7 +6359,8 @@ hangup(
        must continue running longer before attempting a hangup save. */
     gp.program_state.done_hup++;
     /* defer hangup iff game appears to be in progress */
-    if (gp.program_state.in_moveloop && gp.program_state.something_worth_saving)
+    if (gp.program_state.in_moveloop
+        && gp.program_state.something_worth_saving)
         return;
 #endif /* SAFERHANGUP */
     end_of_input();
@@ -6312,6 +6382,8 @@ end_of_input(void)
 #endif
         if (gp.program_state.something_worth_saving)
             (void) dosave0();
+    if (soundprocs.sound_exit_nhsound)
+        (*soundprocs.sound_exit_nhsound)("end_of_input");
     if (iflags.window_inited)
         exit_nhwindows((char *) 0);
     clearlocks();
@@ -6372,8 +6444,8 @@ readchar_core(coordxy *x, coordxy *y, int *mod)
         click_to_cmd(*x, *y, *mod);
     }
     gp.program_state.getting_a_command = 0; /* next readchar() will be for an
-                                            * ordinary char unless parse()
-                                            * sets this back to 1 */
+                                             * ordinary char unless parse()
+                                             * sets this back to 1 */
     return (char) sym;
 }
 
@@ -6404,7 +6476,7 @@ dotravel(void)
     coord cc;
 
     /*
-     * Travelling used to be a no-op if user toggled 'travel' option
+     * Traveling used to be a no-op if user toggled 'travel' option
      * Off.  However, travel was initially implemented as a mouse-only
      * command and the original purpose of the option was to be able
      * to prevent clicks on the map from initiating travel.
@@ -6450,8 +6522,17 @@ dotravel(void)
 static int
 dotravel_target(void)
 {
-    if (!isok(iflags.travelcc.x, iflags.travelcc.y))
+    if (!isok(iflags.travelcc.x, iflags.travelcc.y)) {
+        /* assume <0,0>, the value assigned when travel reaches destination */
+        pline("No travel destination set.");
         return ECMD_OK;
+    } else if (u_at(iflags.travelcc.x, iflags.travelcc.y)) {
+        /* maybe interrupted while traveling then just walked rest of way
+           so destination hasn't been reset yet */
+        You("are already here.");
+        iflags.travelcc.x = iflags.travelcc.y = 0;
+        return ECMD_OK;
+    }
 
     iflags.getloc_travelmode = FALSE;
 
@@ -6528,6 +6609,12 @@ yn_function(
         else
             cmdq_clear(CQ_CANNED); /* 'res' is ESC */
     } else {
+#ifdef SND_SPEECH
+        if ((gp.pline_flags & PLINE_SPEECH) != 0) {
+            sound_speak(query);
+            gp.pline_flags &= ~PLINE_SPEECH;
+        }
+#endif
         res = (*windowprocs.win_yn_function)(query, resp, def);
         if (addcmdq)
             cmdq_add_key(CQ_REPEAT, res);
@@ -6558,7 +6645,7 @@ paranoid_query(boolean be_paranoid, const char *prompt)
     if (be_paranoid) {
         char pbuf[BUFSZ], qbuf[QBUFSZ], ans[BUFSZ];
         const char *promptprefix = "",
-                *responsetype = ParanoidConfirm ? "(yes|no)" : "(yes) [no]";
+                *responsetype = ParanoidConfirm ? "[yes|no]" : "[yes|n] (n)";
         int k, trylimit = 6; /* 1 normal, 5 more with "Yes or No:" prefix */
 
         copynchars(pbuf, prompt, BUFSZ - 1);
@@ -6585,9 +6672,9 @@ paranoid_query(boolean be_paranoid, const char *prompt)
                 break;
             promptprefix = "\"Yes\" or \"No\": ";
         } while (ParanoidConfirm && strcmpi(ans, "no") && --trylimit);
-    } else
-        confirmed_ok = (yn(prompt) == 'y');
-
+    } else {
+        confirmed_ok = (y_n(prompt) == 'y');
+    }
     return confirmed_ok;
 }
 

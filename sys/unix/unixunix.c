@@ -74,11 +74,13 @@ eraseoldlocks(void)
 {
     register int i;
 
+#if defined(HANGUPHANDLING)
     gp.program_state.preserve_locks = 0; /* not required but shows intent */
     /* cannot use maxledgerno() here, because we need to find a lock name
      * before starting everything (including the dungeon initialization
      * that sets astral_level, needed for maxledgerno()) up
      */
+#endif
     for (i = 1; i <= MAXDUNGEON * MAXLEVEL + 1; i++) {
         /* try to remove all */
         set_levelfile_name(gl.lock, i);
@@ -169,7 +171,7 @@ getlock(void)
 
         if (iflags.window_inited) {
             /* this is a candidate for paranoid_confirmation */
-            c = yn(destroy_old_game_prompt);
+            c = y_n(destroy_old_game_prompt);
         } else {
             (void) raw_printf("\n%s [yn] ", destroy_old_game_prompt);
             (void) fflush(stdout);

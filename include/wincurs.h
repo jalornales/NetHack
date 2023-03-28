@@ -129,10 +129,10 @@ extern void curs_destroy_all_wins(void);
 #ifdef ENHANCED_SYMBOLS
 extern void curses_putch(winid wid, int x, int y, int ch,
                          struct unicode_representation *u, int color,
-                         int attrs);
+                         int framecolor, int attrs);
 #else
 extern void curses_putch(winid wid, int x, int y, int ch, int color,
-                         int attrs);
+                         int framecolor, int attrs);
 #endif
 extern void curses_get_window_size(winid wid, int *height, int *width);
 extern boolean curses_window_has_border(winid wid);
@@ -164,6 +164,7 @@ extern boolean curses_is_menu(winid wid);
 extern boolean curses_is_text(winid wid);
 extern int curses_convert_glyph(int ch, int glyph);
 extern void curses_move_cursor(winid wid, int x, int y);
+extern void curses_update_stdscr_cursor(void);
 extern void curses_prehousekeeping(void);
 extern void curses_posthousekeeping(void);
 extern void curses_view_file(const char *filename, boolean must_exist);
@@ -221,6 +222,7 @@ extern void curses_cleanup(void);
 
 extern void curses_message_win_puts(const char *message, boolean recursed);
 extern void curses_got_input(void);
+extern int curses_got_output(void);
 extern int curses_block(boolean require_tab); /* for MSGTYPE=STOP */
 extern int curses_more(void);
 extern void curses_clear_unhighlight_message_window(void);

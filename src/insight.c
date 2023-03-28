@@ -32,7 +32,6 @@ static void weapon_insight(int);
 static void attributes_enlightenment(int, int);
 static void show_achievements(int);
 static int QSORTCALLBACK vanqsort_cmp(const genericptr, const genericptr);
-static int set_vanq_order(void);
 static int num_extinct(void);
 
 extern const char *const hu_stat[];  /* hunger status from eat.c */
@@ -771,7 +770,7 @@ characteristics_enlightenment(int mode, int final)
     char buf[BUFSZ];
 
     enlght_out("");
-    Sprintf(buf, "%s Characteristics:", !final ? "Current" : "Final");
+    Sprintf(buf, "%sCharacteristics:", !final ? "" : "Final ");
     enlght_out(buf);
 
     /* bottom line order */
@@ -901,7 +900,7 @@ status_enlightenment(int mode, int final)
      *     should be discernible to the hero hence to the player)
     \*/
     enlght_out(""); /* separator after title or characteristics */
-    enlght_out(final ? "Final Status:" : "Current Status:");
+    enlght_out(final ? "Final Status:" : "Status:");
 
     Strcpy(youtoo, You_);
     /* not a traditional status but inherently obvious to player; more
@@ -1215,7 +1214,7 @@ weapon_insight(int final)
     int wtype;
 
     /* report being weaponless; distinguish whether gloves are worn
-       [perhaps mention silver ring(s) when not wearning gloves?] */
+       [perhaps mention silver ring(s) when not wearing gloves?] */
     if (!uwep) {
         you_are(empty_handed(), "");
 
@@ -1419,7 +1418,7 @@ attributes_enlightenment(int unused_mode UNUSED, int final)
      *  Attributes
     \*/
     enlght_out("");
-    enlght_out(final ? "Final Attributes:" : "Current Attributes:");
+    enlght_out(final ? "Final Attributes:" : "Attributes:");
 
     if (u.uevent.uhand_of_elbereth) {
         static const char *const hofe_titles[3] = { "the Hand of Elbereth",
@@ -1644,7 +1643,7 @@ attributes_enlightenment(int unused_mode UNUSED, int final)
                     Levitation
                        ? " if you weren't levitating"
                        : (save_BFly == I_SPECIAL)
-                          /* this is an oversimpliction; being trapped
+                          /* this is an oversimplification; being trapped
                              might also be blocking levitation so flight
                              would still be blocked after escaping trap */
                           ? " if you weren't trapped"
@@ -2310,6 +2309,7 @@ void
 record_achievement(schar achidx)
 {
     int i, absidx;
+    int repeat_achievement = 0;
 
     absidx = abs(achidx);
     /* valid achievements range from 1 to N_ACH-1; however, ranks can be
@@ -2326,8 +2326,21 @@ record_achievement(schar achidx)
        an attempt to duplicate an achievement can happen if any of Bell,
        Candelabrum, Book, or Amulet is dropped then picked up again */
     for (i = 0; u.uachieved[i]; ++i)
-        if (abs(u.uachieved[i]) == absidx)
-            return; /* already recorded, don't duplicate it */
+        if (abs(u.uachieved[i]) == absidx) {
+            repeat_achievement = 1;
+            break;
+        }
+
+    /*
+     * We do the sound for an achievement, even if it has already been
+     * achieved before. Some players might have set up level-based
+     * theme music or something. We do let the sound interface know
+     * that it's not the original achievement though.
+     */
+    SoundAchievement(achidx, 0, repeat_achievement);
+
+    if (repeat_achievement)
+        return; /* already recorded, don't duplicate it */
     u.uachieved[i] = achidx;
 
     /* avoid livelog for achievements recorded during final disclosure:
@@ -2486,15 +2499,23 @@ show_gamelog(int final)
  */
 
 /* the two uppercase choices are implemented but suppressed from menu */
-static const char *vanqorders[NUM_VANQ_ORDER_MODES][2] = {
-    { "t", "traditional: by monster level, by internal monster index" },
-    { "d", "by monster difficulty rating, by internal monster index" },
-    { "a", "alphabetically, first unique monsters, then others" },
-    { "A", "alphabetically, unique monsters and others intermixed" },
-    { "C", "by monster class, high to low level within class" },
-    { "c", "by monster class, low to high level within class" },
-    { "n", "by count, high to low, by internal index within tied count" },
-    { "z", "by count, low to high, by internal index within tied count" },
+const char *const vanqorders[NUM_VANQ_ORDER_MODES][3] = {
+    { "t", "traditional: by monster level",
+           "traditional: by monster level, by internal monster index" },
+    { "d", "by monster difficulty rating",
+           "by monster difficulty rating, by internal monster index" },
+    { "a", "alphabetically, unique monsters separate",
+           "alphabetically, first unique monsters, then others" },
+    { "A", "alphabetically, unique monsters intermixed",
+           "alphabetically, unique monsters and others intermixed" },
+    { "C", "by monster class, high to low level in class",
+           "by monster class, high to low level within class" },
+    { "c", "by monster class, low to high level in class",
+           "by monster class, low to high level within class" },
+    { "n", "by count, high to low",
+           "by count, high to low, by internal index within tied count" },
+    { "z", "by count, low to high",
+           "by count, low to high, by internal index within tied count" },
 };
 
 static int QSORTCALLBACK
@@ -2507,7 +2528,7 @@ vanqsort_cmp(
     const char *name1, *name2, *punct;
     schar mcls1, mcls2;
 
-    switch (gv.vanq_sortmode) {
+    switch (flags.vanq_sortmode) {
     default:
     case VANQ_MLVL_MNDX:
         /* sort by monster level */
@@ -2564,7 +2585,7 @@ vanqsort_cmp(
             mlev1 = mons[indx1].mlevel;
             mlev2 = mons[indx2].mlevel;
             res = mlev1 - mlev2; /* mlevel low to high */
-            if (gv.vanq_sortmode == VANQ_MCLS_HTOL)
+            if (flags.vanq_sortmode == VANQ_MCLS_HTOL)
                 res = -res; /* mlevel high to low */
         }
         break;
@@ -2573,7 +2594,7 @@ vanqsort_cmp(
         died1 = gm.mvitals[indx1].died;
         died2 = gm.mvitals[indx2].died;
         res = died2 - died1; /* dead count high to low */
-        if (gv.vanq_sortmode == VANQ_COUNT_L_H)
+        if (flags.vanq_sortmode == VANQ_COUNT_L_H)
             res = -res; /* dead count low to high */
         break;
     }
@@ -2584,7 +2605,7 @@ vanqsort_cmp(
 }
 
 /* returns -1 if cancelled via ESC */
-static int
+int
 set_vanq_order(void)
 {
     winid tmpwin;
@@ -2601,8 +2622,8 @@ set_vanq_order(void)
             continue;
         any.a_int = i + 1;
         add_menu(tmpwin, &nul_glyphinfo, &any, *vanqorders[i][0], 0,
-                 ATR_NONE, clr, vanqorders[i][1],
-                 (i == gv.vanq_sortmode) ? MENU_ITEMFLAGS_SELECTED
+                 ATR_NONE, clr, vanqorders[i][2],
+                 (i == flags.vanq_sortmode) ? MENU_ITEMFLAGS_SELECTED
                                         : MENU_ITEMFLAGS_NONE);
     }
     end_menu(tmpwin, "Sort order for vanquished monster counts");
@@ -2612,12 +2633,12 @@ set_vanq_order(void)
     if (n > 0) {
         choice = selected[0].item.a_int - 1;
         /* skip preselected entry if we have more than one item chosen */
-        if (n > 1 && choice == gv.vanq_sortmode)
+        if (n > 1 && choice == flags.vanq_sortmode)
             choice = selected[1].item.a_int - 1;
         free((genericptr_t) selected);
-        gv.vanq_sortmode = choice;
+        flags.vanq_sortmode = choice;
     }
-    return (n < 0) ? -1 : gv.vanq_sortmode;
+    return (n < 0) ? -1 : flags.vanq_sortmode;
 }
 
 /* #vanquished command */
@@ -2709,7 +2730,7 @@ list_vanquished(char defquery, boolean ask)
 
         c = ask ? yn_function(
                             "Do you want an account of creatures vanquished?",
-                             ynaqchars, defquery, TRUE)
+                              ynaqchars, defquery, TRUE)
                 : defquery;
         if (c == 'q')
             done_stopprint++;
@@ -2720,9 +2741,9 @@ list_vanquished(char defquery, boolean ask)
                 if (set_vanq_order() < 0)
                     return;
             }
-            uniq_header = (gv.vanq_sortmode == VANQ_ALPHA_SEP);
-            class_header = ((gv.vanq_sortmode == VANQ_MCLS_LTOH
-                             || gv.vanq_sortmode == VANQ_MCLS_HTOL)
+            uniq_header = (flags.vanq_sortmode == VANQ_ALPHA_SEP);
+            class_header = ((flags.vanq_sortmode == VANQ_MCLS_LTOH
+                             || flags.vanq_sortmode == VANQ_MCLS_HTOL)
                             && ntypes > 1);
 
             klwin = create_nhwindow(NHW_MENU);
@@ -2795,8 +2816,17 @@ list_vanquished(char defquery, boolean ask)
             display_nhwindow(klwin, TRUE);
             destroy_nhwindow(klwin);
         }
-    } else if (defquery == 'a') {
-        /* #dovanquished rather than final disclosure, so pline() is ok */
+
+    /*
+     * For end-of-game disclosure, we're only called when some monsters
+     * were vanquished and won't reach these 'else-if's.
+     *
+     * If no monsters have been vanquished, we're either called for game
+     * still in progress, so use present tense via pline(), or for dumplog
+     * which needs putstr() and past tense.
+     */
+    } else if (!gp.program_state.gameover) {
+        /* #vanquished rather than final disclosure, so pline() is ok */
         pline("No creatures have been vanquished.");
 #ifdef DUMPLOG
     } else if (dumping) {
@@ -2822,6 +2852,7 @@ num_genocides(void)
     return n;
 }
 
+/* return a count of the number of extinct species */
 static int
 num_extinct(void)
 {
@@ -2836,6 +2867,8 @@ num_extinct(void)
     return n;
 }
 
+/* show genocided and extinct monster types for final disclosure/dumplog
+   or for the #genocided command */
 void
 list_genocided(char defquery, boolean ask)
 {
@@ -2903,11 +2936,24 @@ list_genocided(char defquery, boolean ask)
             display_nhwindow(klwin, TRUE);
             destroy_nhwindow(klwin);
         }
+
+    /* See the comment for similar code near the end of list_vanquished(). */
+    } else if (!gp.program_state.gameover) {
+        /* #genocided rather than final disclosure, so pline() is ok */
+        pline("No creatures have been genocided or become extinct.");
 #ifdef DUMPLOG
     } else if (dumping) {
         putstr(0, 0, "No species were genocided or became extinct.");
 #endif
     }
+}
+
+/* M-g - #genocided command */
+int
+dogenocided(void)
+{
+    list_genocided('y', FALSE);
+    return ECMD_OK;
 }
 
 /*

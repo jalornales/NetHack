@@ -183,7 +183,7 @@ main(int argc, char *argv[])
      */
     vision_init();
 
-    display_gamewindows();
+    init_sound_and_display_gamewindows();
 
 /*
  * First, try to find and restore a save file for specified character.
@@ -207,7 +207,7 @@ attempt_restore:
             resuming = TRUE; /* not starting new game */
             wd_message();
             if (discover || wizard) {
-                if (yn("Do you want to keep the save file?") == 'n')
+                if (y_n("Do you want to keep the save file?") == 'n')
                     (void) delete_savefile();
                 else
                     (void) chmod(fq_save, FCMASK); /* back to readable */

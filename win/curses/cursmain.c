@@ -150,8 +150,9 @@ init_nhwindows(int* argcp, char** argv)
                 ** windows?  Or at least all but WIN_INFO?      -dean
 */
 void
-curses_init_nhwindows(int *argcp UNUSED,
-                      char **argv UNUSED)
+curses_init_nhwindows(
+    int *argcp UNUSED,
+    char **argv UNUSED)
 {
 #ifdef PDCURSES
     char window_title[BUFSZ];
@@ -745,12 +746,12 @@ curses_ctrl_nhwindow(
 
 /*
 mark_synch()    -- Don't go beyond this point in I/O on any channel until
-                   all channels are caught up to here.  Can be an empty call
-                   for the moment
+                   all channels are caught up to here.
 */
 void
 curses_mark_synch(void)
 {
+    curses_refresh_nethack_windows();
 }
 
 /*
@@ -762,6 +763,9 @@ wait_synch()    -- Wait until all pending output is complete (*flush*() for
 void
 curses_wait_synch(void)
 {
+    if (curses_got_output())
+        (void) curses_more();
+    curses_mark_synch();
     /* [do we need 'if (counting) curses_count_window((char *)0);' here?] */
 }
 
@@ -812,7 +816,7 @@ curses_print_glyph(
     winid wid,
     coordxy x, coordxy y,
     const glyph_info *glyphinfo,
-    const glyph_info *bkglyphinfo UNUSED)
+    const glyph_info *bkglyphinfo)
 {
     int glyph;
     int ch;
@@ -861,12 +865,15 @@ curses_print_glyph(
     if (SYMHANDLING(H_UTF8)
         && glyphinfo->gm.u
         && glyphinfo->gm.u->utf8str) {
-        curses_putch(wid, x, y, ch, glyphinfo->gm.u, color, attr);
+        curses_putch(wid, x, y, ch, glyphinfo->gm.u, color,
+                     bkglyphinfo->framecolor, attr);
     } else {
-        curses_putch(wid, x, y, ch, NULL, color, attr);
+        curses_putch(wid, x, y, ch, NULL, color,
+                     bkglyphinfo->framecolor, attr);
     }
 #else
-    curses_putch(wid, x, y, ch, color, attr);
+    curses_putch(wid, x, y, ch, color,
+                 bkglyphinfo->framecolor, attr);
 #endif
 }
 
@@ -970,7 +977,8 @@ nhbell()        -- Beep at user.  [This will exist at least until sounds are
 void
 curses_nhbell(void)
 {
-    beep();
+    if (!flags.silent)
+        beep();
 }
 
 /*
@@ -1061,6 +1069,7 @@ curses_delay_output(void)
     if (flags.nap && !iflags.debug_fuzzer) {
         /* refreshing the whole display is a waste of time,
          * but that's why we're here */
+        curses_update_stdscr_cursor();
         refresh();
         napms(50);
     }
