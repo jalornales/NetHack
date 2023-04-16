@@ -2013,6 +2013,8 @@ show_conduct(int final)
 
     if (u.uroleplay.blind)
         you_have_been("blind from birth");
+    if (u.uroleplay.deaf)
+        you_have_been("deaf from birth");
     if (u.uroleplay.nudist)
         you_have_been("faithfully nudist");
 
@@ -2044,6 +2046,9 @@ show_conduct(int final)
                 plur(u.uconduct.literate));
         you_have_X(buf);
     }
+
+    if (!u.uconduct.pets)
+        you_have_never("had a pet");
 
     ngenocided = num_genocides();
     if (ngenocided == 0) {

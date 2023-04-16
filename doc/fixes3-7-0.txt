@@ -1,4 +1,4 @@
-HDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.1146 $ $NHDT-Date: 1680935652 2023/04/08 06:34:12 $
+HDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.1153 $ $NHDT-Date: 1681429662 2023/04/13 23:47:42 $
 
 General Fixes and Modified Features
 -----------------------------------
@@ -1135,6 +1135,17 @@ if hero had passes-walls capability and was at the location of a closed door,
 	attempting to use 'o' on own spot reported "you don't find anything
 	here to loot"; change to open door for '.' (or '<'), only loot for '>'
 items thrown by monster landing on an altar did not show BUC flash
+a chameleon in giant form who gets trapped (bear trap?) while carrying
+	boulders and changes shape could be killed when dropping them;
+	shape-change traversal of its inventory would continue after it
+	dropped everything, possibly resulting in a crash
+if hero is engulfed and polymorphs into a monster form which is too big to be
+	engulfed, make engulfer expel the poly'd hero
+give feedback if monster holding onto the hero has to let go when hero polys
+	into a form which can't be held
+prevent hug attacks and touch or engulf attacks for wrap, stick-to, and
+	digestion damage from succeeding against unsolid targets (ghosts,
+	vortices, a few others)
 
 
 Fixes to 3.7.0-x General Problems Exposed Via git Repository
@@ -1520,6 +1531,8 @@ change 'm' prefix for #tip from 'use menu to pick among floor containers'
 	context-sensitive item-action Tip directly operates on the item
 anti-magic field's reduction of hero's maximum energy could result in current
 	energy being one point higher than maximum
+if hero was killed by a wand zapped by a monster, cause of death was reported
+	as "killed by a bolt of <damage type> imagined by <monster>"
 
 
 Fixes to 3.7.0-x Platform and/or Interface Problems Exposed Via git Repository
@@ -2037,6 +2050,8 @@ give a helpful tip when first entering "farlook" mode
 add a boolean option tips to disable all of the helpful tips
 add a tutorial level
 engravings appear on the map display
+option to create the character deaf
+add conduct for petless
 
 
 Platform- and/or Interface-Specific New Features
