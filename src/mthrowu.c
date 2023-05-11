@@ -757,16 +757,16 @@ m_throw(
             break;
         }
         tmp_at(gb.bhitpos.x, gb.bhitpos.y);
-        delay_output();
+        nh_delay_output();
     }
     tmp_at(gb.bhitpos.x, gb.bhitpos.y);
-    delay_output();
+    nh_delay_output();
     tmp_at(DISP_END, 0);
     gm.mesg_given = 0; /* reset */
 
     if (blindinc) {
         u.ucreamed += blindinc;
-        make_blinded(Blinded + (long) blindinc, FALSE);
+        make_blinded(BlindedTimeout + (long) blindinc, FALSE);
         if (!Blind)
             Your1(vision_clears);
     }

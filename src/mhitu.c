@@ -1328,8 +1328,7 @@ gulpmu(struct monst *mtmp, struct attack *mattk)
                                  : amphibious(gy.youmonst.data)
                                        ? "feel comforted."
                                        : "can barely breathe!");
-            /* NB: Amphibious includes Breathless */
-            if (Amphibious && !flaming(gy.youmonst.data))
+            if ((Amphibious || Breathless) && !flaming(gy.youmonst.data))
                 tmp = 0;
         } else {
             You("are %s!", enfolds(mtmp->data) ? "being squashed"
@@ -1362,7 +1361,7 @@ gulpmu(struct monst *mtmp, struct attack *mattk)
                     Your1(vision_clears);
             } else
                 /* keep him blind until disgorged */
-                make_blinded(Blinded + 1, FALSE);
+                incr_itimeout(&HBlinded, 1L);
         }
         tmp = 0;
         break;

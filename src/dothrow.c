@@ -1,4 +1,4 @@
-/* NetHack 3.7	dothrow.c	$NHDT-Date: 1664979333 2022/10/05 14:15:33 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.250 $ */
+/* NetHack 3.7	dothrow.c	$NHDT-Date: 1683334246 2023/05/06 00:50:46 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.266 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2013. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -641,9 +641,10 @@ hitfloor(
  * before the failed callback.
  */
 boolean
-walk_path(coord *src_cc, coord *dest_cc,
-          boolean (*check_proc)(genericptr_t, coordxy, coordxy),
-          genericptr_t arg)
+walk_path(
+    coord *src_cc, coord *dest_cc,
+    boolean (*check_proc)(genericptr_t, coordxy, coordxy),
+    genericptr_t arg)
 {
     int err;
     coordxy x, y, dx, dy, x_change, y_change, i, prev_x, prev_y;
@@ -971,7 +972,7 @@ hurtle_step(genericptr_t arg, coordxy x, coordxy y)
     if (--*range < 0) /* make sure our range never goes negative */
         *range = 0;
     if (*range != 0)
-        delay_output();
+        nh_delay_output();
     return TRUE;
 }
 
@@ -981,6 +982,9 @@ boolean
 will_hurtle(struct monst *mon, coordxy x, coordxy y)
 {
     if (!isok(x, y))
+        return FALSE;
+    /* redundant when called by mhurtle() but needed for mhitm_knockback() */
+    if (mon->data->msize >= MZ_HUGE || mon == u.ustuck || mon->mtrapped)
         return FALSE;
     /*
      * TODO: Treat walls, doors, iron bars, etc. specially
@@ -1014,7 +1018,7 @@ mhurtle_step(genericptr_t arg, coordxy x, coordxy y)
             vision_recalc(0); /* new location => different lines of sight */
         }
         flush_screen(1);
-        delay_output();
+        nh_delay_output();
         set_apparxy(mon);
         if (is_waterwall(x, y))
             return FALSE;
@@ -1025,20 +1029,42 @@ mhurtle_step(genericptr_t arg, coordxy x, coordxy y)
             return FALSE;
         return TRUE;
     }
-    if ((mtmp = m_at(x, y)) != 0) {
+    if ((mtmp = m_at(x, y)) != 0 && mtmp != mon) {
         if (canseemon(mon) || canseemon(mtmp))
             pline("%s bumps into %s.", Monnam(mon), a_monnam(mtmp));
-        wakeup(mon, !gc.context.mon_moving);
         wakeup(mtmp, !gc.context.mon_moving);
+        /* check whether 'mon' is turned to stone by touching 'mtmp' */
         if (touch_petrifies(mtmp->data)
             && !which_armor(mon, W_ARMU | W_ARM | W_ARMC)) {
             minstapetrify(mon, !gc.context.mon_moving);
             newsym(mon->mx, mon->my);
         }
+        /* and whether 'mtmp' is turned to stone by being touched by 'mon' */
         if (touch_petrifies(mon->data)
             && !which_armor(mtmp, W_ARMU | W_ARM | W_ARMC)) {
             minstapetrify(mtmp, !gc.context.mon_moving);
             newsym(mtmp->mx, mtmp->my);
+        }
+    } else if (u_at(x, y)) {
+        /* a monster has caused 'mon' to hurtle against hero */
+        pline("%s bumps into you.", Some_Monnam(mon));
+        stop_occupation();
+        /* check whether 'mon' is turned to stone by touching poly'd hero */
+        if (Upolyd && touch_petrifies(gy.youmonst.data)
+            && !which_armor(mon, W_ARMU | W_ARM | W_ARMC)) {
+            /* give poly'd hero credit/blame despite a monster causing it */
+            minstapetrify(mon, TRUE);
+            newsym(mon->mx, mon->my);
+        }
+        /* and whether hero is turned to stone by being touched by 'mon' */
+        if (touch_petrifies(mon->data) && !(uarmu || uarm || uarmc)) {
+            Snprintf(gk.killer.name, sizeof gk.killer.name, "being hit by %s",
+                     /* combine m_monnam() and noname_monnam():
+                        "{your,a} hurtling cockatrice" w/o assigned name */
+                     x_monnam(mon, mon->mtame ? ARTICLE_YOUR : ARTICLE_A,
+                              "hurtling", EXACT_NAME | SUPPRESS_NAME, FALSE));
+            instapetrify(gk.killer.name);
+            newsym(u.ux, u.uy);
         }
     }
 
@@ -1111,6 +1137,7 @@ mhurtle(struct monst *mon, int dx, int dy, int range)
 {
     coord mc, cc;
 
+    wakeup(mon, !gc.context.mon_moving);
     /* At the very least, debilitate the monster */
     mon->movement = 0;
     mon->mstun = 1;
@@ -1147,10 +1174,12 @@ mhurtle(struct monst *mon, int dx, int dy, int range)
     cc.x = mon->mx + (dx * range);
     cc.y = mon->my + (dy * range);
     (void) walk_path(&mc, &cc, mhurtle_step, (genericptr_t) mon);
-    if (!DEADMONSTER(mon) && t_at(mon->mx, mon->my))
-        (void) mintrap(mon, FORCEBUNGLE);
-    else
-        (void) minliquid(mon);
+    if (!DEADMONSTER(mon)) {
+        if (t_at(mon->mx, mon->my))
+            (void) mintrap(mon, FORCEBUNGLE);
+        else
+            (void) minliquid(mon);
+    }
     return;
 }
 
@@ -1289,7 +1318,7 @@ toss_up(struct obj *obj, boolean hitsroof)
                 if (otyp == BLINDING_VENOM && !Blind)
                     pline("It blinds you!");
                 u.ucreamed += blindinc;
-                make_blinded(Blinded + (long) blindinc, FALSE);
+                make_blinded(BlindedTimeout + (long) blindinc, FALSE);
                 if (!Blind)
                     Your1(vision_clears);
             }
@@ -1411,7 +1440,7 @@ sho_obj_return_to_u(struct obj *obj)
         tmp_at(DISP_FLASH, obj_to_glyph(obj, rn2_on_display_rng));
         while (isok(x,y) && (x != u.ux || y != u.uy)) {
             tmp_at(x, y);
-            delay_output();
+            nh_delay_output();
             x -= u.dx;
             y -= u.dy;
         }
@@ -1707,7 +1736,7 @@ throwit(struct obj *obj,
             || obj->oclass == VENOM_CLASS) {
             tmp_at(DISP_FLASH, obj_to_glyph(obj, rn2_on_display_rng));
             tmp_at(gb.bhitpos.x, gb.bhitpos.y);
-            delay_output();
+            nh_delay_output();
             tmp_at(DISP_END, 0);
             breakmsg(obj, cansee(gb.bhitpos.x, gb.bhitpos.y));
             breakobj(obj, gb.bhitpos.x, gb.bhitpos.y, TRUE, TRUE);
@@ -2458,7 +2487,14 @@ breakobj(
 boolean
 breaktest(struct obj *obj)
 {
-    if (obj_resists(obj, 1, 99))
+    int nonbreakchance = 1; /* chance for non-artifacts to resist */
+
+    /* this may need to be changed if actual glass armor gets added someday;
+       for now, it affects crystal plate mail and helm of brilliance */
+    if (obj->oclass == ARMOR_CLASS)
+        nonbreakchance = 95;
+
+    if (obj_resists(obj, nonbreakchance, 99))
         return 0;
     if (objects[obj->otyp].oc_material == GLASS && !obj->oartifact
         && obj->oclass != GEM_CLASS)
@@ -2486,9 +2522,10 @@ breakmsg(struct obj *obj, boolean in_view)
     switch (obj->oclass == POTION_CLASS ? POT_WATER : obj->otyp) {
     default: /* glass or crystal wand */
         if (obj->oclass != WAND_CLASS)
-            impossible("breaking odd object?");
+            impossible("breaking odd object (%d)?", obj->otyp);
         /*FALLTHRU*/
     case CRYSTAL_PLATE_MAIL:
+    case HELM_OF_BRILLIANCE:
     case LENSES:
     case MIRROR:
     case CRYSTAL_BALL:

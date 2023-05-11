@@ -299,7 +299,8 @@ flooreffects(struct obj *obj, coordxy x, coordxy y, const char *verb)
             (void) obj_meld(&obj, &otmp);
         }
         res = (boolean) !obj;
-    } else if (IS_ALTAR(levl[x][y].typ) && cansee(x,y)) {
+    } else if (gc.context.mon_moving && IS_ALTAR(levl[x][y].typ)
+               && cansee(x,y)) {
         doaltarobj(obj);
     }
 
@@ -2001,10 +2002,16 @@ revive_corpse(struct obj *corpse)
     char cname[BUFSZ];
     struct obj *container = (struct obj *) 0;
     int container_where = 0;
-    boolean is_zomb = (mons[corpse->corpsenm].mlet == S_ZOMBIE);
+    int montype;
+    boolean is_zomb;
     coordxy corpsex, corpsey;
 
     where = corpse->where;
+    montype = corpse->corpsenm;
+    /* treat buried auto-reviver (troll, Rider?) like a zombie
+       so that it can dig itself out of the ground if it revives */
+    is_zomb = (mons[montype].mlet == S_ZOMBIE
+               || (where == OBJ_BURIED && is_reviver(&mons[montype])));
     is_uwep = (corpse == uwep);
     chewed = (corpse->oeaten != 0);
     Strcpy(cname, corpse_xname(corpse,
@@ -2233,19 +2240,21 @@ donull(void)
 static int
 wipeoff(void)
 {
-    if (u.ucreamed < 4)
-        u.ucreamed = 0;
-    else
-        u.ucreamed -= 4;
-    if (Blinded < 4)
-        Blinded = 0;
-    else
-        Blinded -= 4;
-    if (!Blinded) {
+    unsigned udelta = u.ucreamed;
+    long ldelta = BlindedTimeout;
+
+    if (udelta > 4)
+        udelta = 4;
+    u.ucreamed -= udelta; /*u.ucreamed -= min(u.ucreamed,4);*/
+    if (ldelta > 4L)
+        ldelta = 4L;
+    incr_itimeout(&HBlinded, -ldelta); /*HBlinded -= min(BlindedTimeout,4L);*/
+
+    if (!HBlinded) {
         pline("You've got the glop off.");
         u.ucreamed = 0;
         if (!gulp_blnd_check()) {
-            Blinded = 1;
+            set_itimeout(&HBlinded, 1L);
             make_blinded(0L, TRUE);
         }
         return 0;

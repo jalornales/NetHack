@@ -156,7 +156,7 @@ struct monst {
     Bitfield(iswiz, 1);     /* is the Wizard of Yendor */
     Bitfield(wormno, 5);    /* at most 31 worms on any level */
     Bitfield(mtemplit, 1);  /* temporarily seen; only valid during bhit() */
-    /* 1 free bit */
+    Bitfield(meverseen, 1); /* mon has been seen at some point */
 
 #define MAX_NUM_WORMS 32    /* should be 2^(wormno bitfield size) */
 
@@ -240,6 +240,8 @@ struct monst {
 
 #define engulfing_u(mon) (u.uswallow && (u.ustuck == (mon)))
 #define helpless(mon) ((mon)->msleeping || !(mon)->mcanmove)
+
+#define mon_offmap(mon) (((mon)->mstate & (MON_DETACH|MON_MIGRATING|MON_LIMBO|MON_OFFMAP)) != 0)
 
 /* Get the maximum difficulty monsters that can currently be generated,
    given the current level difficulty and the hero's level. */

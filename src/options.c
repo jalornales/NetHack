@@ -1313,7 +1313,7 @@ optfn_disclose(int optidx, int req, boolean negated, char *opts, char *op)
          *      DISCLOSE_PROMPT_DEFAULT_NO   ask with default answer no
          *      DISCLOSE_YES_WITHOUT_PROMPT  always disclose and don't ask
          *      DISCLOSE_NO_WITHOUT_PROMPT   never disclose and don't ask
-         *      DISCLOSE_PROMPT_DEFAULT_SPECIAL  for 'vanquished' only...
+         *      DISCLOSE_PROMPT_DEFAULT_SPECIAL  for 'vanq'/'genod' only...
          *      DISCLOSE_SPECIAL_WITHOUT_PROMPT  ...to set up sort order.
          *
          * Those setting values can be used in the option
@@ -1367,7 +1367,7 @@ optfn_disclose(int optidx, int req, boolean negated, char *opts, char *op)
                     continue;
                 }
                 if (prefix_val != -1) {
-                    if (*dop != 'v') {
+                    if (*dop != 'v' && *dop != 'g') {
                         if (prefix_val == DISCLOSE_PROMPT_DEFAULT_SPECIAL)
                             prefix_val = DISCLOSE_PROMPT_DEFAULT_YES;
                         if (prefix_val == DISCLOSE_SPECIAL_WITHOUT_PROMPT)
@@ -3598,7 +3598,7 @@ optfn_sortvanquished(
         uchar prev_sortmode = flags.vanq_sortmode;
 
         /* return handler_sortvanquished(); */
-        (void) set_vanq_order(); /* insight.c */
+        (void) set_vanq_order(TRUE); /* insight.c */
         pline("'%s' %s \"%s: %s\".", optname,
               (flags.vanq_sortmode == prev_sortmode)
                  ? "not changed, still"
@@ -5287,7 +5287,7 @@ handler_disclose(void)
                      "Always disclose, without prompting",
                      (c == any.a_char) ? MENU_ITEMFLAGS_SELECTED
                                        : MENU_ITEMFLAGS_NONE);
-            if (*disclosure_names[i] == 'v') {
+            if (*disclosure_names[i] == 'v' || *disclosure_names[i] == 'g') {
                 any.a_char = DISCLOSE_SPECIAL_WITHOUT_PROMPT; /* '#' */
                 add_menu(tmpwin, &nul_glyphinfo, &any, 0,
                          any.a_char, ATR_NONE, clr,
@@ -5307,11 +5307,11 @@ handler_disclose(void)
                      "Prompt, with default answer of \"Yes\"",
                      (c == any.a_char) ? MENU_ITEMFLAGS_SELECTED
                                        : MENU_ITEMFLAGS_NONE);
-            if (*disclosure_names[i] == 'v') {
+            if (*disclosure_names[i] == 'v' || *disclosure_names[i] == 'g') {
                 any.a_char = DISCLOSE_PROMPT_DEFAULT_SPECIAL; /* '?' */
                 add_menu(tmpwin, &nul_glyphinfo, &any, 0,
                          any.a_char, ATR_NONE, clr,
-            "Prompt, with default answer of \"Ask\" to request sort menu",
+                "Prompt, with default answer of \"Ask\" to request sort menu",
                          (c == any.a_char) ? MENU_ITEMFLAGS_SELECTED
                                            : MENU_ITEMFLAGS_NONE);
             }
@@ -7107,10 +7107,12 @@ parsebindings(char *bindings)
  *
  */
 
-static const struct color_names {
+struct color_names {
     const char *name;
     int color;
-} colornames[] = {
+};
+
+static const struct color_names colornames[] = {
     { "black", CLR_BLACK },
     { "red", CLR_RED },
     { "green", CLR_GREEN },
@@ -7127,7 +7129,7 @@ static const struct color_names {
     { "light cyan", CLR_BRIGHT_CYAN },
     { "white", CLR_WHITE },
     { "no color", NO_COLOR },
-    { NULL, CLR_BLACK }, /* everything after this is an alias */
+    { (const char *) 0, CLR_BLACK }, /* everything after this is an alias */
     { "transparent", NO_COLOR },
     { "purple", CLR_MAGENTA },
     { "light purple", CLR_BRIGHT_MAGENTA },
@@ -7140,10 +7142,12 @@ static const struct color_names {
     { "bright cyan", CLR_BRIGHT_CYAN }
 };
 
-static const struct attr_names {
+struct attr_names {
     const char *name;
     int attr;
-} attrnames[] = {
+};
+
+static const struct attr_names attrnames[] = {
     { "none", ATR_NONE },
     { "bold", ATR_BOLD },
     { "dim", ATR_DIM },
@@ -7151,7 +7155,7 @@ static const struct attr_names {
     { "underline", ATR_ULINE },
     { "blink", ATR_BLINK },
     { "inverse", ATR_INVERSE },
-    { NULL, ATR_NONE }, /* everything after this is an alias */
+    { (const char *) 0, ATR_NONE }, /* everything after this is an alias */
     { "normal", ATR_NONE },
     { "uline", ATR_ULINE },
     { "reverse", ATR_INVERSE },
@@ -8412,6 +8416,7 @@ doset_simple_menu(void)
     anything any;
     enum OptSection section;
     int i, k, pick_cnt, reslt;
+    boolean toggled_help = FALSE;
 
     /* we do this each time we're called instead of once in doset_simple()
        in case 'menu_tab_sep' ever gets included in the simple menu so
@@ -8423,8 +8428,18 @@ doset_simple_menu(void)
         Strcpy(fmtstr_doset_simple, fmtstr_tab_doset_simple);
     fmtstr = fmtstr_doset_simple;
 
+ redo_opt_help:
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
+
+    any = cg.zeroany;
+    any.a_int = -2 + 1;
+    add_menu(tmpwin, &nul_glyphinfo, &any, '?', 0, ATR_NONE, 0,
+             gs.simple_options_help ? "hide help" : "show help",
+             MENU_ITEMFLAGS_NONE);
+    any = cg.zeroany;
+    add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
+             0, "", MENU_ITEMFLAGS_NONE);
 
     for (section = OptS_General; section < OptS_Advanced; section++) {
         any = cg.zeroany;
@@ -8482,6 +8497,15 @@ doset_simple_menu(void)
                 Strcat(buf, "  (for autopickup)");
             add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
                      ATR_NONE, 0, buf, MENU_ITEMFLAGS_NONE);
+            if (gs.simple_options_help && allopt[i].descr) {
+                any = cg.zeroany;
+                Sprintf(buf, "    %s", allopt[i].descr);
+                add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
+                         ATR_NONE, 0, buf, MENU_ITEMFLAGS_NONE);
+                any = cg.zeroany;
+                add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
+                         0, "", MENU_ITEMFLAGS_NONE);
+            }
         }
     }
     end_menu(tmpwin, "Options");
@@ -8495,7 +8519,10 @@ doset_simple_menu(void)
         k = pick_list[0].item.a_int - 1;
 
         abuf[0] = '\0';
-        if (allopt[k].opttyp == BoolOpt) {
+        if (k == -2) {
+            gs.simple_options_help = !gs.simple_options_help;
+            toggled_help = TRUE;
+        } else if (allopt[k].opttyp == BoolOpt) {
             /* boolean option */
             Sprintf(buf, "%s%s", *allopt[k].addr ? "!" : "", allopt[k].name);
             (void) parseoptions(buf, FALSE, FALSE);
@@ -8521,7 +8548,7 @@ doset_simple_menu(void)
                    'picked 1' to caller which will loop for another choice */
             }
         }
-        if (abuf[0] != '\033'
+        if (k >= 0 && abuf[0] != '\033'
             && (wc_supported(allopt[k].name)
                 || wc2_supported(allopt[k].name)))
             preference_update(allopt[k].name);
@@ -8531,6 +8558,11 @@ doset_simple_menu(void)
     /* tear down this instance of the menu; if pick_cnt is 1, caller
        will immediately call us back to put up another instance */
     destroy_nhwindow(tmpwin);
+
+    if (toggled_help) {
+        toggled_help = FALSE;
+        goto redo_opt_help;
+    }
 
     return pick_cnt;
 }

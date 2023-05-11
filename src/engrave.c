@@ -325,7 +325,11 @@ read_engr_at(coordxy x, coordxy y)
 }
 
 void
-make_engr_at(coordxy x, coordxy y, const char *s, long e_time, xint16 e_type)
+make_engr_at(
+    coordxy x, coordxy y,
+    const char *s,
+    long e_time,
+    int e_type)
 {
     int i;
     struct engr *ep;
@@ -355,7 +359,7 @@ make_engr_at(coordxy x, coordxy y, const char *s, long e_time, xint16 e_type)
             exercise(A_WIS, TRUE);
     }
     ep->engr_time = e_time;
-    ep->engr_type = e_type > 0 ? e_type : rnd(N_ENGRAVE - 1);
+    ep->engr_type = (xint8) ((e_type > 0) ? e_type : rnd(N_ENGRAVE - 1));
     ep->engr_szeach = smem;
     ep->engr_alloc = smem * 3;
     /* we do not set ep->eread; the caller will need to if required */
@@ -407,6 +411,8 @@ stylus_ok(struct obj *obj)
 static boolean
 u_can_engrave(void)
 {
+    int levtyp = SURFACE_AT(u.ux, u.uy);
+
     if (u.uswallow) {
         if (is_animal(u.ustuck->data)) {
             pline("What would you write?  \"Jonah was here\"?");
@@ -420,18 +426,20 @@ u_can_engrave(void)
     } else if (is_lava(u.ux, u.uy)) {
         You_cant("write on the %s!", surface(u.ux, u.uy));
         return FALSE;
-    } else if (is_pool(u.ux, u.uy) || IS_FOUNTAIN(levl[u.ux][u.uy].typ)) {
+    } else if (is_pool(u.ux, u.uy) || IS_FOUNTAIN(levtyp)) {
         You_cant("write on the %s!", surface(u.ux, u.uy));
         return FALSE;
-    }
-    if (Is_airlevel(&u.uz) || Is_waterlevel(&u.uz) /* in bubble */) {
-        You_cant("write in thin air!");
+    } else if (IS_AIR(levtyp)) {
+        /* airlevel or inside bubble on waterlevel */
+        You_cant("write in %s!",
+                 (levtyp == CLOUD) ? "cloud vapor" : "thin air");
         return FALSE;
-    } else if (!accessible(u.ux, u.uy)) {
+    } else if (!ACCESSIBLE(levtyp)) {
         /* stone, tree, wall, secret corridor, pool, lava, bars */
         You_cant("write here.");
         return FALSE;
     }
+
     if (cantwield(gy.youmonst.data)) {
         You_cant("even hold anything!");
         return FALSE;
@@ -482,8 +490,8 @@ doengrave(void)
     boolean zapwand = FALSE;  /* TRUE if we remove a wand charge */
     boolean disprefresh = FALSE; /* TRUE if the display needs a refresh */
 
-    xint16 type = DUST;       /* Type of engraving made */
-    xint16 oetype = 0;        /* will be set to type of current engraving */
+    int type = DUST;          /* Type of engraving made */
+    int oetype = 0;           /* will be set to type of current engraving */
     char buf[BUFSZ];          /* Buffer for final/poly engraving text */
     char ebuf[BUFSZ];         /* Buffer for initial engraving text */
     char fbuf[BUFSZ];         /* Buffer for "your fingers" */
@@ -980,7 +988,7 @@ doengrave(void)
                     You("will overwrite the current message.");
                 eow = TRUE;
             }
-        } else if (oep && (int) strlen(oep->engr_txt[actual_text]) >= BUFSZ - 1) {
+        } else if (oep && Strlen(oep->engr_txt[actual_text]) >= BUFSZ - 1) {
             There("is no room to add anything else here.");
             return ECMD_TIME;
         }
@@ -1127,9 +1135,8 @@ engrave(void)
         stylus = (struct obj *) 0;
     } else {
         for (stylus = gi.invent; stylus; stylus = stylus->nobj) {
-            if (stylus == gc.context.engraving.stylus) {
+            if (stylus == gc.context.engraving.stylus)
                 break;
-            }
         }
         if (!stylus) {
             You("are unable to continue engraving.");
@@ -1183,7 +1190,7 @@ engrave(void)
         if (firsttime) {
             pline("%s dull.", Yobjnam2(stylus, "get"));
         }
-        if (gc.context.engraving.actionct % 2 == 1) { /* 1st, 3rd, ... action */
+        if (gc.context.engraving.actionct % 2 == 1) { /* 1st,3rd,... action */
             /* deduct a point on 1st, 3rd, 5th, ... turns, unless this is the
              * last character being engraved (a rather convoluted way to round
              * down), but always deduct a point on the 1st turn to prevent
@@ -1268,7 +1275,8 @@ engrave(void)
 
     (void) strncat(buf, gc.context.engraving.nextc,
                    min(space_left, endc - gc.context.engraving.nextc));
-    make_engr_at(u.ux, u.uy, buf, gm.moves - gm.multi, gc.context.engraving.type);
+    make_engr_at(u.ux, u.uy, buf, gm.moves - gm.multi,
+                 gc.context.engraving.type);
     oep = engr_at(u.ux, u.uy);
     if (oep)
         oep->eread = 1;
@@ -1315,7 +1323,7 @@ void
 engraving_sanity_check(void)
 {
     struct engr *ep;
-    schar typ;
+    int levtyp;
 
     if (head_engr && (Is_airlevel(&u.uz) || Is_waterlevel(&u.uz))) {
         impossible("engraving sanity: on plane of air/water");
@@ -1327,14 +1335,13 @@ engraving_sanity_check(void)
 
         if (!isok(x, y)) {
             impossible("engraving sanity: !isok <%i,%i>", x, y);
-            return;
+            continue;
         }
-
-        typ = levl[x][y].typ;
-        if (typ == LAVAPOOL || typ == LAVAWALL || IS_POOL(typ)
-            || typ == AIR || !accessible(x, y)) {
-            impossible("engraving sanity: illegal surface (%i)", typ);
-            return;
+        levtyp = SURFACE_AT(x, y);
+        if (is_pool_or_lava(x, y) || IS_AIR(levtyp) || !ACCESSIBLE(levtyp)) {
+            impossible("engraving sanity: illegal surface (%d: \"%s\")",
+                       levtyp, surface(x, y));
+            continue;
         }
     }
 }

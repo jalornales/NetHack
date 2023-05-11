@@ -320,6 +320,8 @@ const struct instance_globals_d g_init_d = {
     0, /* did_nothing_flag */
     /* dog.c */
     DUMMY, /* dogname */
+    /* end.c */
+    0L, /* done_seq */
     /* mon.c */
     FALSE, /* disintegested */
     /* o_init.c */
@@ -736,6 +738,7 @@ const struct instance_globals_s g_init_s = {
     (struct symsetentry *) 0, /* symset_list */
     FALSE, /* save_menucolors */
     (struct menucoloring *) 0, /* save_colorings */
+    FALSE, /* simple_options_help */
     /* pickup.c */
     FALSE, /* shop_filter */
     /* pline.c */

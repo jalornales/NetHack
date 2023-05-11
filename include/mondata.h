@@ -42,8 +42,8 @@
                        && (!is_clinger(ptr) || !has_ceiling(&u.uz)))
 #define is_swimmer(ptr) (((ptr)->mflags1 & M1_SWIM) != 0L)
 #define breathless(ptr) (((ptr)->mflags1 & M1_BREATHLESS) != 0L)
-#define amphibious(ptr) \
-    (((ptr)->mflags1 & (M1_AMPHIBIOUS | M1_BREATHLESS)) != 0L)
+#define amphibious(ptr) (((ptr)->mflags1 & M1_AMPHIBIOUS) != 0L)
+#define cant_drown(ptr) (is_swimmer(ptr) || amphibious(ptr) || breathless(ptr))
 #define passes_walls(ptr) (((ptr)->mflags1 & M1_WALLWALK) != 0L)
 #define amorphous(ptr) (((ptr)->mflags1 & M1_AMORPHOUS) != 0L)
 #define noncorporeal(ptr) ((ptr)->mlet == S_GHOST)
@@ -253,6 +253,12 @@
 #define vegetarian(ptr) \
     (vegan(ptr)         \
      || ((ptr)->mlet == S_PUDDING && (ptr) != &mons[PM_BLACK_PUDDING]))
+
+#define corpse_eater(ptr)                    \
+    (ptr == &mons[PM_PURPLE_WORM]            \
+     || ptr == &mons[PM_BABY_PURPLE_WORM]    \
+     || ptr == &mons[PM_GHOUL]               \
+     || ptr == &mons[PM_PIRANHA])
 
 /* monkeys are tamable via bananas but not pacifiable via food,
    otherwise their theft attack could be nullified too easily;

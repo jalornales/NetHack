@@ -1,4 +1,4 @@
-HDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.1153 $ $NHDT-Date: 1681429662 2023/04/13 23:47:42 $
+HDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.1177 $ $NHDT-Date: 1683710637 2023/05/10 09:23:57 $
 
 General Fixes and Modified Features
 -----------------------------------
@@ -1146,6 +1146,42 @@ give feedback if monster holding onto the hero has to let go when hero polys
 prevent hug attacks and touch or engulf attacks for wrap, stick-to, and
 	digestion damage from succeeding against unsolid targets (ghosts,
 	vortices, a few others)
+wand of speed gives temporary speed, potion gives intrinsic
+some monsters (riders, shopkeepers, priests, quest leader) can break boulders
+corpse-eating monsters will go out of their way to eat corpses on the floor
+warnings via impossible() would be unseen if message suppression via ESC at
+	--More-- prompt was in effect
+wearing the Eyes of the Overworld overrides OPTIONS:blind; breaking the
+	always-blind conduct by doing that was intended but having permanent
+	blindness stay cured after removing them was not
+change helm of brilliance from iron to crystal so that it no longer needs to
+	be a special case for metallic armor vs spell casting
+fake player monsters in endgame had a 1 in 1000 chance to be given a stack
+	of 0 gold pieces, eventually triggering an impossible warning (cited
+	one was "Calculating weight of 0 gold pieces?")
+avoid "wall_angle: unknown hwall mode 4" when using #terrain command to
+	display a spot remembered as a wall but actually a secret door that
+	has been transformed into an open door while not in sight
+it was possible to produce a web at a water or lava location; it would not be
+	visible but could trap the hero, resulting in drowning or incineration
+engraving in an open doorway was allowed, engraving in closed one (presumably
+	via Passes_walls) was not, but closing the door on an engraving was;
+	change to allow engraving at closed door location
+engraving in a breach in a shop's or vault's wall or vault guard's temporary
+	corridor would leave the engraving intact after repair/cleanup
+if a fire resistant non-fire immune monster wearing a thoroughly burnt wooden
+	shield got knocked into lava, burning the shield completely yielded
+	impossible warning "obfree: deleting worn obj"
+hangup in wizard or explore mode would result in answering ESC to "Die?"
+	prompt if that was reached, and since default is 'no' the hero would
+	be life-saved and the game would try to keep going; if circumstances
+	resulted in repeat death then the program might get stuck in a loop
+	instead of exiting [no reports of such, but if it ever happened the
+	process was probably killed without anyone knowing why it happened]
+with OPTIONS=blind (blind from birth), being inflicted with timed blinding
+	yielded "your vision seems to dim for a moment but is normal now"
+avoid sanity_check warning if statue in water or lava gets polymorphed into a
+	boulder; break it into a stack of rocks if that would happen
 
 
 Fixes to 3.7.0-x General Problems Exposed Via git Repository
@@ -1533,6 +1569,16 @@ anti-magic field's reduction of hero's maximum energy could result in current
 	energy being one point higher than maximum
 if hero was killed by a wand zapped by a monster, cause of death was reported
 	as "killed by a bolt of <damage type> imagined by <monster>"
+throttle the difficulty of the monsters in theme room "buried zombies"
+buried troll whose auto-revive timer expired might triger panic with
+        "revive default case 6"
+throwing a helm of brilliance could yield "breaking odd object?"
+sanity checking of engravings was stopping after first problem found
+the fuzzer could get stuck in a loop if hero died in a way where life-saving
+	just resulted in a repeat death (cited case was burning up in lava,
+	where life-saving teleports you out of it; if the level is full, the
+	teleport will fail and you'll immediately burn up again)
+fix unicorn horn's ability to repair blindness
 
 
 Fixes to 3.7.0-x Platform and/or Interface Problems Exposed Via git Repository
@@ -1580,6 +1626,11 @@ Qt: changes in glyph handling in the core introduced a bug in the "paper doll"
 Qt: during role selection, icons for role and race showed giant ant tile after
 	the glyph overhaul changes
 Qt: resolve a use-after-free error when saving message history
+Qt: with a pick-one menu containing a pre-selected entry, clicking on that
+	worked to re-select it, as intended; clicking on any other entry
+	instead of typing the selector letter toggled off preselected entry
+	but failed to toggle on the explicitly selected one; clicking again
+	after nothing was pre-selected anymore refused to toggle anything on
 tty: redraw unexplored locations as S_unexplored rather than <space> after
 	map has been partially overwritten by popup menu or text display
 tty: previous change resulted in remnants of previous level being shown on
@@ -1766,7 +1817,7 @@ Qt: use idPressed signal instead of buttonPressed and mappedString instead
 	of mapped for recent Qt (pr #913 by chasonr)
 Qt+macOS: fix control key (fixed all except for ^V); handle ^V as a shortcut
 Qt+macOS: rename menu entry "nethack->Preferences..." for invoking nethack's
-	key 'O' command to "Game->Run-time options" and entry "Game->Qt settings"
+	'O' command to "Game->Run-time options" and entry "Game->Qt settings"
 	for making persistent Qt customizations to "nethack->Preferences..."
 Qt+macOS: prevent game->Quit-without-saving from being hijacked for the nethack
 	menu by renaming it game->_Quit-without-saving (macOS only)
@@ -1911,8 +1962,8 @@ boiling a pool or fountain now creates a temporary cloud of steam
 random themed rooms in the dungeons of doom
 extended achievement and conduct fields for xlogfile
 record amount of gold in hero's possession in xlogfile
-new objects:  amulets of flying and guarding, gold dragon scale mail and
-	set of gold dragon scales
+new objects:  amulets of flying and guarding, helm of caution,
+	gold dragon scale mail and set of gold dragon scales
 new monsters:  displacer beast ('f') and genetic engineer ('Q'), gold dragon
 	and baby gold dragon (both 'D')
 make camera flash which reveals previously unseen map features or objects or
@@ -2052,6 +2103,10 @@ add a tutorial level
 engravings appear on the map display
 option to create the character deaf
 add conduct for petless
+preceding #overview with the 'm' prefix brings up the overview display as a
+	menu allowing selection of any visited level to #annotate; it also
+	shows every level visited rather than just the "interesting" ones
+include monster size in feedback for wand of probing and stethoscope
 
 
 Platform- and/or Interface-Specific New Features

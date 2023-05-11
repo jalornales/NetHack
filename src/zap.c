@@ -50,8 +50,7 @@ static void wishcmdassist(int);
 
 #define is_hero_spell(type) ((type) >= 10 && (type) < 20)
 
-#define M_IN_WATER(ptr) \
-    ((ptr)->mlet == S_EEL || amphibious(ptr) || is_swimmer(ptr))
+#define M_IN_WATER(ptr) ((ptr)->mlet == S_EEL || cant_drown(ptr))
 
 static const char are_blinded_by_the_flash[] = "are blinded by the flash!";
 
@@ -840,12 +839,18 @@ revive(struct obj *corpse, boolean by_hero)
     boolean one_of;
     mmflags_nht mmflags = NO_MINVENT | MM_NOWAIT | MM_NOMSG;
     int montype, cgend, container_nesting = 0;
-    boolean is_zomb = (mons[corpse->corpsenm].mlet == S_ZOMBIE);
+    boolean is_zomb;
 
     if (corpse->otyp != CORPSE) {
         impossible("Attempting to revive %s?", xname(corpse));
         return (struct monst *) 0;
     }
+    montype = corpse->corpsenm;
+    /* treat buried auto-reviver (troll, Rider?) like a zombie
+       so that it can dig itself out of the ground if it revives */
+    is_zomb = mons[montype].mlet == S_ZOMBIE
+              || (corpse->where == OBJ_BURIED && is_reviver(&mons[montype]));
+
     /* if this corpse is being eaten, stop doing that; this should be done
        after makemon() succeeds and skipped if it fails, but waiting until
        we know the result for that would be too late */
@@ -898,7 +903,6 @@ revive(struct obj *corpse, boolean by_hero)
         return (struct monst *) 0;
 
     /* prepare for the monster */
-    montype = corpse->corpsenm;
     mptr = &mons[montype];
     /* [should probably handle recorporealization first; if corpse and
        ghost are at same location, revived creature shouldn't be bumped
@@ -1856,12 +1860,16 @@ poly_obj(struct obj *obj, int id)
             }
         } /* old_wornmask */
     } else if (obj_location == OBJ_FLOOR) {
-        if (obj->otyp == BOULDER && otmp->otyp != BOULDER
-            && !does_block(ox, oy, &levl[ox][oy]))
-            unblock_point(ox, oy);
-        else if (obj->otyp != BOULDER && otmp->otyp == BOULDER)
-            /* (checking does_block() here would be redundant) */
-            block_point(ox, oy);
+        if (obj->otyp == BOULDER && otmp->otyp != BOULDER) {
+            if (!does_block(ox, oy, &levl[ox][oy]))
+                unblock_point(ox, oy);
+        } else if (obj->otyp != BOULDER && otmp->otyp == BOULDER) {
+            /* leaving boulder in liquid would trigger sanity_check warning */
+            if (is_pool_or_lava(ox, oy))
+                fracture_rock(otmp);
+            if (does_block(ox, oy, &levl[ox][oy]))
+                block_point(ox, oy);
+        }
     }
 
     /* note: if otmp is gone, billing for it was handled by useup() */
@@ -2206,7 +2214,12 @@ bhito(struct obj *obj, struct obj *otmp)
             break;
         case WAN_TELEPORTATION:
         case SPE_TELEPORT_AWAY:
-            (void) rloco(obj);
+            {
+                coordxy ox = obj->ox, oy = obj->oy;
+
+                (void) rloco(obj);
+                maybe_unhide_at(ox, oy);
+            }
             break;
         case WAN_MAKE_INVISIBLE:
             break;
@@ -2698,15 +2711,9 @@ zapyourself(struct obj *obj, boolean ordinary)
     }
 
     case WAN_SPEED_MONSTER:
-        if (!(HFast & INTRINSIC)) {
-            learn_it = TRUE;
-            if (!Fast)
-                You("speed up.");
-            else
-                Your("quickness feels more natural.");
-            exercise(A_DEX, TRUE);
-        }
-        HFast |= FROMOUTSIDE;
+        /* no longer gives intrinsic, but gives very fast speed instead */
+        speed_up(rn1(25, 50));
+        learn_it = TRUE;
         break;
 
     case WAN_SLEEP:
@@ -3219,7 +3226,7 @@ zap_updown(struct obj *obj) /* wand or spell */
             case WAN_POLYMORPH:
             case SPE_POLYMORPH:
                 del_engr(e);
-                make_engr_at(x, y, random_engraving(buf), gm.moves, (coordxy) 0);
+                make_engr_at(x, y, random_engraving(buf), gm.moves, 0);
                 break;
             case WAN_CANCELLATION:
             case SPE_CANCELLATION:
@@ -3779,7 +3786,7 @@ bhit(
                 newsym(x, y);
             }
             tmp_at(gb.bhitpos.x, gb.bhitpos.y);
-            delay_output();
+            nh_delay_output();
             /* kicked objects fall in pools */
             if ((weapon == KICKED_WEAPON)
                 && (is_pool(gb.bhitpos.x, gb.bhitpos.y)
@@ -3898,7 +3905,7 @@ boomhit(struct obj *obj, coordxy dx, coordxy dy)
             }
         }
         tmp_at(gb.bhitpos.x, gb.bhitpos.y);
-        delay_output();
+        nh_delay_output();
         if (IS_SINK(levl[gb.bhitpos.x][gb.bhitpos.y].typ)) {
             Soundeffect(se_boomerang_klonk, 75);
             if (!Deaf)
@@ -4474,7 +4481,7 @@ dobuzz(
             if (ZAP_POS(levl[sx][sy].typ)
                 || (isok(lsx, lsy) && cansee(lsx, lsy)))
                 tmp_at(sx, sy);
-            delay_output(); /* wait a little */
+            nh_delay_output(); /* wait a little */
         }
 
         /* hit() and miss() need gb.bhitpos to match the target */

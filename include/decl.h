@@ -307,6 +307,9 @@ struct instance_globals_d {
     /* dog.c */
     char dogname[PL_PSIZ];
 
+    /* end.c */
+    long done_seq; /* for counting deaths occurring on same hero_seq */
+
     /* mon.c */
     boolean disintegested;
 
@@ -865,6 +868,7 @@ struct instance_globals_s {
                                       * list of available sets */
     boolean save_menucolors; /* copy of iflags.use_menu_colors */
     struct menucoloring *save_colorings; /* copy of gm.menu_colorings */
+    boolean simple_options_help;
 
     /* pickup.c */
     boolean shop_filter;

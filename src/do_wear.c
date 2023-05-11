@@ -400,6 +400,9 @@ Helmet_on(void)
     case ORCISH_HELM:
     case HELM_OF_TELEPATHY:
         break;
+    case HELM_OF_CAUTION:
+        see_monsters();
+        break;
     case HELM_OF_BRILLIANCE:
         adj_abon(uarmh, uarmh->spe);
         break;
@@ -486,6 +489,7 @@ Helmet_off(void)
         }
         break;
     case HELM_OF_TELEPATHY:
+    case HELM_OF_CAUTION:
         /* need to update ability before calling see_monsters() */
         setworn((struct obj *) 0, W_ARMH);
         see_monsters();
@@ -1002,8 +1006,7 @@ Amulet_off(void)
             /* HMagical_breathing must be set off
                 before calling drown() */
             setworn((struct obj *) 0, W_AMUL);
-            if (!breathless(gy.youmonst.data) && !amphibious(gy.youmonst.data)
-                && !Swimming) {
+            if (!cant_drown(gy.youmonst.data) && !Swimming) {
                 You("suddenly inhale an unhealthy amount of %s!",
                     hliquid("water"));
                 (void) drown();
@@ -1401,7 +1404,7 @@ Blindf_off(struct obj *otmp)
    also used by poly_obj() when a worn item gets transformed */
 void
 set_wear(struct obj *obj) /* if null, do all worn items;
-                             otherwise just obj itself */
+                           * otherwise just obj itself */
 {
     gi.initial_don = !obj;
 
@@ -2079,7 +2082,7 @@ accessory_or_armor_on(struct obj *obj)
                 You("are suddenly overcome with shame and change your mind.");
             u.ublessed = 0; /* lose your god's protection */
             makeknown(obj->otyp);
-            gc.context.botl = 1; /*for AC after zeroing u.ublessed */
+            gc.context.botl = 1; /* for AC after zeroing u.ublessed */
             return ECMD_TIME;
         }
     } else {
@@ -2421,7 +2424,7 @@ glibr(void)
             dropx(otmp);
     }
     otmp = uwep;
-    if (otmp && !welded(otmp)) {
+    if (otmp && otmp->otyp != AKLYS && !welded(otmp)) {
         long savequan = otmp->quan;
 
         /* nice wording if both weapons are the same type */

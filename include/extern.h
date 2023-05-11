@@ -823,7 +823,7 @@ extern struct engr *sengr_at(const char *, coordxy, coordxy, boolean);
 extern void u_wipe_engr(int);
 extern void wipe_engr_at(coordxy, coordxy, xint16, boolean);
 extern void read_engr_at(coordxy, coordxy);
-extern void make_engr_at(coordxy, coordxy, const char *, long, xint16);
+extern void make_engr_at(coordxy, coordxy, const char *, long, int);
 extern void del_engr_at(coordxy, coordxy);
 extern int freehand(void);
 extern int doengrave(void);
@@ -1109,7 +1109,7 @@ extern schar achieve_rank(int);
 extern boolean sokoban_in_play(void);
 extern int do_gamelog(void);
 extern void show_gamelog(int);
-extern int set_vanq_order(void);
+extern int set_vanq_order(boolean);
 extern int dovanquished(void);
 extern int doborn(void);
 extern void list_vanquished(char, boolean);
@@ -1699,6 +1699,7 @@ extern int mstrength(struct permonst *);
 /* ### monmove.c ### */
 
 extern boolean mon_would_take_item(struct monst *, struct obj *);
+extern boolean mon_would_consume_item(struct monst *, struct obj *);
 extern boolean itsstuck(struct monst *);
 extern boolean mb_trapped(struct monst *, boolean);
 extern void mon_track_add(struct monst *, coordxy, coordxy);
@@ -1711,6 +1712,8 @@ extern struct monst *find_pmmonst(int);
 extern int bee_eat_jelly(struct monst *, struct obj *);
 extern void monflee(struct monst *, int, boolean, boolean);
 extern void mon_yells(struct monst *, const char *);
+extern boolean m_can_break_boulder(struct monst *);
+extern void m_break_boulder(struct monst *, coordxy, coordxy);
 extern int dochug(struct monst *);
 extern boolean m_digweapon_check(struct monst *, coordxy, coordxy);
 extern int m_move(struct monst *, int);
@@ -2249,6 +2252,7 @@ extern void mongrantswish(struct monst **);
 extern void djinni_from_bottle(struct obj *);
 extern struct monst *split_mon(struct monst *, struct monst *);
 extern const char *bottlename(void);
+extern void speed_up(long);
 
 /* ### pray.c ### */
 

@@ -817,7 +817,7 @@ minliquid_core(struct monst* mtmp)
             if (!DEADMONSTER(mtmp)) {
                 (void) fire_damage_chain(mtmp->minvent, FALSE, FALSE,
                                          mtmp->mx, mtmp->my);
-                (void) rloc(mtmp, RLOC_ERR|RLOC_NOMSG);
+                (void) rloc(mtmp, RLOC_MSG);
                 return 0;
             }
             return 1;
@@ -827,8 +827,7 @@ minliquid_core(struct monst* mtmp)
          * water damage to dead monsters' inventory, but survivors need to
          * be handled here.  Swimmers are able to protect their stuff...
          */
-        if ((waterwall || !is_clinger(mtmp->data))
-            && !is_swimmer(mtmp->data) && !amphibious(mtmp->data)) {
+        if ((waterwall || !is_clinger(mtmp->data)) && !cant_drown(mtmp->data)) {
             /* like hero with teleport intrinsic or spell, teleport away
                if possible */
             if (can_teleport(mtmp->data) && !tele_restrict(mtmp)) {
@@ -990,7 +989,7 @@ movemon_singlemon(struct monst *mtmp)
         return FALSE;
 
     /* monster isn't on this map anymore */
-    if ((mtmp->mstate & (MON_DETACH|MON_MIGRATING|MON_LIMBO|MON_OFFMAP)) != 0)
+    if (mon_offmap(mtmp))
         return FALSE;
 
     /* Find a monster that we have not treated yet. */
@@ -1830,7 +1829,7 @@ mon_allowflags(struct monst* mtmp)
         allowflags |= ALLOW_SSM | ALLOW_SANCT;
     if (passes_walls(mtmp->data))
         allowflags |= (ALLOW_ROCK | ALLOW_WALL);
-    if (throws_rocks(mtmp->data))
+    if (throws_rocks(mtmp->data) || m_can_break_boulder(mtmp))
         allowflags |= ALLOW_ROCK;
     if (can_tunnel)
         allowflags |= ALLOW_DIG;
@@ -4823,6 +4822,8 @@ newcham(
         place_worm_tail_randomly(mtmp, mtmp->mx, mtmp->my);
     }
 
+    mtmp->meverseen = 0; /* never seen mon in present shape; newsym() ->
+                          * display_monster() may change it right back */
     newsym(mtmp->mx, mtmp->my);
 
     if (msg) {
