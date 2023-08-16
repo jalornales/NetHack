@@ -628,10 +628,38 @@ xx|.....|xx
 }----}
 }}}}}}]], contents = function(m) des.region({ region={3,3,3,3}, type="themed", irregular=true, filled=0, joined=false });
      local nasty_undead = { "giant zombie", "ettin zombie", "vampire lord" };
-     des.object("chest", 2, 2);
-     des.object("chest", 3, 2);
-     des.object("chest", 2, 3);
-     des.object("chest", 3, 3);
+     local chest_spots = { { 2, 2 }, { 3, 2 }, { 2, 3 }, { 3, 3 } };
+
+     shuffle(chest_spots)
+     -- Guarantee an escape item inside one of the chests, to prevent the hero
+     -- falling in from above and becoming permanently stuck
+     -- [cf. generate_way_out_method(sp_lev.c)].
+     -- If the escape item is made of glass or crystal, make sure that the
+     -- chest isn't locked so that kicking it to gain access to its contents
+     -- won't be necessary; otherwise retain lock state from random creation.
+     -- "pick-axe", "dwarvish mattock" could be included in the list of escape
+     -- items but don't normally generate in containers.
+     local escape_items = {
+        "scroll of teleportation", "ring of teleportation",
+        "wand of teleportation", "wand of digging"
+     };
+     local itm = obj.new(escape_items[math.random(#escape_items)]);
+     local itmcls = itm:class()
+     local box
+     if itmcls[ "material" ] == 19 then                         -- GLASS==19
+         -- item is made of glass so explicitly force chest to be unlocked
+	 box = des.object({ id = "chest", coord = chest_spots[1],
+                            olocked = "no" });
+     else
+         -- item isn't made of glass; accept random locked/unlocked state
+	 box = des.object({ id = "chest", coord = chest_spots[1] });
+     end;
+     box:addcontent(itm);
+
+     for i = 2, #chest_spots do
+         des.object({ id = "chest", coord = chest_spots[i] });
+     end
+
      shuffle(nasty_undead);
      des.monster(nasty_undead[1], 2, 2);
 end });

@@ -1,4 +1,4 @@
-/* NetHack 3.7	mhitu.c	$NHDT-Date: 1625838648 2021/07/09 13:50:48 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.246 $ */
+/* NetHack 3.7	mhitu.c	$NHDT-Date: 1689448844 2023/07/15 19:20:44 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.301 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -391,14 +391,21 @@ getmattk(struct monst *magr, struct monst *mdef,
 
 /* calc some variables needed for mattacku() */
 static void
-calc_mattacku_vars(struct monst *mtmp,
-                   boolean *ranged, boolean *range2,
-                   boolean *foundyou, boolean *youseeit)
+calc_mattacku_vars(
+    struct monst *mtmp,
+    boolean *ranged, boolean *range2,
+    boolean *foundyou, boolean *youseeit)
 {
     *ranged = (mdistu(mtmp) > 3);
     *range2 = !monnear(mtmp, mtmp->mux, mtmp->muy);
     *foundyou = u_at(mtmp->mux, mtmp->muy);
     *youseeit = canseemon(mtmp);
+
+    /* do_attack() uses bhitpos to set/clear notonhead; do likewise here */
+    gb.bhitpos.x = u.ux, gb.bhitpos.y = u.uy;
+    /* hero poly'd into a long worm isn't allowed to grow a tail, so
+       hitting tail instead of head can't happen */
+    gn.notonhead = FALSE;
 }
 
 /*
@@ -453,17 +460,19 @@ mattacku(register struct monst *mtmp)
             /* Your steed won't attack you */
             return 0;
         /* Orcs like to steal and eat horses and the like */
-        if (!rn2(is_orc(mtmp->data) ? 2 : 4)
-            && next2u(mtmp->mx, mtmp->my)) {
-            /* Attack your steed instead */
+        if (!rn2(is_orc(mtmp->data) ? 2 : 4) && next2u(mtmp->mx, mtmp->my)) {
+            /* attack your steed instead; 'bhitpos' and 'notonhead' are
+               already set from tagetting hero */
             i = mattackm(mtmp, u.usteed);
-            if ((i & M_ATTK_AGR_DIED))
+            if ((i & M_ATTK_AGR_DIED) != 0)
                 return 1;
             /* make sure steed is still alive and within range */
-            if ((i & M_ATTK_DEF_DIED) || !u.usteed
+            if ((i & M_ATTK_DEF_DIED) != 0 || !u.usteed
                 || !next2u(mtmp->mx, mtmp->my))
                 return 0;
             /* Let your steed retaliate */
+            gb.bhitpos.x = mtmp->mx, gb.bhitpos.y = mtmp->my;
+            gn.notonhead = FALSE;
             return !!(mattackm(u.usteed, mtmp) & M_ATTK_DEF_DIED);
         }
     }
@@ -517,7 +526,7 @@ mattacku(register struct monst *mtmp)
                 return 0; /* lurkers don't attack */
 
             obj = which_armor(mtmp, WORN_HELMET);
-            if (obj && is_metallic(obj)) {
+            if (hard_helmet(obj)) {
                 Your("blow glances off %s %s.", s_suffix(mon_nam(mtmp)),
                      helm_simple_name(obj));
             } else {
@@ -565,8 +574,10 @@ mattacku(register struct monst *mtmp)
                     else
                         pline(
                           "Wait, %s!  There's a %s named %s hiding under %s!",
-                              m_monnam(mtmp), pmname(gy.youmonst.data, Ugender),
-                              gp.plname, doname(gl.level.objects[u.ux][u.uy]));
+                              m_monnam(mtmp),
+                              pmname(gy.youmonst.data, Ugender),
+                              gp.plname,
+                              doname(gl.level.objects[u.ux][u.uy]));
                     if (obj)
                         obj->spe = save_spe;
                 } else
@@ -866,16 +877,21 @@ summonmu(struct monst *mtmp, boolean youseeit)
     }
 
     if (is_were(mdat)) {
+        /* if hero has Protection_from_shape_changers, new_were() will work
+           in the critter-to-human direction but be a no-op the other way;
+           we repeat the criteria here for clarity */
         if (is_human(mdat)) { /* maybe switch to animal form */
-            if (!rn2(5 - (night() * 2)))
+            if (!Protection_from_shape_changers && !rn2(5 - (night() * 2)))
                 new_were(mtmp);
         } else { /* maybe switch to back human form */
-            if (!rn2(30))
+            if (Protection_from_shape_changers || !rn2(30))
                 new_were(mtmp);
         }
         mdat = mtmp->data; /* form change invalidates cached value */
 
-        if (!rn2(10)) { /* maybe summon compatible critters */
+        /* maybe summon compatible critters;
+           not blocked by Protection_from_shape_changers */
+        if (!rn2(10)) {
             int numseen, numhelp;
             char buf[BUFSZ], genericwere[BUFSZ];
 

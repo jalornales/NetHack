@@ -86,7 +86,7 @@ int windows_startup_state = 0;    /* we flag whether to continue with this */
 extern int redirect_stdout;       /* from sys/share/pcsys.c */
 extern int GUILaunched;
 HANDLE hStdOut;
-char default_window_sys[] =
+char default_window_sys[7] =
 #if defined(MSWIN_GRAPHICS)
             "mswin";
 #elif defined(TTY_GRAPHICS)
@@ -560,9 +560,11 @@ _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);*/
     /*
      * It seems you really want to play.
      */
+#ifndef CURSES_GRAPHICS
     if (argc >= 1 && !strcmpi(default_window_sys, "mswin")
         && (strstri(argv[0], "nethackw.exe") || GUILaunched))
         iflags.windowtype_locked = TRUE;
+#endif
     windowtype = default_window_sys;
 
 #ifdef DLB
@@ -582,7 +584,7 @@ _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);*/
 #if defined(TTY_GRAPHICS)
         Strcpy(default_window_sys, "tty");
 #else
-#if defined(CURSES_GRAPHICS)
+#if defined(CURSES_GRAPHICS) && !defined(MSWIN_GRAPHICS)
         Strcpy(default_window_sys, "curses");
 #endif /* CURSES */
 #endif /* TTY */
@@ -678,7 +680,7 @@ _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);*/
      *  new game or before a level restore on a saved game.
      */
     vision_init();
-    init_sound_and_display_gamewindows();
+    init_sound_disp_gamewindows();
     /*
      * First, try to find and restore a save file for specified character.
      * We'll return here if new game player_selection() renames the hero.

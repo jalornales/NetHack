@@ -1,4 +1,4 @@
-/* NetHack 3.7	monmove.c	$NHDT-Date: 1651886999 2022/05/07 01:29:59 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.179 $ */
+/* NetHack 3.7	monmove.c	$NHDT-Date: 1684621592 2023/05/20 22:26:32 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.218 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2006. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -16,7 +16,8 @@ static void mind_blast(struct monst *);
 static boolean holds_up_web(coordxy, coordxy);
 static int count_webbing_walls(coordxy, coordxy);
 static boolean soko_allow_web(struct monst *);
-static boolean m_search_items(struct monst *, coordxy *, coordxy *, schar *, int *);
+static boolean m_search_items(struct monst *, coordxy *, coordxy *, schar *,
+                              int *);
 static boolean leppie_avoidance(struct monst *);
 static void leppie_stash(struct monst *);
 static boolean m_balks_at_approaching(struct monst *);
@@ -719,6 +720,7 @@ dochug(register struct monst* mtmp)
     /* mind flayers can make psychic attacks! */
     } else if (is_mind_flayer(mdat) && !rn2(20)) {
         mind_blast(mtmp);
+        distfleeck(mtmp, &inrange, &nearby, &scared);
     }
 
     /* If monster is nearby you, and has to wield a weapon, do so.  This
@@ -883,6 +885,8 @@ mon_would_take_item(struct monst *mtmp, struct obj *otmp)
 
     if (otmp == uball || otmp == uchain)
         return FALSE;
+    if (mtmp->mtame && otmp->cursed)
+        return FALSE; /* note: will get overridden if mtmp will eat otmp */
     if (is_unicorn(mtmp->data) && objects[otmp->otyp].oc_material != GEMSTONE)
         return FALSE;
     if (!mindless(mtmp->data) && !is_animal(mtmp->data) && pctload < 75
@@ -914,8 +918,15 @@ mon_would_take_item(struct monst *mtmp, struct obj *otmp)
 boolean
 mon_would_consume_item(struct monst *mtmp, struct obj *otmp)
 {
+    int ftyp;
+
     if (otmp->otyp == CORPSE && !touch_petrifies(&mons[otmp->corpsenm])
         && corpse_eater(mtmp->data))
+        return TRUE;
+
+    if (mtmp->mtame && has_edog(mtmp) /* has_edog(): not guardian angel */
+        && (ftyp = dogfood(mtmp, otmp)) < MANFOOD
+        && (ftyp < ACCFOOD || EDOG(mtmp)->hungrytime <= gm.moves))
         return TRUE;
 
     return FALSE;
@@ -1146,7 +1157,11 @@ maybe_spin_web(struct monst *mtmp)
 
 /* monster looks for items it wants nearby */
 static boolean
-m_search_items(struct monst *mtmp, coordxy *ggx, coordxy *ggy, schar *mmoved, int *appr)
+m_search_items(
+    struct monst *mtmp,
+    coordxy *ggx, coordxy *ggy,
+    schar *mmoved,
+    int *appr)
 {
     register int minr = SQSRCHRADIUS; /* not too far away */
     register struct obj *otmp;
@@ -1274,7 +1289,7 @@ finish_search:
  * 3: did not move, and can't do anything else either.
  */
 int
-m_move(register struct monst* mtmp, register int after)
+m_move(register struct monst *mtmp, int after)
 {
     int appr, etmp;
     coordxy ggx, ggy, nix, niy;
@@ -1310,7 +1325,8 @@ m_move(register struct monst* mtmp, register int after)
             finish_meating(mtmp);
         return MMOVE_DONE; /* still eating */
     }
-    if (hides_under(ptr) && OBJ_AT(mtmp->mx, mtmp->my) && rn2(10))
+    if (hides_under(ptr) && OBJ_AT(mtmp->mx, mtmp->my)
+        && can_hide_under_obj(gl.level.objects[mtmp->mx][mtmp->my]) && rn2(10))
         return MMOVE_NOTHING; /* do not leave hiding place */
 
     /* Where does 'mtmp' think you are?  Not necessary if m_move() called
@@ -1332,22 +1348,30 @@ m_move(register struct monst* mtmp, register int after)
     }
 
     /* and the acquisitive monsters get special treatment */
-    if (is_covetous(ptr)) {
+    if (is_covetous(ptr)) { /* [should this include
+                             *  '&& mtmp->mstrategy != STRAT_NONE'?] */
+        int covetousattack;
         coordxy tx = STRAT_GOALX(mtmp->mstrategy),
-              ty = STRAT_GOALY(mtmp->mstrategy);
-        struct monst *intruder = m_at(tx, ty);
+                ty = STRAT_GOALY(mtmp->mstrategy);
+        struct monst *intruder = isok(tx, ty) ? m_at(tx, ty) : NULL;
         /*
          * if there's a monster on the object or in possession of it,
          * attack it.
          */
-        if ((dist2(mtmp->mx, mtmp->my, tx, ty) < 2) && intruder
-            && (intruder != mtmp)) {
+        if (intruder && intruder != mtmp
+            /* 3.7: this used to use 'dist2() < 2' which meant that intended
+               attack was disallowed if they were adjacent diagonally */
+            && dist2(mtmp->mx, mtmp->my, tx, ty) <= 2) {
+            gb.bhitpos.x = tx, gb.bhitpos.y = ty;
             gn.notonhead = (intruder->mx != tx || intruder->my != ty);
-            if (mattackm(mtmp, intruder) == 2)
+            covetousattack = mattackm(mtmp, intruder);
+            /* 3.7: this used to erroneously use '== 2' (M_ATTK_DEF_DIED) */
+            if (covetousattack & M_ATTK_AGR_DIED)
                 return MMOVE_DIED;
             mmoved = MMOVE_MOVED;
-        } else
+        } else {
             mmoved = MMOVE_NOTHING;
+        }
         goto postmov;
     }
 
@@ -1559,16 +1583,18 @@ m_move(register struct monst* mtmp, register int after)
          * Pets get taken care of above and shouldn't reach this code.
          * Conflict gets handled even farther away (movemon()).
          */
-        if ((info[chi] & ALLOW_M) || (nix == mtmp->mux && niy == mtmp->muy))
+        if ((info[chi] & ALLOW_M) != 0
+            || (nix == mtmp->mux && niy == mtmp->muy))
             return m_move_aggress(mtmp, nix, niy);
 
-        if ((info[chi] & ALLOW_MDISP)) {
+        if ((info[chi] & ALLOW_MDISP) != 0) {
             struct monst *mtmp2;
             int mstatus;
 
-            mtmp2 = m_at(nix, niy);
+            mtmp2 = m_at(nix, niy); /* ALLOW_MDISP implies m_at() is !Null */
             mstatus = mdisplacem(mtmp, mtmp2, FALSE);
-            if ((mstatus & M_ATTK_AGR_DIED) || (mstatus & M_ATTK_DEF_DIED))
+            /*[if either dies, this reports mtmp has died; is that correct?]*/
+            if (mstatus & (M_ATTK_AGR_DIED | M_ATTK_DEF_DIED))
                 return MMOVE_DIED;
             if (mstatus & M_ATTK_HIT)
                 return MMOVE_MOVED;
@@ -1789,8 +1815,10 @@ m_move(register struct monst* mtmp, register int after)
                 u.ux = mtmp->mx;
                 u.uy = mtmp->my;
                 swallowed(0);
-            } else
+            } else {
                 newsym(mtmp->mx, mtmp->my);
+            }
+#undef UnblockDoor
         }
         if (OBJ_AT(mtmp->mx, mtmp->my) && mtmp->mcanmove) {
 
@@ -1850,29 +1878,85 @@ m_move(register struct monst* mtmp, register int after)
  * (mtmp died) or 3 (mtmp made its move).
  */
 int
-m_move_aggress(struct monst* mtmp, coordxy x, coordxy y)
+m_move_aggress(struct monst *mtmp, coordxy x, coordxy y)
 {
     struct monst *mtmp2;
-    int mstatus;
+    int mstatus = 0; /* M_ATTK_MISS */
 
     mtmp2 = m_at(x, y);
-
-    gn.notonhead = mtmp2 && (x != mtmp2->mx || y != mtmp2->my);
-    /* note: mstatus returns 0 if mtmp2 is nonexistent */
-    mstatus = mattackm(mtmp, mtmp2);
+    if (mtmp2) {
+        gb.bhitpos.x = x, gb.bhitpos.y = y;
+        gn.notonhead = (x != mtmp2->mx || y != mtmp2->my);
+        mstatus = mattackm(mtmp, mtmp2);
+    }
 
     if (mstatus & M_ATTK_AGR_DIED) /* aggressor died */
         return MMOVE_DIED;
 
-    if ((mstatus & M_ATTK_HIT) && !(mstatus & M_ATTK_DEF_DIED) && rn2(4)
-        && mtmp2->movement >= NORMAL_SPEED) {
-        mtmp2->movement -= NORMAL_SPEED;
-        gn.notonhead = 0;
+    if ((mstatus & (M_ATTK_HIT | M_ATTK_DEF_DIED)) == M_ATTK_HIT
+        && rn2(4) && mtmp2->movement > rn2(NORMAL_SPEED)) {
+        if (mtmp2->movement > NORMAL_SPEED)
+            mtmp2->movement -= NORMAL_SPEED;
+        else
+            mtmp2->movement = 0;
+        gb.bhitpos.x = mtmp->mx, gb.bhitpos.y = mtmp->my;
+        gn.notonhead = FALSE;
         mstatus = mattackm(mtmp2, mtmp); /* return attack */
+        /* note: at this point, defender is the original (moving) aggressor */
         if (mstatus & M_ATTK_DEF_DIED)
             return MMOVE_DIED;
     }
     return MMOVE_DONE;
+}
+
+/* returns TRUE if a mon can hide under the obj */
+boolean
+can_hide_under_obj(struct obj *obj)
+{
+/* uncomment '#define NO_HIDING_UNDER_STATUES' to prevent hiding under
+ * statues; that was introduced to avoid nullifying statue traps but
+ * isn't needed now that hiding at any non-pit trap site is disallowed */
+/* #define NO_HIDING_UNDER_STATUES */
+    struct trap *t;
+
+    if (!obj || obj->where != OBJ_FLOOR)
+        return FALSE;
+    /* can't hide in/on/under traps (except pits) even when there is an
+       object here; since obj is on floor, its <ox,oy> are up to date */
+    if ((t = t_at(obj->ox, obj->oy)) != 0 && !is_pit(t->ttyp))
+        return FALSE;
+    /* can't hide under small amount of coins unless non-coins are also
+       present; we expect coins to be a single stack but don't assume that */
+    if (obj->oclass == COIN_CLASS) {
+        long coinquan = 0L;
+
+        do {
+            /* 10 coins is arbitrary amount considered enough to hide under */
+            if ((coinquan += obj->quan) >= 10L)
+                break; /* fall through to other checks */
+            obj = obj->nexthere;
+            if (!obj)
+                return FALSE; /* whole pile was less than 10 coins */
+        } while (obj->oclass == COIN_CLASS);
+    }
+#ifdef NO_HIDING_UNDER_STATUES
+    /*
+     * 'obj' might have been changed, but only if we've skipped coins that
+     * are on the top of a pile.  However, the statue loop will clobber it.
+     */
+    /* can't hide under statues regardless of pile stacking order */
+    while (obj) {
+        if (obj->otyp == STATUE)
+            return FALSE;
+        obj = obj->nexthere;
+    }
+    /*
+     * If we reach here, 'obj' is now Null but wasn't earlier so the original
+     * 'obj' can be hidden beneath.
+     */
+#undef NO_HIDING_UNDER_STATUES
+#endif
+    return TRUE; /* can hide under the object */
 }
 
 void
@@ -1903,7 +1987,7 @@ accessible(coordxy x, coordxy y)
 
 /* decide where the monster thinks you are standing */
 void
-set_apparxy(register struct monst* mtmp)
+set_apparxy(register struct monst *mtmp)
 {
     boolean notseen, notthere, gotu;
     int disp;

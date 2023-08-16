@@ -1,4 +1,4 @@
-/* NetHack 3.7	mklev.c	$NHDT-Date: 1648066813 2022/03/23 20:20:13 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.121 $ */
+/* NetHack 3.7	mklev.c	$NHDT-Date: 1691877661 2023/08/12 22:01:01 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.155 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Alex Smith, 2017. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -26,7 +26,7 @@ static void mktrap_victim(struct trap *);
 static struct mkroom *find_branch_room(coord *);
 static struct mkroom *pos_to_room(coordxy, coordxy);
 static boolean cardinal_nextto_room(struct mkroom *, coordxy, coordxy);
-static boolean place_niche(struct mkroom *, coordxy *, coordxy *, coordxy *);
+static boolean place_niche(struct mkroom *, int *, coordxy *, coordxy *);
 static void makeniche(int);
 static void make_niches(void);
 static int QSORTCALLBACK mkroom_cmp(const genericptr, const genericptr);
@@ -241,12 +241,19 @@ add_subroom(struct mkroom *proom, int lowx, int lowy, int hix, int hiy,
 }
 
 void
-free_luathemes(boolean keependgame) /* F: done, T: discarding main dungeon */
+free_luathemes(enum lua_theme_group theme_group)
 {
     int i;
 
+    /*
+     * Release which group(s)?
+     *  tut_themes  => leaving tutorial, free tutorial themes only;
+     *  most_themes => entering endgame, free non-endgame themes;
+     *  all_themes  => end of game, free all themes.
+     */
     for (i = 0; i < gn.n_dgns; ++i) {
-        if (keependgame && i == astral_level.dnum)
+        if ((theme_group == tut_themes && i != tutorial_dnum)
+            || (theme_group == most_themes && i == astral_level.dnum))
             continue;
         if (gl.luathemes[i]) {
             nhl_done((lua_State *) gl.luathemes[i]);
@@ -599,7 +606,10 @@ cardinal_nextto_room(struct mkroom *aroom, coordxy x, coordxy y)
 }
 
 static boolean
-place_niche(register struct mkroom *aroom, coordxy *dy, coordxy *xx, coordxy *yy)
+place_niche(
+    struct mkroom *aroom,
+    int *dy,
+    coordxy *xx, coordxy *yy)
 {
     coord dd;
 
@@ -639,8 +649,8 @@ makeniche(int trap_type)
 {
     register struct mkroom *aroom;
     struct rm *rm;
-    int vct = 8;
-    coordxy dy, xx, yy;
+    int dy, vct = 8;
+    coordxy xx, yy;
     struct trap *ttmp;
 
     while (vct--) {
@@ -721,6 +731,24 @@ makevtele(void)
     makeniche(TELEP_TRAP);
 }
 
+/* count the different features (sinks, fountains) in the level */
+void
+count_level_features(void)
+{
+    coordxy x, y;
+
+    gl.level.flags.nfountains = gl.level.flags.nsinks = 0;
+    for (y = 0; y < ROWNO; y++)
+        for (x = 1; x < COLNO; x++) {
+            int typ = levl[x][y].typ;
+
+            if (typ == FOUNTAIN)
+                gl.level.flags.nfountains++;
+            else if (typ == SINK)
+                gl.level.flags.nsinks++;
+        }
+}
+
 /* clear out various globals that keep information on the current level.
  * some of this is only necessary for some types of levels (maze, normal,
  * special) but it's easier to put it all in one place than make sure
@@ -772,8 +800,14 @@ clear_level_structures(void)
     gl.level.flags.is_maze_lev = 0;
     gl.level.flags.is_cavernous_lev = 0;
     gl.level.flags.arboreal = 0;
+    gl.level.flags.has_town = 0;
     gl.level.flags.wizard_bones = 0;
     gl.level.flags.corrmaze = 0;
+    gl.level.flags.rndmongen = 0;
+    gl.level.flags.deathdrops = 0;
+    gl.level.flags.noautosearch = 0;
+    gl.level.flags.fumaroles = 0;
+    gl.level.flags.stormy = 0;
 
     gn.nroom = 0;
     gr.rooms[0].hx = -1;

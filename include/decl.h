@@ -1,4 +1,4 @@
-/* NetHack 3.7  decl.h  $NHDT-Date: 1657918080 2022/07/15 20:48:00 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.303 $ */
+/* NetHack 3.7  decl.h  $NHDT-Date: 1686726249 2023/06/14 07:04:09 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.333 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2007. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -515,6 +515,9 @@ struct instance_globals_l {
     /* mklev.c */
     genericptr_t luathemes[MAXDUNGEON];
 
+    /* mon.c */
+    unsigned last_hider; /* m_id of hides-under mon seen going into hiding */
+
     /* nhlan.c */
 #ifdef MAX_LAN_USERNAME
     char lusername[MAX_LAN_USERNAME];
@@ -612,6 +615,11 @@ struct instance_globals_m {
 
     /* region.c */
     int max_regions;
+
+    /* trap.c */
+    boolean mentioned_water; /* set to True by water_damage() if it issues
+                              * a message about water; dodip() should make
+                              * POT_WATER should become discovered */
 
     boolean havestate;
     unsigned long magic; /* validate that structure layout is preserved */
@@ -933,11 +941,11 @@ struct instance_globals_t {
 
     /* rumors.c */
     long true_rumor_size; /* rumor size variables are signed so that value -1
-                            can be used as a flag */
+                           * can be used as a flag */
     unsigned long true_rumor_start; /* rumor start offsets are unsigned because
-                                       they're handled via %lx format */
+                                     * they're handled via %lx format */
     long true_rumor_end; /* rumor end offsets are signed because they're
-                            compared with [dlb_]ftell() */
+                          * compared with [dlb_]ftell() */
 
     /* sp_lev.c */
     boolean themeroom_failed;
@@ -949,6 +957,9 @@ struct instance_globals_t {
 
     /* topten.c */
     winid toptenwin;
+
+    /* uhitm.c */
+    int twohits; /* 0: single hit; 1: first of 2; 2: second of 2 */
 
     boolean havestate;
     unsigned long magic; /* validate that structure layout is preserved */
@@ -968,8 +979,6 @@ struct instance_globals_u {
     struct Race urace; /* player's race. May be munged in role_init() */
 
     /* save.c */
-    unsigned ustuck_id; /* need to preserve during save */
-    unsigned usteed_id; /* need to preserve during save */
     d_level uz_save;
 
     /* new stuff */

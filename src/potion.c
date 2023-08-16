@@ -1,4 +1,4 @@
-/* NetHack 3.7	potion.c	$NHDT-Date: 1629497464 2021/08/20 22:11:04 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.201 $ */
+/* NetHack 3.7	potion.c	$NHDT-Date: 1685135014 2023/05/26 21:03:34 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.238 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2013. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -1055,35 +1055,33 @@ peffect_blindness(struct obj *otmp)
                  (boolean) !Blind);
 }
 
-DISABLE_WARNING_FORMAT_NONLITERAL
-
 static void
 peffect_gain_level(struct obj *otmp)
 {
     if (otmp->cursed) {
+        boolean on_lvl_1 = (ledger_no(&u.uz) == 1);
+
         gp.potion_unkn++;
         /* they went up a level */
-        if ((ledger_no(&u.uz) == 1 && u.uhave.amulet)
-            || Can_rise_up(u.ux, u.uy, &u.uz)) {
-            static const char riseup[] = "rise up, through the %s!";
+        if (on_lvl_1 ? u.uhave.amulet : Can_rise_up(u.ux, u.uy, &u.uz)) {
+            int newlev;
+            d_level newlevel;
 
-            if (ledger_no(&u.uz) == 1) {
-                You(riseup, ceiling(u.ux, u.uy));
-                goto_level(&earth_level, FALSE, FALSE, FALSE);
+            if (on_lvl_1) {
+                assign_level(&newlevel, &earth_level);
             } else {
-                int newlev = depth(&u.uz) - 1;
-                d_level newlevel;
-
+                newlev = depth(&u.uz) - 1;
                 get_level(&newlevel, newlev);
                 if (on_level(&newlevel, &u.uz)) {
                     pline("It tasted bad.");
                     return;
-                } else
-                    You(riseup, ceiling(u.ux, u.uy));
-                goto_level(&newlevel, FALSE, FALSE, FALSE);
+                }
             }
-        } else
+            You("rise up, through the %s!", ceiling(u.ux, u.uy));
+            goto_level(&newlevel, FALSE, FALSE, FALSE);
+        } else {
             You("have an uneasy feeling.");
+        }
         return;
     }
     pluslvl(FALSE);
@@ -1092,8 +1090,6 @@ peffect_gain_level(struct obj *otmp)
     if (otmp->blessed)
         u.uexp = rndexp(TRUE);
 }
-
-RESTORE_WARNING_FORMAT_NONLITERAL
 
 static void
 peffect_healing(struct obj *otmp)
@@ -1177,7 +1173,7 @@ peffect_levitation(struct obj *otmp)
                resulted in incrementing 'nothing' */
             gp.potion_nothing = 0; /* not nothing after all */
         } else if (has_ceiling(&u.uz)) {
-            int dmg = rnd(!uarmh ? 10 : !is_metallic(uarmh) ? 6 : 3);
+            int dmg = rnd(!uarmh ? 10 : !hard_helmet(uarmh) ? 6 : 3);
 
             You("hit your %s on the %s.", body_part(HEAD),
                 ceiling(u.ux, u.uy));
@@ -1516,8 +1512,12 @@ H2Opotion_dip(
     } else {
         /* dipping into uncursed water; carried() check skips steed saddle */
         if (carried(targobj)) {
+            gm.mentioned_water = FALSE; /* water_damage() might set this */
             if (water_damage(targobj, 0, TRUE) != ER_NOTHING)
                 res = TRUE;
+            if (gm.mentioned_water)
+                makeknown(POT_WATER);
+            gm.mentioned_water = FALSE;
         }
     }
     if (func) {
@@ -2533,8 +2533,8 @@ potion_dip(struct obj *obj, struct obj *potion)
         } else if (obj->oclass != WEAPON_CLASS && !is_weptool(obj)) {
             /* the following cases apply only to weapons */
             goto more_dips;
-            /* Oil removes rust and corrosion, but doesn't unburn.
-             * Arrows, etc are classed as metallic due to arrowhead
+            /* Oil removes rust and corrosion, but doesn't unburn or repair
+             * cracks.  Arrows, etc are classed as metallic due to arrowhead
              * material, but dipping in oil shouldn't repair them.
              */
         } else if ((!is_rustprone(obj) && !is_corrodeable(obj))

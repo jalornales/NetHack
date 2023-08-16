@@ -119,6 +119,11 @@ SYSOBJ = $(TARGETPFX)ioctl.o $(TARGETPFX)unixmain.o $(TARGETPFX)unixtty.o \
 # CFLAGS = -mshort -O2 -fomit-frame-pointer -I../include
 # LFLAGS = -mshort -s
 
+# Curses, use one of the following:
+# -D_XOPEN_SOURCE_EXTENDED=1  allows any map character to appear in the message window
+# during far look with the '/' command.
+# -DCURSES_GENL_PUTMIXED to disable that and fall back to displaying only the historical tty character.
+#
 # flags for AIX 3.1 cc on IBM RS/6000 to define
 # a suitable subset of standard libraries
 # (note that there is more info regarding the "-qchars=signed"
@@ -476,7 +481,7 @@ PACKAGE=@true
 MAKEDEFS = ../util/makedefs
 
 # -lm required by lua
-LUA_VERSION ?=5.4.4
+LUA_VERSION ?=5.4.6
 LUABASE = liblua-$(LUA_VERSION).a
 LUALIB = ../lib/lua/$(LUABASE)
 LUALIBS = $(LUALIB) -lm $(DLLIB)

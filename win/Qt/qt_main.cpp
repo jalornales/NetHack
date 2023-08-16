@@ -764,7 +764,11 @@ NetHackQtMainWindow::NetHackQtMainWindow(NetHackQtKeyBuffer& ks) :
                 if (actchar[0]) {
                     QString name = menuitem;
                     QAction *action = item[i].menu->addAction(name);
-                    action->setData(actchar);
+#if QT_VERSION < 0x060000
+		    action->setData(actchar);
+#else
+		    action->setData(QString(actchar));
+#endif
                 }
 	    } else {
 		item[i].menu->addSeparator();
@@ -877,17 +881,14 @@ NetHackQtMainWindow::NetHackQtMainWindow(NetHackQtKeyBuffer& ks) :
     int w=screensize.width()-10; // XXX arbitrary extra space for frame
     int h=screensize.height()-50;
 
-    int maxwn;
-    int maxhn;
-    if (qt_tilewidth != NULL) {
-	maxwn = atoi(qt_tilewidth) * COLNO + 10;
-    } else {
-	maxwn = 1400;
-    }
-    if (qt_tileheight != NULL) {
-	maxhn = atoi(qt_tileheight) * ROWNO * 6/4;
-    } else {
-	maxhn = 1024;
+    int maxwn = 1400;
+    int maxhn = 1024;
+    if (qt_settings != NULL) {
+        auto glyphs = &qt_settings->glyphs();
+        if (glyphs != NULL) {
+            maxwn = glyphs->width() * COLNO + 10;
+            maxhn = glyphs->height() * ROWNO * 6/4;
+        }
     }
 
     // Be exactly the size we want to be - full map...

@@ -1,4 +1,4 @@
-/* NetHack 3.7	mon.c	$NHDT-Date: 1681429657 2023/04/13 23:47:37 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.495 $ */
+/* NetHack 3.7	mon.c	$NHDT-Date: 1691877848 2023/08/12 22:04:08 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.514 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Derek S. Ray, 2015. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -16,9 +16,11 @@ static long mm_2way_aggression(struct monst *, struct monst *);
 static long mm_aggression(struct monst *, struct monst *);
 static long mm_displacement(struct monst *, struct monst *);
 static void mon_leaving_level(struct monst *);
-static void m_detach(struct monst *, struct permonst *);
+static void m_detach(struct monst *, struct permonst *, boolean);
 static void set_mon_min_mhpmax(struct monst *, int);
 static void lifesaved_monster(struct monst *);
+static boolean vamprises(struct monst *);
+static void logdeadmon(struct monst *, int);
 static boolean ok_to_obliterate(struct monst *);
 static void qst_guardians_respond(void);
 static void peacefuls_respond(struct monst *);
@@ -32,17 +34,12 @@ static struct permonst *accept_newcham_form(struct monst *, int);
 static void kill_eggs(struct obj *);
 static void pacify_guard(struct monst *);
 
+extern const struct shclass shtypes[]; /* defined in shknam.c */
+
 #define LEVEL_SPECIFIC_NOCORPSE(mdat) \
     (Is_rogue_level(&u.uz)            \
      || !gl.level.flags.deathdrops    \
      || (gl.level.flags.graveyard && is_undead(mdat) && rn2(3)))
-
-/* A specific combination of x_monnam flags for livelogging. The livelog
- * shouldn't show that you killed a hallucinatory monster and not what it
- * actually is. */
-#define livelog_mon_nam(mtmp) \
-    x_monnam(mtmp, ARTICLE_THE, (char *) 0,                 \
-             (SUPPRESS_IT | SUPPRESS_HALLUCINATION), FALSE)
 
 
 #if 0
@@ -67,6 +64,7 @@ sanity_check_single_mon(
            but this would be too extreme to keep going */
         panic("illegal mon data %s; mnum=%d (%s)",
               fmt_ptr((genericptr_t) mptr), mtmp->mnum, msg);
+        /*NOTREACHED*/
     } else {
         int mndx = monsndx(mptr);
 
@@ -151,15 +149,19 @@ sanity_check_single_mon(
         if (m_at(mx, my) == mtmp && hides_under(mptr) && !OBJ_AT(mx, my))
             impossible("mon hiding under nonexistent obj (%s)", msg);
         if (mptr->mlet == S_EEL
-            && !is_pool(mx, my) && !Is_waterlevel(&u.uz))
-            impossible("eel hiding out of water (%s)", msg);
+            && !(is_pool(mx, my) && !Is_waterlevel(&u.uz)))
+            impossible("eel hiding %s (%s)",
+                       !Is_waterlevel(&u.uz) ? "out of water"
+                                             : "on Plane of Water", msg);
         if (ceiling_hider(mptr)
             /* normally !accessible would be overridable with passes_walls,
                but not for hiding on the ceiling */
             && (!has_ceiling(&u.uz) ||
                 !(levl[mx][my].typ == POOL
                   || levl[mx][my].typ == MOAT
+                  || levl[mx][my].typ == WATER
                   || levl[mx][my].typ == LAVAPOOL
+                  || levl[mx][my].typ == LAVAWALL
                   || accessible(mx, my))))
             impossible("ceiling hider hiding %s (%s)",
                        !has_ceiling(&u.uz) ? "without ceiling"
@@ -174,10 +176,15 @@ sanity_check_single_mon(
                              : (M_AP_TYPE(mtmp) == M_AP_OBJECT) ? "an object"
                                : "something strange";
 
-        if (Protection_from_shape_changers)
+        if (!strcmp(msg, "migr")) {
+            if (M_AP_TYPE(mtmp) != M_AP_MONSTER)
+                impossible("migrating %s mimicking %s %s",
+                           is_mimic ? "mimic" : "monster", what, msg);
+        } else if (Protection_from_shape_changers) {
             impossible(
                 "mimic%s concealed as %s despite Prot-from-shape-changers %s",
                        is_mimic ? "" : "ker", what, msg);
+        }
         /* the Wizard's clone after "double trouble" starts out mimicking
            some other monster; pet's quickmimic effect can temporarily take
            on furniture, object, or monster shape, but only until the pet
@@ -229,6 +236,12 @@ mon_sanity_check(void)
                        fmt_ptr((genericptr_t) mtmp), x, y);
         } else if (mtmp->wormno) {
             sanity_check_worm(mtmp);
+
+        /* TODO: figure out which other bits shouldn't be set for 'fmon' */
+        } else if ((mtmp->mstate & (MON_DETACH | MON_MIGRATING | MON_LIMBO))
+                   != 0) {
+            impossible("floor mon (%s) with mstate set to 0x%08lx",
+                       fmt_ptr((genericptr_t) mtmp), mtmp->mstate);
         }
     }
 
@@ -253,6 +266,13 @@ mon_sanity_check(void)
 
     for (mtmp = gm.migrating_mons; mtmp; mtmp = mtmp->nmon) {
         sanity_check_single_mon(mtmp, FALSE, "migr");
+
+        /* TODO: figure out which other bits could or shouldn't be set
+         * when migrating */
+        if ((mtmp->mstate & (MON_DETACH)) != 0
+            || (mtmp->mstate & (MON_MIGRATING | MON_LIMBO)) == 0)
+            impossible("migrating mon (%s) with mstate set to 0x%08lx",
+                       fmt_ptr((genericptr_t) mtmp), mtmp->mstate);
     }
 
     wormno_sanity_check(); /* test for bogus worm tail */
@@ -709,6 +729,8 @@ make_corpse(struct monst *mtmp, unsigned int corpseflags)
     return obj;
 }
 
+#undef KEEPTRAITS
+
 /* check mtmp and water/lava for compatibility, 0 (survived), 1 (died) */
 int
 minliquid(struct monst* mtmp)
@@ -876,7 +898,8 @@ minliquid_core(struct monst* mtmp)
 int
 mcalcmove(
     struct monst *mon,
-    boolean m_moving) /* True: adjust for moving; False: just adjust for speed */
+    boolean m_moving) /* True: adjust for moving;
+                       * False: just adjust for speed */
 {
     int mmove = mon->data->mmove;
     int mmove_adj;
@@ -1075,7 +1098,7 @@ movemon(void)
     iter_mons_safe(movemon_singlemon);
 
     if (any_light_source())
-        gv.vision_full_recalc = 1; /* in case a mon moved with a light source */
+        gv.vision_full_recalc = 1; /* in case a mon moved w/ a light source */
     /* reset obj bypasses after last monster has moved */
     if (gc.context.bypasses)
         clear_bypasses();
@@ -1387,6 +1410,8 @@ meatobj(struct monst* mtmp) /* for gelatinous cubes */
     }
     return (count > 0 || ecount > 0) ? 1 : 0;
 }
+
+#undef mstoning
 
 /* Monster eats a corpse off the ground.
  * Return value is 0 = nothing eaten, 1 = ate a corpse, 2 = died */
@@ -2442,14 +2467,15 @@ mon_leaving_level(struct monst *mon)
 static void
 m_detach(
     struct monst *mtmp,
-    struct permonst *mptr) /* reflects mtmp->data _prior_ to mtmp's death */
+    struct permonst *mptr, /* reflects mtmp->data _prior_ to mtmp's death */
+    boolean due_to_death)
 {
     coordxy mx = mtmp->mx, my = mtmp->my;
 
     if (mtmp->mleashed)
         m_unleash(mtmp, FALSE);
 
-    if (mtmp->mx > 0 && emits_light(mptr))
+    if (mx > 0 && emits_light(mptr))
         del_light_source(LS_MONSTER, monst_to_any(mtmp));
 
     /*
@@ -2464,23 +2490,29 @@ m_detach(
     mon_leaving_level(mtmp);
 
     mtmp->mhp = 0; /* simplify some tests: force mhp to 0 */
-    if (mtmp->iswiz)
-        wizdead();
-    if (mtmp->data->msound == MS_NEMESIS) {
-        nemdead();
-        /* The Archeologist, Caveman, and Priest quest texts describe
-           the nemesis's body creating noxious fumes/gas when killed. */
-        if (stinky_nemesis(mtmp))
-            create_gas_cloud(mx, my, 5, 8);
+    /* foodead() might give quest feedback for foo having died; skip that
+       if we're called for mongone() rather than mondead(); saving bones
+       or wizard mode genocide of "*" can result in special monsters going
+       away without having been killed */
+    if (due_to_death) {
+        if (mtmp->iswiz)
+            wizdead();
+        if (mtmp->data->msound == MS_NEMESIS) {
+            nemdead();
+            /* The Archeologist, Caveman, and Priest quest texts describe
+               the nemesis's body creating noxious fumes/gas when killed. */
+            if (stinky_nemesis(mtmp))
+                nemesis_stinks(mx, my);
+        }
+        if (mtmp->data->msound == MS_LEADER)
+            leaddead();
+        /* release (drop onto map) all objects carried by mtmp; assumes that
+           mtmp->mx,my contains the appropriate location */
+        relobj(mtmp, 1, FALSE); /* drop mtmp->minvent, issue newsym(mx,my) */
     }
-    if (mtmp->data->msound == MS_LEADER)
-        leaddead();
-    if (mtmp->m_id == gs.stealmid)
-        thiefdead();
-    /* release (drop onto map) all objects carried by mtmp; assumes that
-       mtmp->mx,my contains the appropriate location */
-    relobj(mtmp, 1, FALSE); /* drop mtmp->minvent, then issue newsym(mx,my) */
 
+    if (mtmp->m_id == gs.stealmid)
+        thiefdead(); /* reset theft-in-progress data */
     if (mtmp->isshk)
         shkgone(mtmp);
     if (mtmp->wormno)
@@ -2585,6 +2617,157 @@ lifesaved_monster(struct monst* mtmp)
 
 DISABLE_WARNING_FORMAT_NONLITERAL
 
+/* when a ahape-shifted vampire is killed, it reverts to base form instead
+   of dying; moved into separate routine to unclutter mondead() */
+static boolean
+vamprises(struct monst *mtmp)
+{
+    int mndx = mtmp->cham;
+
+    if (mndx >= LOW_PM && mndx != monsndx(mtmp->data)
+        && !(gm.mvitals[mndx].mvflags & G_GENOD)) {
+        coord new_xy;
+        char buf[BUFSZ];
+        /* alternate message phrasing for some monster types */
+        boolean spec_mon = (nonliving(mtmp->data)
+                            || noncorporeal(mtmp->data)
+                            || amorphous(mtmp->data)),
+                spec_death = (gd.disintegested /* disintegrated/digested */
+                              || noncorporeal(mtmp->data)
+                              || amorphous(mtmp->data));
+        coordxy x = mtmp->mx, y = mtmp->my;
+
+        /* construct a format string before transformation;
+           will be capitalized when used, expects one %s arg */
+        Snprintf(buf, sizeof buf,
+                 "%s suddenly %s and rises as %%s!",
+                 x_monnam(mtmp, ARTICLE_THE,
+                          spec_mon ? (char *) 0 : "seemingly dead",
+                          (SUPPRESS_INVISIBLE | SUPPRESS_IT), FALSE),
+                 spec_death ? "reconstitutes" : "transforms");
+        mtmp->mcanmove = 1;
+        mtmp->mfrozen = 0;
+        set_mon_min_mhpmax(mtmp, 10); /* mtmp->mhpmax=max(m_lev+1,10) */
+        mtmp->mhp = mtmp->mhpmax;
+        /* mtmp==u.ustuck can happen if previously a fog cloud
+           or poly'd hero is hugging a vampire bat */
+        if (mtmp == u.ustuck) {
+            if (u.uswallow)
+                expels(mtmp, mtmp->data, FALSE);
+            else
+                uunstick();
+        }
+        /* if fog cloud is on a closed door space, move it to a more
+           appropriate spot for its intended new form */
+        if (amorphous(mtmp->data) && closed_door(mtmp->mx, mtmp->my)) {
+            if (enexto(&new_xy, mtmp->mx, mtmp->my, &mons[mndx]))
+                rloc_to(mtmp, new_xy.x, new_xy.y);
+        }
+        (void) newcham(mtmp, &mons[mndx], NO_NC_FLAGS);
+        if (mtmp->data == &mons[mndx])
+            mtmp->cham = NON_PM;
+        else
+            mtmp->cham = mndx;
+
+        if (canspotmon(mtmp)) {
+            /* 3.6.0 used a_monnam(mtmp); that was weird if mtmp was
+               named: "Dracula suddenly transforms and rises as Dracula";
+               3.6.1 used mtmp->data->mname; that ignored hallucination */
+            pline(upstart(buf),
+                  x_monnam(mtmp, ARTICLE_A, (char *) 0,
+                           (SUPPRESS_NAME | SUPPRESS_IT | SUPPRESS_INVISIBLE),
+                           FALSE));
+            gv.vamp_rise_msg = TRUE;
+        }
+        newsym(x, y);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+RESTORE_WARNING_FORMAT_NONLITERAL
+
+/* A specific combination of x_monnam flags for livelogging. The livelog
+ * shouldn't show that you killed a hallucinatory monster and not what it
+ * actually is. */
+#define livelog_mon_nam(mtmp) \
+    x_monnam(mtmp, ARTICLE_THE, (char *) 0,                 \
+             (SUPPRESS_IT | SUPPRESS_HALLUCINATION), FALSE)
+
+/* when a mon has died, maybe record an achievement or issue livelog message;
+   moved into separate routine to unclutter mondead() */
+static void
+logdeadmon(struct monst *mtmp, int mndx)
+{
+    int howmany = gm.mvitals[mndx].died;
+
+    if (mndx == PM_MEDUSA && howmany == 1) {
+        record_achievement(ACH_MEDU); /* also generates a livelog event */
+    } else if (unique_corpstat(mtmp->data)
+               || (mtmp->isshk && !mtmp->mrevived)) {
+        char shkdetail[QBUFSZ];
+        const char *mkilled;
+        boolean herodidit = !gc.context.mon_moving;
+
+        /*
+         * livelog event; unique_corpstat() includes the Wizard and
+         * any High Priest even though they aren't actually unique.
+         *
+         * Shopkeeper kills are logged, but only the first time per
+         * shopkeeper, since their shared kill counter wouldn't work
+         * for this purpose (and it wouldn't account for polymorphed
+         * shopkeepers either).
+         */
+        shkdetail[0] = '\0';
+        if (mtmp->isshk) {
+            howmany = 1;
+            /* ", the <shoptype> priorietor" needs a trailing comma for
+               the alternate phrasing "<shk>, shkdetails, has been killed"
+               when hero isn't directly responsible */
+            Snprintf(shkdetail, sizeof shkdetail, ", the %s %s%s",
+                     shtypes[ESHK(mtmp)->shoptype - SHOPBASE].name,
+                     /* in case shk name doesn't include Mr or Ms honoric */
+                     mtmp->female ? "proprietrix" : "proprietor",
+                     herodidit ? "" : ",");
+        }
+
+        /* killing a unique more than once doesn't get logged every time;
+           the Wizard and the Riders can be killed more than once
+           "naturally", others require deliberate player action such as
+           use of undead turning to revive a corpse or petrification plus
+           stone-to-flesh to create and revive a statue */
+        if (howmany <= 3 || howmany == 5 || howmany == 10 || howmany == 25
+            || (howmany % 50) == 0) { /* 50, 100, 150, 200, 250 */
+            char xtra[40]; /* space for " (Nth time)" when N > 1 */
+            long llevent_type = LL_UMONST;
+
+            /* the first kill of any unique monster is a major event;
+               all kills of the Wizard and the Riders are major when
+               they're logged but they still don't get logged every time */
+            if (howmany == 1 || mtmp->iswiz || is_rider(mtmp->data))
+                llevent_type |= LL_ACHIEVE;
+            xtra[0] = '\0';
+            if (howmany > 1) /* "(2nd time)" or "(50th time)" */
+                Sprintf(xtra, " (%d%s time)", howmany, ordin(howmany));
+
+            mkilled = nonliving(mtmp->data) ? "destroyed" : "killed";
+            /* hero is responsible: "killed <monst>" */
+            if (herodidit)
+                livelog_printf(llevent_type, "%s %s%s%s",
+                               mkilled,
+                               livelog_mon_nam(mtmp), shkdetail, xtra);
+            else /* trap, pet, conflict:  "<monst> has been killed" */
+                livelog_printf(llevent_type, "%s%s has been %s%s",
+                               livelog_mon_nam(mtmp), shkdetail,
+                               mkilled, xtra);
+        }
+    }
+}
+
+#undef livelog_mon_nam
+
+/* monster 'mtmp' has died; maybe life-save, otherwise unshapeshift and
+   update vanquished stats and update map */
 void
 mondead(struct monst *mtmp)
 {
@@ -2601,66 +2784,9 @@ mondead(struct monst *mtmp)
     if (!DEADMONSTER(mtmp))
         return;
 
-    if (is_vampshifter(mtmp)) {
-        /* this only happens if shapeshifted */
-        mndx = mtmp->cham;
-        if (mndx >= LOW_PM && mndx != monsndx(mtmp->data)
-            && !(gm.mvitals[mndx].mvflags & G_GENOD)) {
-            coord new_xy;
-            char buf[BUFSZ];
-            /* alternate message phrasing for some monster types */
-            boolean spec_mon = (nonliving(mtmp->data)
-                                || noncorporeal(mtmp->data)
-                                || amorphous(mtmp->data)),
-                    spec_death = (gd.disintegested /* disintegrated/digested */
-                                  || noncorporeal(mtmp->data)
-                                  || amorphous(mtmp->data));
-            coordxy x = mtmp->mx, y = mtmp->my;
-
-            /* construct a format string before transformation;
-               will be capitalized when used, expects one %s arg */
-            Sprintf(buf, "%s suddenly %s and rises as %%s!",
-                    x_monnam(mtmp, ARTICLE_THE,
-                             spec_mon ? (char *) 0 : "seemingly dead",
-                             (SUPPRESS_INVISIBLE | SUPPRESS_IT), FALSE),
-                    spec_death ? "reconstitutes" : "transforms");
-            mtmp->mcanmove = 1;
-            mtmp->mfrozen = 0;
-            set_mon_min_mhpmax(mtmp, 10); /* mtmp->mhpmax=max(m_lev+1,10) */
-            mtmp->mhp = mtmp->mhpmax;
-            /* mtmp==u.ustuck can happen if previously a fog cloud
-               or poly'd hero is hugging a vampire bat */
-            if (mtmp == u.ustuck) {
-                if (u.uswallow)
-                    expels(mtmp, mtmp->data, FALSE);
-                else
-                    uunstick();
-            }
-            /* if fog cloud is on a closed door space, move it to a more
-               appropriate spot for its intended new form */
-            if (amorphous(mtmp->data) && closed_door(mtmp->mx, mtmp->my)) {
-                if (enexto(&new_xy, mtmp->mx, mtmp->my, &mons[mndx]))
-                    rloc_to(mtmp, new_xy.x, new_xy.y);
-            }
-            (void) newcham(mtmp, &mons[mndx], NO_NC_FLAGS);
-            if (mtmp->data == &mons[mndx])
-                mtmp->cham = NON_PM;
-            else
-                mtmp->cham = mndx;
-            if (canspotmon(mtmp)) {
-                /* 3.6.0 used a_monnam(mtmp); that was weird if mtmp was
-                   named: "Dracula suddenly transforms and rises as Dracula";
-                   3.6.1 used mtmp->data->mname; that ignored hallucination */
-                pline(upstart(buf),
-                      x_monnam(mtmp, ARTICLE_A, (char *) 0,
-                               (SUPPRESS_NAME | SUPPRESS_IT
-                                | SUPPRESS_INVISIBLE), FALSE));
-                gv.vamp_rise_msg = TRUE;
-            }
-            newsym(x, y);
-            return;
-        }
-    }
+    /* vampire in bat/fog/wolf form reverts to vampire instead of dying */
+    if (is_vampshifter(mtmp) && vamprises(mtmp))
+        return;
 
     if (be_sad)
         You("have a sad feeling for a moment, then it passes.");
@@ -2724,59 +2850,18 @@ mondead(struct monst *mtmp)
             break;
         }
     }
-#if 0   /* moved to m_detach() to kick in if mongone() happens */
-    if (mtmp->iswiz)
-        wizdead();
-    if (mtmp->data->msound == MS_NEMESIS)
-        nemdead();
-#endif
 
-    if (mndx == PM_MEDUSA && gm.mvitals[mndx].died == 1) {
-        record_achievement(ACH_MEDU); /* also generates a livelog event */
-    } else if (unique_corpstat(mtmp->data)) {
-        /*
-         * livelog event; unique_corpstat() includes the Wizard and
-         * any High Priest even though they aren't actually unique.
-         *
-         * It would be nice to include shopkeepers.  Their names are
-         * unique within each game but unfortunately for this potential
-         * usage their kill count is lumped together in a group total.
-         */
-        int howmany = gm.mvitals[mndx].died;
-
-        /* killing a unique more than once doesn't get logged every time;
-           the Wizard and the Riders can be killed more than once
-           "naturally", others require deliberate player action such as
-           use of undead turning to revive a corpse or petrification plus
-           stone-to-flesh to create and revive a statue */
-        if (howmany <= 3 || howmany == 5 || howmany == 10 || howmany == 25
-            || (howmany % 50) == 0) { /* 50, 100, 150, 200, 250 */
-            char xtra[40];
-            long llevent_type = LL_UMONST;
-
-            /* first kill of any unique is a major event; all kills of the
-               Wizard and the Riders are major if they're logged but they
-               still don't get logged every time */
-            if (howmany == 1 || mtmp->iswiz || is_rider(mtmp->data))
-                llevent_type |= LL_ACHIEVE;
-            xtra[0] = '\0';
-            if (howmany > 1) /* "(2nd time)" or "(50th time)" */
-                Sprintf(xtra, " (%d%s time)", howmany, ordin(howmany));
-
-            livelog_printf(llevent_type, "%s %s%s",
-                           nonliving(mtmp->data) ? "destroyed" : "killed",
-                           livelog_mon_nam(mtmp), xtra);
-        }
-    }
+    /* achievement and/or livelog */
+    logdeadmon(mtmp, mndx);
 
     if (glyph_is_invisible(levl[mtmp->mx][mtmp->my].glyph))
         unmap_object(mtmp->mx, mtmp->my);
 
-    m_detach(mtmp, mptr);
+    /* remove 'mtmp' from play; it will stay on the fmon list until end of
+       current move, then dmonsfree() will get rid of it */
+    m_detach(mtmp, mptr, TRUE);
     return;
 }
-
-RESTORE_WARNING_FORMAT_NONLITERAL
 
 /* TRUE if corpse might be dropped, magr may die if mon was swallowed */
 boolean
@@ -2873,7 +2958,7 @@ mongone(struct monst* mdef)
     mdrop_special_objs(mdef);
     /* release rest of monster's inventory--it is removed from game */
     discard_minvent(mdef, FALSE);
-    m_detach(mdef, mdef->data);
+    m_detach(mdef, mdef->data, FALSE);
 }
 
 /* drop a statue or rock and remove monster */
@@ -3215,7 +3300,7 @@ xkilled(
     }
 
     if (wasinside) {
-        /* spoteffects() can end up clearing the level of monsters; grab a copy */
+        /* spoteffects() can end up clearing level of monsters; grab a copy */
         museum = *mtmp;
         museum.nmon = 0;
         museum.minvent = 0;
@@ -3300,6 +3385,8 @@ xkilled(
     adjalign(mtmp->malign);
     return;
 }
+
+#undef LEVEL_SPECIFIC_NOCORPSE
 
 /* changes the monster into a stone monster of the same type
    this should only be called when poly_when_stoned() is true */
@@ -3525,6 +3612,17 @@ mnexto(struct monst *mtmp, unsigned int rlocflags)
         deal_with_overcrowding(mtmp);
         return;
     }
+    /* wizard-mode player can choose destination by setting 'montelecontrol'
+       option; enexto()'s value for 'mm' will be the default; 'savemm' is
+       used to make sure player doesn't choose hero's location and then
+       answer 'y' to the 'override invalid spot' prompt */
+    if (iflags.mon_telecontrol) {
+        coord savemm = mm;
+
+        if (!control_mon_tele(mtmp, &mm, rlocflags, FALSE))
+            mm = savemm;
+    }
+
     rloc_to_flag(mtmp, mm.x, mm.y, rlocflags);
     return;
 }
@@ -3556,6 +3654,7 @@ maybe_mnexto(struct monst *mtmp)
         if (couldsee(mm.x, mm.y)
             /* don't move grid bugs diagonally */
             && (diagok || mm.x == mtmp->mx || mm.y == mtmp->my)) {
+            /* [this doesn't honor the 'montelecontrol' option] */
             rloc_to(mtmp, mm.x, mm.y);
             return;
         }
@@ -3619,6 +3718,7 @@ mnearto(
         newx = mm.x;
         newy = mm.y;
     }
+    /* [this doesn't honor the 'montelecontrol' option] */
     rloc_to_flag(mtmp, newx, newy, rlocflags);
 
     if (move_other && othermon) {
@@ -4144,46 +4244,85 @@ maybe_unhide_at(coordxy x, coordxy y)
     }
 
     if (undetected
-        && ((hides_under(mtmp->data) && (!OBJ_AT(x, y) || trapped))
+        && ((hides_under(mtmp->data)
+             && (!OBJ_AT(x, y) || trapped
+                 || !can_hide_under_obj(gl.level.objects[x][y])))
             || (mtmp->data->mlet == S_EEL && !is_pool(x, y))))
         (void) hideunder(mtmp);
 }
 
-/* monster/hero tries to hide under something at the current location */
+/* monster/hero tries to hide under something at the current location;
+   if used by monster creation, should only happen during during level
+   creation, otherwise there will be message sequencing issues */
 boolean
 hideunder(struct monst *mtmp)
 {
     struct trap *t;
+    struct obj *otmp;
+    const char *seenmon = (char *) 0, *seenobj = (char *) 0,
+               *locomo = (char *) 0;
+    int seeit = gi.in_mklev ? 0 : canseemon(mtmp);
     boolean oldundetctd, undetected = FALSE, is_u = (mtmp == &gy.youmonst);
     coordxy x = is_u ? u.ux : mtmp->mx, y = is_u ? u.uy : mtmp->my;
 
     if (mtmp == u.ustuck) {
         ; /* undetected==FALSE; can't hide if holding you or held by you */
-    } else if (is_u ? (u.utrap && u.utraptype != TT_PIT)
-                    : (mtmp->mtrapped
-                       && (t = t_at(x, y)) != 0 && !is_pit(t->ttyp))) {
-        ; /* undetected==FALSE; can't hide while stuck in a non-pit trap */
+    } else if ((is_u ? u.utrap : mtmp->mtrapped)
+               || ((t = t_at(x, y)) != 0 && !is_pit(t->ttyp))) {
+        ; /* undetected==FALSE; can't hide while trapped or on/in/under
+             any non-pit trap when not trapped */
     } else if (mtmp->data->mlet == S_EEL) {
-        undetected = (is_pool(x, y) && !Is_waterlevel(&u.uz));
-    } else if (hides_under(mtmp->data) && OBJ_AT(x, y)) {
-        struct obj *otmp = gl.level.objects[x][y];
-
-        /* most monsters won't hide under cockatrice corpse but they
+        /* aquatic creatures only hide under water, not under objects;
+           they don't do so on the Plane of Water or when hero is also
+           under water unless some obstacle blocks line-of-sight */
+        undetected = (is_pool(x, y) && !Is_waterlevel(&u.uz)
+                      && (!Underwater || !couldsee(x, y)));
+        if (seeit) {
+            seenobj = "the water";
+            locomo = "dive";
+        }
+    } else if (hides_under(mtmp->data)
+               /* hider-underers only hide under objects */
+               && (otmp = gl.level.objects[x][y]) != 0
+               /* most things can be hidden under, but not all */
+               && can_hide_under_obj(otmp)
+               /* aquatic creatures don't reach here; other swimmers
+                  shouldn't hide beneath underwater objects */
+               && !is_pool_or_lava(x, y)) {
+        if (seeit) /*&& (!is_pool(x, y) || (Underwater && distu(x, y) <= 2))*/
+            seenobj = ansimpleoname(otmp);
+        /* most monsters won't hide under a cockatrice corpse but they
            can hide under a pile containing more than just such corpses */
-        while (otmp && otmp->otyp == CORPSE
-               && touch_petrifies(&mons[otmp->corpsenm]))
-            otmp = otmp->nexthere;
-        if (otmp != 0 || ((mtmp == &gy.youmonst) ? Stone_resistance
-                                                : resists_ston(mtmp)))
+        if (is_u ? !Stone_resistance : !resists_ston(mtmp))
+            while (otmp && otmp->otyp == CORPSE
+                   && touch_petrifies(&mons[otmp->corpsenm]))
+                otmp = otmp->nexthere;
+        if (otmp)
             undetected = TRUE;
     }
 
     if (is_u) {
         oldundetctd = u.uundetected != 0;
         u.uundetected = undetected ? 1 : 0;
+#if 0   /* feedback handled via #monster */
+        if (undetected && !oldundeteced && seenobj)
+            You("hide under %s.", seenobj);
+#endif
     } else {
+        if (seeit)
+            seenmon = y_monnam(mtmp);
         oldundetctd = mtmp->mundetected != 0;
         mtmp->mundetected = undetected ? 1 : 0;
+        /* the "you see" message won't be shown for monster hiding during
+           level creation because 'seeit' will be 0 so 'seenmon' and 'seenobj'
+           will be Null */
+        if (undetected && seenmon && seenobj) {
+            if (!locomo)
+                locomo = locomotion(mtmp->data, "hide");
+            You_see("%s %s under %s.", seenmon, locomo, seenobj);
+            iflags.last_msg = PLNMSG_HIDE_UNDER;
+            gl.last_hider = mtmp->m_id;
+        }
     }
     if (undetected != oldundetctd)
         newsym(x, y);
@@ -4470,7 +4609,7 @@ select_newcham_form(struct monst* mon)
         if (!rn2(7)) {
             mndx = pick_nasty(mons[PM_JABBERWOCK].difficulty - 1);
         } else if (rn2(3)) { /* role monsters */
-            mndx = rn1(PM_WIZARD - PM_ARCHEOLOGIST + 1, PM_ARCHEOLOGIST);
+            mndx = tt_doppel(mon);
         } else if (!rn2(3)) { /* quest guardians */
             mndx = rn1(PM_APPRENTICE - PM_STUDENT + 1, PM_STUDENT);
             /* avoid own role's guardian */
@@ -4928,6 +5067,8 @@ egg_type_from_parent(
     }
     return mnum;
 }
+
+#undef BREEDER_EGG
 
 /* decide whether an egg of the indicated monster type is viable;
    also used to determine whether an egg or tin can be created... */

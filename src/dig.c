@@ -194,8 +194,8 @@ dig_check(struct monst *madeby, boolean verbose, coordxy x, coordxy y)
             pline_The("throne is too hard to break apart.");
         return FALSE;
     } else if (IS_ALTAR(levl[x][y].typ)
-               && (madeby != BY_OBJECT || Is_astralevel(&u.uz)
-                   || Is_sanctum(&u.uz))) {
+               && (madeby != BY_OBJECT
+                   || (altarmask_at(x, y) & AM_SANCTUM) != 0)) {
         if (verbose)
             pline_The("altar is too hard to break apart.");
         return FALSE;
@@ -1459,7 +1459,7 @@ zap_dig(void)
                 }
                 You("loosen a rock from the %s.", ceiling(u.ux, u.uy));
                 pline("It falls on your %s!", body_part(HEAD));
-                dmg = rnd((uarmh && is_metallic(uarmh)) ? 2 : 6);
+                dmg = rnd(hard_helmet(uarmh) ? 2 : 6);
                 losehp(Maybe_Half_Phys(dmg), "falling rock", KILLED_BY_AN);
                 otmp = mksobj_at(ROCK, u.ux, u.uy, FALSE, FALSE);
                 if (otmp) {

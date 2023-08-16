@@ -377,7 +377,9 @@ winch_handler(int sig_unused UNUSED)
 #undef WINCH_MESSAGE
     }
 #endif
+#ifndef VMS
     getwindowsz();
+#endif
     /* For long running events such as multi-page menus and
      * display_file(), we note the signal's occurance and
      * hope the code there decides to handle the situation
@@ -499,6 +501,8 @@ tty_init_nhwindows(int *argcp UNUSED, char **argv UNUSED)
     ttyDisplay->color = NO_COLOR;
 #endif
     ttyDisplay->attrs = 0;
+    ttyDisplay->topl_utf8 = 0;
+    ttyDisplay->mixed = 0;
 
     /* set up the default windows */
     BASE_WINDOW = tty_create_nhwindow(NHW_BASE);
@@ -587,7 +591,7 @@ tty_player_selection(void)
  * explicitly (by being the wizard) or by askname.
  * It may still contain a suffix denoting the role, etc.
  * Always called after init_nhwindows() and before
- * init_sound_and_display_gamewindows().
+ * init_sound_disp_gamewindows().
  */
 void
 tty_askname(void)
@@ -3383,7 +3387,8 @@ g_putch(int in_ch)
 }
 #endif /* !WIN32CON */
 
-#if defined(ENHANCED_SYMBOLS) && defined(UNIX)
+#if defined(UNIX) || defined(VMS)
+#if defined(ENHANCED_SYMBOLS)
 void
 g_pututf8(uint8 *utf8str)
 {
@@ -3394,7 +3399,8 @@ g_pututf8(uint8 *utf8str)
     }
     return;
 }
-#endif /* ENHANCED_SYMBOLS && UNIX */
+#endif /* ENHANCED_SYMBOLS */
+#endif /* UNIX || VMS */
 
 #ifdef CLIPPING
 void
@@ -3742,6 +3748,7 @@ tty_putmixed(winid window, int attr, const char *str)
         tty_raw_print(str);
         return;
     }
+    ttyDisplay->mixed = 1;
 #ifdef ENHANCED_SYMBOLS
     if ((windowprocs.wincap2 & WC2_U_UTF8STR) && SYMHANDLING(H_UTF8)) {
         mixed_to_utf8(buf, sizeof buf, str, &utf8flag);
@@ -3753,6 +3760,7 @@ tty_putmixed(winid window, int attr, const char *str)
     /* now send it to the normal tty_putstr */
     tty_putstr(window, attr, buf);
     ttyDisplay->topl_utf8 = 0;
+    ttyDisplay->mixed = 0;
 }
 
 /*

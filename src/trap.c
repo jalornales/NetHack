@@ -1,4 +1,4 @@
-/* NetHack 3.7	trap.c	$NHDT-Date: 1683333758 2023/05/06 00:42:38 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.531 $ */
+/* NetHack 3.7	trap.c	$NHDT-Date: 1687033655 2023/06/17 20:27:35 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.540 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2013. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -171,12 +171,14 @@ erode_obj(
     int ef_flags)
 {
     static NEARDATA const char
-        *const action[] = { "smoulder", "rust", "rot", "corrode" },
-        *const msg[] = { "burnt", "rusted", "rotten", "corroded" },
-        *const bythe[] = { "heat", "oxidation", "decay", "corrosion" };
+        *const action[] = { "smoulder", "rust", "rot", "corrode", "crack" },
+        *const msg[] = { "burnt", "rusted", "rotten", "corroded", "cracked" },
+        *const bythe[] = { "heat", "oxidation", "decay", "corrosion",
+                           "impact" }; /* this could use improvement... */
     boolean vulnerable = FALSE, is_primary = TRUE,
             check_grease = (ef_flags & EF_GREASE) ? TRUE : FALSE,
             print = (ef_flags & EF_VERBOSE) ? TRUE : FALSE,
+            crackers = FALSE, /* True: different feedback if otmp destroyed */
             uvictim, vismon, visobj;
     int erosion, cost_type;
     struct monst *victim;
@@ -219,6 +221,12 @@ erode_obj(
         is_primary = FALSE;
         cost_type = COST_CORRODE;
         break;
+    case ERODE_CRACK: /* crystal armor */
+        vulnerable = is_crackable(otmp);
+        is_primary = TRUE;
+        crackers = TRUE;
+        cost_type = COST_CRACK;
+        break;
     default:
         impossible("Invalid erosion type in erode_obj");
         return ER_NOTHING;
@@ -247,8 +255,8 @@ erode_obj(
             && (uvictim || vismon || visobj))
             pline("Somehow, %s %s %s not affected by the %s.",
                   uvictim ? "your"
-                          : !vismon ? "the" /* visobj */
-                                    : s_suffix(mon_nam(victim)),
+                  : !vismon ? "the" /* visobj */
+                    : s_suffix(mon_nam(victim)),
                   ostr, vtense(ostr, "are"), bythe[type]);
         /* We assume here that if the object is protected because it
          * is blessed, it still shows some minor signs of wear, and
@@ -270,8 +278,8 @@ erode_obj(
         if (uvictim || vismon || visobj)
             pline("%s %s %s%s!",
                   uvictim ? "Your"
-                          : !vismon ? "The" /* visobj */
-                                    : s_suffix(Monnam(victim)),
+                  : !vismon ? "The" /* visobj */
+                    : s_suffix(Monnam(victim)),
                   ostr, vtense(ostr, action[type]), adverb);
 
         if (ef_flags & EF_PAY)
@@ -288,13 +296,19 @@ erode_obj(
         return ER_DAMAGED;
     } else if (ef_flags & EF_DESTROY) {
         otmp->in_use = 1; /* in case of hangup during message w/ --More-- */
-        if (uvictim || vismon || visobj)
-            pline("%s %s %s away!",
-                  uvictim ? "Your"
-                          : !vismon ? "The" /* visobj */
-                                    : s_suffix(Monnam(victim)),
-                  ostr, vtense(ostr, action[type]));
+        if (uvictim || vismon || visobj) {
+            char actbuf[BUFSZ];
 
+            if (!crackers)
+                Sprintf(actbuf, "%s away", vtense(ostr, action[type]));
+            else
+                Sprintf(actbuf, "shatters");
+            pline("%s %s %s!",
+                  uvictim ? "Your"
+                  : !vismon ? "The" /* visobj */
+                    : s_suffix(Monnam(victim)),
+                  ostr, actbuf);
+        }
         if (ef_flags & EF_PAY)
             costly_alteration(otmp, cost_type);
 
@@ -377,13 +391,12 @@ mk_trap_statue(coordxy x, coordxy y)
     int trycount = 10;
 
     do { /* avoid ultimately hostile co-aligned unicorn */
-        mptr = &mons[rndmonnum()];
+        mptr = &mons[rndmonnum_adj(3, 6)];
     } while (--trycount > 0 && is_unicorn(mptr)
              && sgn(u.ualign.type) == sgn(mptr->maligntyp));
     statue = mkcorpstat(STATUE, (struct monst *) 0, mptr, x, y,
                         CORPSTAT_NONE);
-    mtmp = makemon(&mons[statue->corpsenm], 0, 0,
-                   MM_NOCOUNTBIRTH|MM_NOMSG);
+    mtmp = makemon(&mons[statue->corpsenm], 0, 0, MM_NOCOUNTBIRTH | MM_NOMSG);
     if (!mtmp)
         return; /* should never happen */
     while (mtmp->minvent) {
@@ -457,8 +470,9 @@ maketrap(coordxy x, coordxy y, int typ)
                 || (u.utraptype == TT_LAVA && !is_lava(x, y))))
             reset_utrap(FALSE);
         /* old <tx,ty> remain valid */
-    } else if ((IS_FURNITURE(lev->typ)
-                && (!IS_GRAVE(lev->typ) || (typ != PIT && typ != HOLE)))
+    } else if (!CAN_OVERWRITE_TERRAIN(lev->typ)
+               || (IS_FURNITURE(lev->typ)
+                   && (typ != PIT && typ != HOLE))
                || is_pool_or_lava(x, y)
                || (IS_AIR(lev->typ) && typ != MAGIC_PORTAL)
                || (typ == LEVEL_TELEP && single_level_branch(&u.uz))) {
@@ -1027,13 +1041,12 @@ floor_trigger(int ttyp)
 static boolean
 check_in_air(struct monst *mtmp, unsigned trflags)
 {
-    boolean plunged = (trflags & TOOKPLUNGE) != 0;
+    boolean is_you = mtmp == &gy.youmonst,
+            plunged = (trflags & (TOOKPLUNGE | VIASITTING)) != 0;
 
-    return (is_floater(mtmp->data)
-            || (is_flyer(mtmp->data) && !plunged)
-            || (trflags & HURTLING) != 0
-            || (mtmp == &gy.youmonst ?
-                (Levitation || (Flying && !plunged)) : 0));
+    return ((trflags & HURTLING) != 0
+            || (is_you ? Levitation : is_floater(mtmp->data))
+            || ((is_you ? Flying : is_flyer(mtmp->data)) && !plunged));
 }
 
 static int
@@ -1197,7 +1210,7 @@ trapeffect_rocktrap(
                     pline("Unfortunately, you are wearing %s.",
                           an(helm_simple_name(uarmh))); /* helm or hat */
                     dmg = 2;
-                } else if (is_metallic(uarmh)) {
+                } else if (hard_helmet(uarmh)) {
                     pline("Fortunately, you are wearing a hard helmet.");
                     dmg = 2;
                 } else if (Verbose(3, trapeffect_rocktrap)) {
@@ -1256,7 +1269,8 @@ trapeffect_sqky_board(
         se_squeak_A, se_squeak_B_flat, se_squeak_B,
     };
     boolean forcetrap = ((trflags & FORCETRAP) != 0
-                         || (trflags & FAILEDUNTRAP) != 0);
+                         || (trflags & FAILEDUNTRAP) != 0
+                         || (Flying && (trflags & VIASITTING) != 0));
 
     if (mtmp == &gy.youmonst) {
         if ((Levitation || Flying) && !forcetrap) {
@@ -1322,10 +1336,12 @@ trapeffect_bear_trap(
     struct trap *trap,
     unsigned trflags)
 {
-    boolean forcetrap = ((trflags & FORCETRAP) != 0
-                         || (trflags & FAILEDUNTRAP) != 0);
+    boolean is_you = mtmp == &gy.youmonst,
+            forcetrap = ((trflags & FORCETRAP) != 0
+                         || (trflags & FAILEDUNTRAP) != 0
+                         || (is_you && (trflags & VIASITTING) != 0));
 
-    if (mtmp == &gy.youmonst) {
+    if (is_you) {
         int dmg = d(2, 4);
 
         if ((Levitation || Flying) && !forcetrap)
@@ -1648,6 +1664,7 @@ trapeffect_pit(
 
     if (mtmp == &gy.youmonst) {
         boolean plunged = (trflags & TOOKPLUNGE) != 0;
+        boolean viasitting = (trflags & VIASITTING) != 0;
         boolean conj_pit = conjoined_pits(trap, t_at(u.ux0, u.uy0), TRUE);
         boolean adj_pit = adj_nonconjoined_pit(trap);
         boolean already_known = trap->tseen ? TRUE : FALSE;
@@ -1661,7 +1678,7 @@ trapeffect_pit(
             steed_article = ARTICLE_NONE;
 
         /* KMH -- You can't escape the Sokoban level traps */
-        if (!Sokoban && (Levitation || (Flying && !plunged)))
+        if (!Sokoban && (Levitation || (Flying && !plunged && !viasitting)))
             return Trap_Effect_Finished;
         feeltrap(trap);
         if (!Sokoban && is_clinger(gy.youmonst.data) && !plunged) {
@@ -2623,8 +2640,7 @@ dotrap(struct trap *trap, unsigned trflags)
         if (already_seen && !Fumbling && !undestroyable_trap(ttype)
             && ttype != ANTI_MAGIC && !forcebungle && !plunged
             && !conj_pit && !adj_pit
-            && (!rn2(5) || (is_pit(ttype)
-                            && is_clinger(gy.youmonst.data)))) {
+            && (!rn2(5) || (is_pit(ttype) && is_clinger(gy.youmonst.data)))) {
                 You("escape %s %s.", (ttype == ARROW_TRAP && !trap->madeby_u)
                                      ? "an"
                                      : a_your[trap->madeby_u],
@@ -4196,8 +4212,7 @@ acid_damage(struct obj* obj)
 
 /* Get an object wet and damage it appropriately.
  *   "obj": if null, returns ER_NOTHING
- *   "ostr", if present, is used instead of the object name in some
- *     messages.
+ *   "ostr", if present, is used instead of the object name in some messages.
  *   "force" means not to roll luck to protect some objects.
  * Returns an erosion return value (ER_*)
  */
@@ -4241,14 +4256,18 @@ water_damage(
         return ER_GREASED;
     } else if (Is_container(obj)
                && (!Waterproof_container(obj) || (obj->cursed && !rn2(3)))) {
-        if (in_invent)
+        if (in_invent) {
             pline("Some %s gets into your %s!", hliquid("water"), ostr);
+            gm.mentioned_water = !Hallucination;
+        }
         water_damage_chain(obj->cobj, FALSE);
         return ER_DAMAGED; /* contents were damaged */
     } else if (Waterproof_container(obj)) {
         if (in_invent) {
             pline_The("%s slides right off your %s.", hliquid("water"), ostr);
-            makeknown(obj->otyp);
+            gm.mentioned_water = !Hallucination;
+            makeknown(obj->otyp); /* if an oilskin sack, discover it; doesn't
+                                   * matter for chest, large box, ice box */
         }
         /* not actually damaged, but because we /didn't/ get the "water
            gets into!" message, the player now has more information and
@@ -4495,7 +4514,53 @@ rnd_nextto_goodpos(coordxy *x, coordxy *y, struct monst *mtmp)
     return FALSE;
 }
 
-/*  return TRUE iff player relocated */
+/* life-saving or divine rescue has attempted to get the hero out of hostile
+   terrain and put hero in an unexpected spot or failed due to overfull level
+   and just prevented death so "back on solid ground" may be inappropriate */
+void
+back_on_ground(int how)
+{
+    static const char find_yourself[] = "find yourself";
+    struct rm *lev = &levl[u.ux][u.uy];
+    boolean mesggiven = FALSE;
+
+    switch (how) {
+    case DROWNING:
+        if (is_pool(u.ux, u.uy)) {
+            You("%s %s of %s.", find_yourself,
+                (Is_waterlevel(&u.uz) || IS_WATERWALL(lev->typ))
+                  ? "in the midst" : "on top",
+                hliquid("water"));
+            mesggiven = TRUE;
+        } else if (IS_AIR(lev->typ)) {
+            You("%s in %s.", find_yourself,
+                Is_waterlevel(&u.uz) ? "an air bubble" : "mid air");
+            mesggiven = TRUE;
+        }
+        break;
+    case BURNING: /* moved onto lava without fire resistance */
+    case DISSOLVED: /* sunk into lava while fire resistant */
+        if (is_pool(u.ux, u.uy)) {
+            You("%s %s %s.", find_yourself,
+                u.uinwater ? "in" : "on", hliquid("water"));
+            mesggiven = TRUE;
+        } else if (is_lava(u.ux, u.uy)) {
+            You("%s on top of %s.", find_yourself, hliquid("molten lava"));
+            mesggiven = TRUE;
+        }
+        break;
+    default:
+        break;
+    }
+    if (!mesggiven)
+        You("%s back on solid %s.", find_yourself, surface(u.ux, u.uy));
+
+    iflags.last_msg = PLNMSG_BACK_ON_GROUND; /* for describe_decor() */
+    /* feedback just disclosed this */
+    iflags.prev_decor = gl.lastseentyp[u.ux][u.uy] = lev->typ;
+}
+
+/* return TRUE iff player relocated */
 boolean
 drown(void)
 {
@@ -4526,9 +4591,9 @@ drown(void)
 
     water_damage_chain(gi.invent, FALSE);
 
-    if (u.umonnum == PM_GREMLIN && rn2(3))
+    if (u.umonnum == PM_GREMLIN && rn2(3)) {
         (void) split_mon(&gy.youmonst, (struct monst *) 0);
-    else if (u.umonnum == PM_IRON_GOLEM) {
+    } else if (u.umonnum == PM_IRON_GOLEM) {
         You("rust!");
         i = Maybe_Half_Phys(d(2, 6));
         if (u.mhmax > i)
@@ -4610,7 +4675,10 @@ drown(void)
     }
     set_uinwater(1); /* u.uinwater = 1 */
     urgent_pline("You drown.");
-    for (i = 0; i < 5; i++) { /* arbitrary number of loops */
+    /* first pass is survivable by using up an amulet of life-saving or by
+       answering no to "Die?" in explore|wizard mode; second pass can only
+       be survivable via the latter */
+    for (i = 0; i < 2; i++) {
         /* killer format and name are reconstructed every iteration
            because lifesaving resets them */
         pool_of_water = waterbody_name(u.ux, u.uy);
@@ -4626,11 +4694,10 @@ drown(void)
         /* nowhere safe to land; repeat drowning loop... */
         pline("You're still drowning.");
     }
-    if (u.uinwater) {
+
+    if (u.uinwater)
         set_uinwater(0); /* u.uinwater = 0 */
-        You("find yourself back %s.",
-            Is_waterlevel(&u.uz) ? "in an air bubble" : "on land");
-    }
+    back_on_ground(DROWNING);
     return TRUE;
 }
 
@@ -6230,11 +6297,7 @@ lava_effects(void)
             urgent_pline("You %s...", boil_away ? "boil away"
                                                 : "burn to a crisp");
             done(BURNING);
-            if (safe_teleds(TELEDS_ALLOW_DRAG | TELEDS_TELEPORT)
-                /* if the level is completely full then this second attempt
-                   won't accomplish anything, but if it is only mostly full
-                   then hero still might manage to escape the lava */
-                || safe_teleds(TELEDS_ALLOW_DRAG | TELEDS_TELEPORT))
+            if (safe_teleds(TELEDS_ALLOW_DRAG | TELEDS_TELEPORT))
                 break; /* successful life-save */
             /* nowhere safe to land; repeat burning loop */
             pline("You're still burning.");
@@ -6255,28 +6318,8 @@ lava_effects(void)
                 set_itimeout(&HWwalking, 5L);
             goto burn_stuff;
         }
+        back_on_ground(BURNING);
 
-        /*
-         * 3.7: this used to be unconditional "back on solid <surface>"
-         * but surface() could return a lot of things where that ends up
-         * sounding silly.  Deal with water, ignore furniture; assume
-         * surface types 'air' and 'cloud' won't be present on same level
-         * as lava so don't need to be catered for.
-         *
-         * Made it out of the lava.  We know that hero isn't levitating
-         * or flying but life-saving plus fireproof water walking boots
-         * (and no fire resistance) could put hero on water rather than
-         * "on solid ground"; likewise if poly'd into an aquatic form.
-         */
-        if (is_pool(u.ux, u.uy))
-            You("find yourself %s %s.", u.uinwater ? "in" : "on",
-                hliquid("water"));
-        else
-            You("find yourself back on solid %s.", surface(u.ux, u.uy));
-        iflags.last_msg = PLNMSG_BACK_ON_GROUND; /* for describe_decor();
-                                                  * use for on-water too */
-        /* surface() just disclosed this */
-        iflags.prev_decor = gl.lastseentyp[u.ux][u.uy] = levl[u.ux][u.uy].typ;
         /* normally done via safe_teleds() -> teleds() -> spoteffects() but
            spoteffects() was no-op when called with nonzero in_lava_effects */
         spoteffects(FALSE); /* suppress auto-pickup for this landing... */

@@ -1,4 +1,4 @@
-/* NetHack 3.7	flag.h	$NHDT-Date: 1655161560 2022/06/13 23:06:00 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.201 $ */
+/* NetHack 3.7	flag.h	$NHDT-Date: 1684791761 2023/05/22 21:42:41 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.217 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2006. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -85,6 +85,7 @@ struct flag {
 #define PARANOID_WERECHANGE 0x0100
 #define PARANOID_EATING     0x0200
 #define PARANOID_SWIM       0x0400
+#define PARANOID_AUTOALL    0x0800
     int pickup_burden; /* maximum burden before prompt */
     int pile_limit;    /* controls feedback when walking over objects */
     char discosort;    /* order of dodiscovery/doclassdisco output: o,s,c,a */
@@ -197,6 +198,7 @@ struct instance_flags {
     boolean invis_goldsym; /* gold symbol is ' '? */
     boolean in_lua;        /* executing a lua script */
     boolean lua_testing;   /* doing lua tests */
+    boolean nofollowers;   /* level change ignores pets (for tutorial) */
     boolean partly_eaten_hack; /* extra flag for xname() used when it's called
                                 * indirectly so we can't use xname_flags() */
     boolean remember_getpos; /* save getpos() positioning in do-again queue */
@@ -230,10 +232,12 @@ struct instance_flags {
     boolean window_inited; /* true if init_nhwindows() completed */
     boolean vision_inited; /* true if vision is ready */
     boolean sanity_check;  /* run sanity checks */
+    boolean sanity_no_check; /* skip next sanity check */
     boolean debug_overwrite_stairs; /* debug: allow overwriting stairs */
     boolean debug_mongen;  /* debug: prevent monster generation */
     boolean debug_hunger;  /* debug: prevent hunger */
     boolean mon_polycontrol; /* debug: control monster polymorphs */
+    boolean mon_telecontrol; /* debug: control monster teleports */
     boolean in_dumplog;    /* doing the dumplog right now? */
     boolean in_parse;      /* is a command being parsed? */
      /* suppress terminate during options parsing, for --showpaths */
@@ -439,7 +443,8 @@ enum plnmsg_types {
     PLNMSG_OK_DONT_DIE,         /* overriding death in explore/wizard mode */
     PLNMSG_BACK_ON_GROUND,      /* leaving water */
     PLNMSG_GROWL,               /* growl() gave some message */
-    PLNMSG_enum /* allows inserting new entries with unconditional trailing comma */
+    PLNMSG_HIDE_UNDER,          /* hero saw a monster hide under something */
+    PLNMSG_enum /* 'none of the above' */
 };
 
 /* runmode options */
@@ -477,6 +482,8 @@ enum runmode_types {
 #define ParanoidEating ((flags.paranoia_bits & PARANOID_EATING) != 0)
 /* Prevent going into lava or water without explicitly forcing it */
 #define ParanoidSwim ((flags.paranoia_bits & PARANOID_SWIM) != 0)
+/* Require confirmation for choosing 'A' in class menu for menustyle:Full */
+#define ParanoidAutoAll ((flags.paranoia_bits & PARANOID_AUTOALL) != 0U)
 
 /* command parsing, mainly dealing with number_pad handling;
    not saved and restored */

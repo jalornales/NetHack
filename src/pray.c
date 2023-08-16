@@ -1,4 +1,4 @@
-/* NetHack 3.7	pray.c	$NHDT-Date: 1649454525 2022/04/08 21:48:45 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.168 $ */
+/* NetHack 3.7	pray.c	$NHDT-Date: 1684138081 2023/05/15 08:08:01 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.194 $ */
 /* Copyright (c) Benson I. Margulies, Mike Stephenson, Steve Linhart, 1989. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -23,6 +23,7 @@ static void consume_offering(struct obj *);
 static void offer_too_soon(aligntyp);
 static void desecrate_high_altar(aligntyp);
 static void offer_real_amulet(struct obj *, aligntyp); /* NORETURN */
+static void offer_fake_amulet(struct obj *, boolean, aligntyp);
 static void offer_different_alignment_altar(struct obj *, aligntyp);
 static int bestow_artifact(void);
 static boolean pray_revive(void);
@@ -102,11 +103,12 @@ static const char *const godvoices[] = {
 
 /* critically low hit points if hp <= 5 or hp <= maxhp/N for some N */
 boolean
-critically_low_hp(boolean only_if_injured) /* determines whether maxhp <= 5
-                                              matters */
+critically_low_hp(
+    boolean only_if_injured) /* determines whether maxhp <= 5 matters */
 {
-    int divisor, hplim, curhp = Upolyd ? u.mh : u.uhp,
-                        maxhp = Upolyd ? u.mhmax : u.uhpmax;
+    int divisor, hplim,
+        curhp = Upolyd ? u.mh : u.uhp,
+        maxhp = Upolyd ? u.mhmax : u.uhpmax;
 
     if (only_if_injured && !(curhp < maxhp))
         return FALSE;
@@ -383,10 +385,11 @@ fix_worst_trouble(int trouble)
         gc.context.botl = 1;
         break;
     case TROUBLE_LAVA:
-        You("are back on solid ground.");
         /* teleport should always succeed, but if not, just untrap them */
-        if (!safe_teleds(FALSE))
+        if (!safe_teleds(TELEDS_NO_FLAGS))
             reset_utrap(TRUE);
+        back_on_ground(DISSOLVED); /* DISSOLVED: pending cause of death
+                                    * if trouble didn't get cured */
         break;
     case TROUBLE_STARVING:
         /* temporarily lost strength recovery now handled by init_uhunger() */
@@ -446,7 +449,7 @@ fix_worst_trouble(int trouble)
         break;
     case TROUBLE_STUCK_IN_WALL:
         /* no control, but works on no-teleport levels */
-        if (safe_teleds(FALSE)) {
+        if (safe_teleds(TELEDS_NO_FLAGS)) {
             Your("surroundings change.");
         } else {
             /* safe_teleds() couldn't find a safe place; perhaps the
@@ -1547,6 +1550,39 @@ offer_real_amulet(struct obj *otmp, aligntyp altaralign)
     /*NOTREACHED*/
 }
 
+static void
+offer_fake_amulet(
+    struct obj *otmp,
+    boolean highaltar,
+    aligntyp altaralign)
+{
+    if (!highaltar && !otmp->known) {
+        offer_too_soon(altaralign);
+        return;
+    }
+    Soundeffect(se_thunderclap, 100);
+    You_hear("a nearby thunderclap.");
+    if (!otmp->known) {
+        You("realize you have made a %s.",
+            Hallucination ? "boo-boo" : "mistake");
+        otmp->known = TRUE;
+        change_luck(-1);
+    } else {
+        /* don't you dare try to fool the gods */
+        if (Deaf)
+            pline("Oh, no."); /* didn't hear thunderclap */
+        change_luck(-3);
+        adjalign(-1);
+        u.ugangr += 3;
+        /* value = -3; */
+        if (altaralign != u.ualign.type && highaltar) {
+            desecrate_high_altar(altaralign);
+        } else { /* value < 0 */
+            gods_upset(altaralign);
+        }
+    }
+}
+
 /* possibly convert an altar's alignment or the hero's alignment */
 static void
 offer_different_alignment_altar(
@@ -1863,27 +1899,8 @@ dosacrifice(void)
     } /* real Amulet */
 
     if (otmp->otyp == FAKE_AMULET_OF_YENDOR) {
-        if (!highaltar && !otmp->known) {
-            offer_too_soon(altaralign);
-            return ECMD_TIME;
-        }
-        Soundeffect(se_thunderclap, 100);
-        You_hear("a nearby thunderclap.");
-        if (!otmp->known) {
-            You("realize you have made a %s.",
-                Hallucination ? "boo-boo" : "mistake");
-            otmp->known = TRUE;
-            change_luck(-1);
-            return ECMD_TIME;
-        } else {
-            /* don't you dare try to fool the gods */
-            if (Deaf)
-                pline("Oh, no."); /* didn't hear thunderclap */
-            change_luck(-3);
-            adjalign(-1);
-            u.ugangr += 3;
-            value = -3;
-        }
+        offer_fake_amulet(otmp, highaltar, altaralign);
+        return ECMD_TIME;
     } /* fake Amulet */
 
     if (value == 0) {
@@ -2056,14 +2073,24 @@ pray_revive(void)
 int
 dopray(void)
 {
+    boolean ok;
+
     /*
      * If ParanoidPray is set, confirm prayer to avoid accidental slips
-     * of Alt+p.
-     * YN(): don't save response in do-again buffer since if it is 'y',
-     * ^A would bypass confirmation, or if 'n', ^A would be pointless.
+     * of Alt+p.  If ParanoidConfirm is also set, require "yes" rather
+     * than just "y" (will also require "no" to decline).
      */
-    if (ParanoidPray && YN("Are you sure you want to pray?") != 'y')
-        return ECMD_OK;
+    if (ParanoidPray) {
+        ok = paranoid_query(ParanoidConfirm, "Are you sure you want to pray?");
+
+        /* clear command recall buffer; otherwise ^A to repeat p(ray) would
+           do so without confirmation (if 'ok') or do nothing (if '!ok') */
+        cmdq_clear(CQ_REPEAT);
+        cmdq_add_ec(CQ_REPEAT, dopray);
+
+        if (!ok) /* declined the "are you sure?" confirmation */
+            return ECMD_OK;
+    }
 
     if (!u.uconduct.gnostic++)
         /* breaking conduct should probably occur in can_pray() at
@@ -2084,7 +2111,16 @@ dopray(void)
            from the do-again buffer, so need to suppress this response too;
            otherwise subsequent ^A would use this answer for "are you sure?"
            and bypass confirmation */
-        if ((ParanoidPray ? YN(forcesuccess) : y_n(forcesuccess)) == 'y') {
+        if (ParanoidPray) {
+            boolean save_doagain = gi.in_doagain;
+
+            gi.in_doagain = FALSE;
+            ok = (YN(forcesuccess) == 'y');
+            gi.in_doagain = save_doagain;
+        } else {
+            ok = (y_n(forcesuccess) == 'y');
+        }
+        if (ok) {
             u.ublesscnt = 0;
             if (u.uluck < 0)
                 u.uluck = 0;

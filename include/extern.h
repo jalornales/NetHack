@@ -1,4 +1,4 @@
-/* NetHack 3.7	extern.h	$NHDT-Date: 1674294830 2023/01/21 09:53:50 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.1223 $ */
+/* NetHack 3.7	extern.h	$NHDT-Date: 1689629242 2023/07/17 21:27:22 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.1279 $ */
 /* Copyright (c) Steve Creps, 1988.                               */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -8,9 +8,15 @@
 /* ### alloc.c ### */
 
 #if 0
+/* routines in alloc.c depend on MONITOR_HEAP and are declared in global.h */
 extern long *alloc(unsigned int);
 #endif
 extern char *fmt_ptr(const void *) NONNULL;
+/* moved from hacklib.c to alloc.c so that utility programs have access */
+#define FITSint(x) FITSint_(x, __func__, __LINE__)
+extern int FITSint_(long long, const char *, int);
+#define FITSuint(x) FITSuint_(x, __func__, __LINE__)
+extern unsigned FITSuint_(unsigned long long, const char *, int);
 
 /* This next pre-processor directive covers almost the entire file,
  * interrupted only occasionally to pick up specific functions as needed. */
@@ -22,7 +28,7 @@ extern void early_init(void);
 extern void moveloop_core(void);
 extern void moveloop(boolean);
 extern void stop_occupation(void);
-extern void init_sound_and_display_gamewindows(void);
+extern void init_sound_disp_gamewindows(void);
 extern void newgame(void);
 extern void welcome(boolean);
 extern int argcheck(int, char **, enum earlyarg);
@@ -564,6 +570,7 @@ extern int stop_donning(struct obj *);
 extern int Armor_off(void);
 extern int Armor_gone(void);
 extern int Helmet_off(void);
+extern boolean hard_helmet(struct obj *);
 extern void wielding_corpse(struct obj *, struct obj *, boolean);
 extern int Gloves_off(void);
 extern int Boots_on(void);
@@ -657,7 +664,7 @@ extern int thitmonst(struct monst *, struct obj *);
 extern int hero_breaks(struct obj *, coordxy, coordxy, unsigned);
 extern int breaks(struct obj *, coordxy, coordxy);
 extern void release_camera_demon(struct obj *, coordxy, coordxy);
-extern void breakobj(struct obj *, coordxy, coordxy, boolean, boolean);
+extern int breakobj(struct obj *, coordxy, coordxy, boolean, boolean);
 extern boolean breaktest(struct obj *);
 extern boolean walk_path(coord *, coord *,
                          boolean(*)(void *, coordxy, coordxy), genericptr_t);
@@ -868,6 +875,7 @@ extern void makerogueghost(void);
 
 /* ### files.c ### */
 
+extern const char *nh_basename(const char *, boolean);
 #if !defined(CROSSCOMPILE) || defined(CROSSCOMPILE_TARGET)
 extern int l_get_config_errors(lua_State *);
 #endif
@@ -1086,10 +1094,6 @@ extern void shuffle_int_array(int *, int);
     nh_snprintf(__func__, __LINE__, str, size, __VA_ARGS__)
 extern void nh_snprintf(const char *func, int line, char *str, size_t size,
                         const char *fmt, ...) PRINTF_F(5, 6);
-#define FITSint(x) FITSint_(x, __func__, __LINE__)
-extern int FITSint_(long long, const char *, int);
-#define FITSuint(x) FITSuint_(x, __func__, __LINE__)
-extern unsigned FITSuint_(unsigned long long, const char *, int);
 #ifdef ENHANCED_SYMBOLS
 extern int unicodeval_to_utf8str(int, uint8 *, size_t);
 #endif
@@ -1395,9 +1399,10 @@ extern void sort_rooms(void);
 extern void add_room(int, int, int, int, boolean, schar, boolean);
 extern void add_subroom(struct mkroom *, int, int, int, int, boolean, schar,
                         boolean);
-extern void free_luathemes(boolean);
+extern void free_luathemes(enum lua_theme_group);
 extern void makecorridors(void);
 extern void add_door(coordxy, coordxy, struct mkroom *);
+extern void count_level_features(void);
 extern void clear_level_structures(void);
 extern void level_finalize_topology(void);
 extern void mklev(void);
@@ -1727,6 +1732,7 @@ extern boolean can_fog(struct monst *);
 extern boolean should_displace(struct monst *, coord *, long *, int, coordxy,
                                coordxy);
 extern boolean undesirable_disp(struct monst *, coordxy, coordxy);
+extern boolean can_hide_under_obj(struct obj *);
 
 /* ### monst.c ### */
 
@@ -1898,6 +1904,7 @@ extern int str_lines_max_width(const char *);
 extern char *stripdigits(char *);
 extern const char *get_lua_version(void);
 extern void nhl_pushhooked_open_table(lua_State *L);
+extern void tutorial(boolean);
 #endif /* !CROSSCOMPILE || CROSSCOMPILE_TARGET */
 #endif /* MAKEDEFS_C MDLIB_C CPPREGEX_C */
 
@@ -2306,6 +2313,7 @@ extern void artitouch(struct obj *);
 extern boolean ok_to_quest(void);
 extern void leader_speaks(struct monst *);
 extern void nemesis_speaks(void);
+extern void nemesis_stinks(coordxy, coordxy);
 extern void quest_chat(struct monst *);
 extern void quest_talk(struct monst *);
 extern void quest_stat_check(struct monst *);
@@ -2669,6 +2677,7 @@ extern void selection_free(struct selectionvar *, boolean);
 extern void selection_clear(struct selectionvar *, int);
 extern struct selectionvar *selection_clone(struct selectionvar *);
 extern void selection_getbounds(struct selectionvar *, NhRect *);
+extern void selection_recalc_bounds(struct selectionvar *);
 extern void set_selection_floodfillchk(int(*)(coordxy, coordxy));
 extern void selection_floodfill(struct selectionvar *, coordxy, coordxy,
                                 boolean);
@@ -2783,7 +2792,7 @@ extern void savedsym_free(void);
 extern void savedsym_strbuf(strbuf_t *);
 extern boolean parsesymbols(char *, int);
 #ifdef ENHANCED_SYMBOLS
-extern struct customization_detail *find_matching_symset_customization(
+extern struct customization_detail *find_matching_symset_customiz(
                const char *symset_name, int custtype,
                enum graphics_sets which_set);
 extern void apply_customizations_to_symset(enum graphics_sets which_set);
@@ -2803,6 +2812,8 @@ extern boolean enexto(coord *, coordxy, coordxy, struct permonst *);
 extern boolean enexto_core(coord *, coordxy, coordxy, struct permonst *,
                            mmflags_nht);
 extern void teleds(coordxy, coordxy, int);
+extern int collect_coords(coord *, coordxy, coordxy, int, unsigned,
+                          boolean (*)(coordxy, coordxy));
 extern boolean safe_teleds(int);
 extern boolean teleport_pet(struct monst *, boolean);
 extern void tele(void);
@@ -2816,6 +2827,7 @@ extern void level_tele_trap(struct trap *, unsigned);
 extern void rloc_to(struct monst *, coordxy, coordxy);
 extern void rloc_to_flag(struct monst *, coordxy, coordxy, unsigned);
 extern boolean rloc(struct monst *, unsigned);
+extern boolean control_mon_tele(struct monst *, coord *cc, unsigned, boolean);
 extern boolean tele_restrict(struct monst *);
 extern void mtele_trap(struct monst *, struct trap *, int);
 extern int mlevel_tele_trap(struct monst *, struct trap *, boolean, int);
@@ -2871,6 +2883,7 @@ extern void topten(int, time_t);
 extern void prscore(int, char **);
 extern struct toptenentry *get_rnd_toptenentry(void);
 extern struct obj *tt_oname(struct obj *);
+extern int tt_doppel(struct monst *);
 
 /* ### track.c ### */
 
@@ -2911,6 +2924,7 @@ extern void acid_damage(struct obj *);
 extern int water_damage(struct obj *, const char *, boolean);
 extern void water_damage_chain(struct obj *, boolean);
 extern boolean rnd_nextto_goodpos(coordxy *, coordxy *, struct monst *);
+extern void back_on_ground(int);
 extern boolean drown(void);
 extern void drain_en(int, boolean);
 extern int dountrap(void);
@@ -3114,6 +3128,7 @@ extern int hide_privileges(boolean);
 #ifdef ENHANCED_SYMBOLS
 extern int glyphrep(const char *);
 extern char *mixed_to_utf8(char *buf, size_t bufsz, const char *str, int *);
+extern const char *mixed_to_glyphinfo(const char *str, glyph_info *gip);
 extern int match_glyph(char *);
 extern void dump_all_glyphids(FILE *fp);
 extern void fill_glyphid_cache(void);
@@ -3207,7 +3222,7 @@ extern int vms_creat(const char *, unsigned int);
 extern int vms_open(const char *, int, unsigned int);
 extern boolean same_dir(const char *, const char *);
 extern int c__translate(int);
-extern char *vms_basename(const char *);
+extern char *vms_basename(const char *, boolean);
 
 /* ### vmsmail.c ### */
 
@@ -3247,6 +3262,9 @@ extern void introff(void);
 ATTRNORETURN extern void error (const char *, ...) PRINTF_F(1, 2) NORETURN;
 #ifdef TIMED_DELAY
 extern void msleep(unsigned);
+#endif
+#ifdef ENHANCED_SYMBOLS
+extern void tty_utf8graphics_fixup(void);
 #endif
 
 /* ### vmsunix.c ### */

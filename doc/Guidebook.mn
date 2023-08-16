@@ -1,4 +1,4 @@
-.\" $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.464 $ $NHDT-Date: 1655461129 2022/06/17 10:18:49 $
+.\" $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.527 $ $NHDT-Date: 1690870385 2023/08/01 06:13:05 $
 .\"
 .\" This is an excerpt from the 'roff' man page from the 'groff' package.
 .\"+--
@@ -37,7 +37,7 @@
 .ds f0 "\*(vr
 .ds f1
 .\"DO NOT REMOVE NH_DATESUB .ds f2 "DATE(%B %-d, %Y)
-.ds f2 "May 7, 2023
+.ds f2 "August 5, 2023
 .
 .\" A note on some special characters:
 .\" \(lq = left double quote
@@ -396,7 +396,7 @@ Not shown when \fBNormal\fP.
 .lp ""
 Encumbrance:
 an indication of how what you are carrying affects your ability to move.
-Values are \fBUnencumbered\fP, \fBEncumbered\fP, \fBStressed\fP,
+Values are \fBUnencumbered\fP, \fBBurdened\fP, \fBStressed\fP,
 \fBStrained\fP, \fBOvertaxed\fP, and \fBOverloaded\fP.
 Not shown when \fBUnencumbered\fP.
 .lp ""
@@ -924,7 +924,7 @@ If you're wearing more than one, you'll be prompted for which one to
 remove.
 When you're only wearing one, then by default it will be removed
 without asking, but you can set the
-.op paranoid_confirmation
+.op paranoid_confirmation:Remove
 option to require a prompt.
 .lp ""
 This command may also be used to take off armor.
@@ -979,7 +979,7 @@ and/or a shirt, or a suit covering a shirt, as if the underlying items
 weren't there.)
 When you're only wearing one, then by default it will
 be taken off without asking, but you can set the
-.op paranoid_confirmation
+.op paranoid_confirmation:Remove
 option to require a prompt.
 .lp ""
 This command may also be used to remove accessories.
@@ -2328,7 +2328,7 @@ moving into its location, you'll be asked to confirm your intent.
 By default an answer of \(oqy\(cq acknowledges that intent,
 which can be error prone if you're using \(oqy\(cq to move.
 You can set the
-.op paranoid_confirmation
+.op paranoid_confirmation:attack
 option to require a response of \(lqyes\(rq instead.
 .pg
 If you can't see a monster (if it is invisible, or if you are blinded),
@@ -4037,13 +4037,14 @@ Persistent.
 Enable coloring menu lines (default off).
 See \(lqConfiguring Menu Colors\(rq on how to configure the colors.
 .lp menustyle
-Controls the interface used when you need to choose various objects (in
-response to the Drop command, for instance).
+Controls the method used when you need to choose various objects (in
+response to the \f(CRDrop\fP (aka \f(CRdroptype\fP) command, for instance).
 The value specified should be the first letter of one of the following:
 traditional, combination, full, or partial.
+Default is \f(CRfull\fP.
 Persistent.
 .lp ""
-Traditional was the only interface available for very
+Traditional was the only method available for very
 early versions; it consists of a prompt for object class characters,
 followed by an object-by-object prompt for all items matching the selected
 object class(es).
@@ -4053,6 +4054,9 @@ prompting one-by-one.
 Full displays a menu of
 object classes rather than a character prompt, and then a menu of matching
 objects for selection.
+(Choosing its \(oqA\(cq (Autoselect-All) choice skips the second menu.
+To avoid choosing that by accident,
+set \f(CRparanoid_confirm:AutoAll\fP to require confirmation.)
 Partial skips the object class filtering and
 immediately displays a menu of all objects.
 .lp menu_deselect_all
@@ -4120,6 +4124,9 @@ Default \(oq}\(cq.
 ." Debug mode only.
 .lp monpolycontrol
 Prompt for new form whenever any monster changes shape (default off).
+Debug mode only.
+.lp montelecontrol
+Prompt for destination whenever any monster gets teleported (default off).
 Debug mode only.
 .lp mouse_support
 Allow use of the mouse for input and travel.
@@ -4213,7 +4220,7 @@ prompting is desired.  The default is \(lqparanoid_confirmation:pray swim\(rq.
 .PL Confirm
 for any prompts which are set to require \(lqyes\(rq rather than \(oqy\(cq,
 also require \(lqno\(rq to reject instead of accepting any non-yes response
-as no
+as no; changes pray and AutoAll to require \(lqyes\(rq or \(oqno\(cq too;
 .PL quit
 require \(lqyes\(rq rather than \(oqy\(cq to confirm quitting
 the game or switching into non-scoring explore mode;
@@ -4224,31 +4231,52 @@ useful in normal play; applies to explore mode);
 require \(lqyes\(rq rather than \(oqy\(cq to confirm saving
 bones data when dying in debug mode;
 .PL attack
-require \(lqyes\(rq rather than \(oqy\(cq to confirm attacking a peaceful monster;
+require \(lqyes\(rq rather than \(oqy\(cq to confirm attacking
+a peaceful monster;
 .PL wand-break
-require \(lqyes\(rq rather than \(oqy\(cq to confirm breaking a wand;
+require \(lqyes\(rq rather than \(oqy\(cq to confirm breaking
+a wand with the \f(CRapply\fP command;
 .PL eating
-require \(lqyes\(rq rather than \(oqy\(cq to confirm whether to continue eating;
+require \(lqyes\(rq rather than \(oqy\(cq to confirm whether to
+continue eating;
 .PL Were-change
-require \(lqyes\(rq rather than \(oqy\(cq to confirm changing form due to lycanthropy
-when hero has polymorph control;
+require \(lqyes\(rq rather than \(oqy\(cq to confirm changing form due
+to lycanthropy when hero has polymorph control;
 .PL pray
 require \(oqy\(cq to confirm an attempt to pray rather
 than immediately praying; on by default;
+(to require \(lqyes\(rq rather than just \(oqy\(cq, set Confirm too);
+.PL swim
+prevent walking into water or lava; on by default; (to deliberately step
+onto/into such terrain when this is set, use the \(oq\f(CRm\fP\(cq
+movement prefix when adjacent);
+.PL AutoAll
+require confirmation when the \(oqA\(cq (Autoselect-All) choice is selected
+in object class filtering menus for \f(CRmenustyle:Full\fP;
+(to require \(lqyes\(rq rather than just \(oqy\(cq, set Confirm too);
 .PL Remove
 require selection from inventory for \(oqR\(cq and \(oqT\(cq
-commands even when wearing just one applicable item.
-.PL swim
-prevent walking into water or lava.
+commands even when wearing just one applicable item;
 .PL all
 turn on all of the above.
 .PE
-By default, the pray choice is enabled, the others disabled.
-To disable it without setting
-any of the other choices, use \(lqparanoid_confirmation:none\(rq.
-To keep
-it enabled while setting any of the others, include it in the list,
-such as \(lqparanoid_confirmation:attack pray Remove\(rq.
+By default, the pray and swim choices are enabled, the others disabled.
+To disable them without setting
+any of the other choices, use \f(CRparanoid_confirmation:none\fP.
+To keep them enabled while setting any of the others, you can
+include them in the new list, such as
+\f(CRparanoid_confirmation:attack pray swim Remove\fP
+or you can precede the first entry in the list with a plus sign,
+\f(CRparanoid_confirmation:+attack Remove\fP.
+To remove an entry that has been previously set without removing others,
+precede the first entry in the list with a minus sign,
+\f(CRparanoid_confirmation:-swim\fP.
+To both add some new entries and remove some old ones, you can use
+mulitple \fIparanoid_confirmation\fP option settings, or you can
+use the \(oq\f(CR+\fP\(cq form and list entries to be added by their name
+and entries to be removed by \(oq\f(CR!\fP\(cq and name.
+The positive (no \(oq!\(cq) and negative (with \(oq!\(cq) entries
+can be intermixed.
 .lp perm_invent
 If true, always display your current inventory in a window.  This only
 makes sense for windowing system interfaces that implement this feature.
@@ -5004,9 +5032,11 @@ rules and not saved with the game.
 .lp "Here are some examples:"
 .sd
 .si
+.ft CR
 autopickup_exception="<*arrow"
 autopickup_exception=">*corpse"
 autopickup_exception=">* cursed*"
+.ft
 .ei
 .ed
 .\" (this paragraph would look better unindented but can't use .lp hack...)
@@ -5199,8 +5229,10 @@ Here's an example of message types using NetHack's internal
 pattern matching facility:
 .sd
 .si
+.ft CR
 MSGTYPE=stop "You feel hungry."
 MSGTYPE=hide "You displaced *."
+.ft
 .ei
 .ed
 specifies that whenever a message \(lqYou feel hungry\(rq is shown,
@@ -5306,12 +5338,14 @@ The pattern should be a POSIX extended regular expression.
 For example:
 .sd
 .si
+.ft CR
 SOUNDDIR=C:\\nethack\\sounds
 SOUND=MESG "This door is locked" "lock.wav" 100
 SOUND=MESG hide "^You miss the " "swing.wav" 75
+.ft
 .ei
 .ed
-.pg
+.BR 0 .\" without this, the next section seems too close to this one
 .hn 2
 Configuring Status Hilites
 .pg
@@ -5396,6 +5430,11 @@ for stone through termill, \(lqminor_troubles\(rq for blind through hallu,
 Allowed behaviors are \(lqalways\(rq, \(lqup\(rq, \(lqdown\(rq,
 \(lqchanged\(rq, a percentage or absolute number threshold, or
 text to match against.
+For the \fIhitpoints\fP field, the additional behavior \(lqcriticalhp\(rq
+is available.
+It overrides other behavior rules if
+hit points are at or below the \fImajor problem\fP threshold
+(which varies depending upon maximum hit points and experience level).
 .si
 .lp "*"
 \(lqalways\(rq will set the default attributes for that field.
@@ -5451,6 +5490,12 @@ it also matches when value is below or above.
 If the prefix is \(oq<\(cq or \(oq>\(cq, only match when strictly
 above or below.
 .lp "*"
+criticalhp only applies to the hitpoints field and only
+when current hit points are below a threshold (which varies by maximum
+hit points and experience level).
+When the threshold is met, a criticalhp rule takes precedence over all
+other hitpoints rules.
+.lp "*"
 text match sets the attribute when the field value
 matches the text.
 Text matches can only be used for \(lqalignment\(rq,
@@ -5470,6 +5515,7 @@ to 0.
 Example hilites:
 .sd
 .si
+.ft CR
 OPTION=hilite_status: gold/up/yellow/down/brown
 OPTION=hilite_status: characteristics/up/green/down/red
 OPTION=hilite_status: hitpoints/100%/gray&normal
@@ -5480,9 +5526,10 @@ OPTION=hilite_status: hitpoints/<33%/red&bold
 OPTION=hilite_status: hitpoints/<15%/red&inverse
 OPTION=hilite_status: condition/major/orange&inverse
 OPTION=hilite_status: condition/lev+fly/red&inverse
+.ft
 .ei
 .ed
-.pg
+.BR 0 .\" without this, the next section seems too close to this one
 .hn 2
 Modifying NetHack Symbols
 .pg
@@ -5724,7 +5771,6 @@ Statues and boulders are the rock being referred to, but since
 version 3.6.0, statues are displayed as the monster they depict.
 So S_rock is only used for boulders and not used at all if
 overridden by the more specific S_boulder.
-.pg
 .hn 2
 Customizing Map Glyph Representations Using Unicode
 .pg
@@ -5734,11 +5780,12 @@ codepoint values and \fIred-green-blue\fP colors to glyph
 representations. The customizations can be specified for use with a symset that
 has a UTF8 handler within the symbols file such as the enhanced1 set, or 
 individually within your nethack.rc file.
-
 .pg
 The format for defining a glyph representation is:
 .SD n
-\f(CROPTIONS=glyph:glyphid\fIU+nnnn\fP/\fIR-G-B\fP\fP
+.ft CR
+OPTIONS=glyph:\fIglyphid\fP/\fIU+nnnn\fP/\fIR-G-B\fP
+.ft
 .ED
 .pg
 The window port that is active needs to provide support for displaying
@@ -5746,9 +5793,11 @@ UTF-8 character sequences and explicit red-green-blue colors in order
 for the glyph representation to be visible.
 For example, the following line in your configuration file will cause
 the glyph representation for glyphid G_pool to use Unicode codepoint
-U+224B and the color represented by R-G-B value 0-0-160
+U+224B and the color represented by R-G-B value 0-0-160:
 .SD n
-\f(CROPTIONS=glyph:G_pool/U+224B/0-0-160\fP
+.ft CR
+OPTIONS=glyph:G_pool/U+224B/0-0-160
+.ft
 .ED
 The list of acceptable glyphid's can be produced by 
 \fBnethack \-\-dumpglyphids\fP.
@@ -5756,10 +5805,9 @@ Individual NetHack glyphs can be specified using the G_ prefix,
 or you can use an S_ symbol for a glyphid and store the custom
 representation for all NetHack glyphs that would map to that
 particular symbol.
-
+.pg
 You will need to select a symset with a UTF8 handler to enable the
 display of the customizations, such as the Enhanced symset.
-.pg
 .hn 2
 Configuring NetHack for Play by the Blind
 .pg

@@ -1,4 +1,4 @@
-/* NetHack 3.7	hack.h	$NHDT-Date: 1680771353 2023/04/06 08:55:53 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.215 $ */
+/* NetHack 3.7	hack.h	$NHDT-Date: 1689629241 2023/07/17 21:27:21 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.222 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Pasi Kallinen, 2017. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -303,7 +303,8 @@ enum cost_alteration_types {
     COST_BRKLCK  = 15, /* break box/chest's lock */
     COST_RUST    = 16, /* rust damage */
     COST_ROT     = 17, /* rotting attack */
-    COST_CORRODE = 18 /* acid damage */
+    COST_CORRODE = 18, /* acid damage */
+    COST_CRACK   = 19, /* damage to crystal armor */
 };
 
 /* read.c, create_particular() & create_particular_parse() */
@@ -354,6 +355,7 @@ struct dgn_topology { /* special dungeon levels for speed */
     xint16 d_tower_dnum;
     xint16 d_sokoban_dnum;
     xint16 d_mines_dnum, d_quest_dnum;
+    xint16 d_tutorial_dnum;
     d_level d_qstart_level, d_qlocate_level, d_nemesis_level;
     d_level d_knox_level;
     d_level d_mineend_level;
@@ -386,6 +388,7 @@ struct dgn_topology { /* special dungeon levels for speed */
 #define sokoban_dnum            (gd.dungeon_topology.d_sokoban_dnum)
 #define mines_dnum              (gd.dungeon_topology.d_mines_dnum)
 #define quest_dnum              (gd.dungeon_topology.d_quest_dnum)
+#define tutorial_dnum           (gd.dungeon_topology.d_tutorial_dnum)
 #define qstart_level            (gd.dungeon_topology.d_qstart_level)
 #define qlocate_level           (gd.dungeon_topology.d_qlocate_level)
 #define nemesis_level           (gd.dungeon_topology.d_nemesis_level)
@@ -397,6 +400,11 @@ struct dgn_topology { /* special dungeon levels for speed */
 #define dunlev_reached(x) (gd.dungeons[(x)->dnum].dunlev_ureached)
 #define MAXLINFO (MAXDUNGEON * MAXLEVEL)
 
+enum lua_theme_group {
+    all_themes = 1,  /* for end of game */
+    most_themes = 2, /* for entering endgame */
+    tut_themes = 3,  /* for leaving tutorial */
+};
 
 enum earlyarg {
     ARG_DEBUG, ARG_VERSION, ARG_SHOWPATHS
@@ -632,6 +640,8 @@ enum nhcore_calls {
     NHCORE_MOVELOOP_TURN,
     NHCORE_GAME_EXIT,
     NHCORE_GETPOS_TIP,
+    NHCORE_ENTER_TUTORIAL,
+    NHCORE_LEAVE_TUTORIAL,
 
     NUM_NHCORE_CALLS
 };
@@ -776,17 +786,18 @@ enum InputState {
 struct sortloot_item {
     struct obj *obj;
     char *str; /* result of loot_xname(obj) in some cases, otherwise null */
-    int indx; /* signed int, because sortloot()'s qsort comparison routine
-                 assumes (a->indx - b->indx) might yield a negative result */
-    xint16 orderclass; /* order rather than object class; 0 => not yet init'd */
-    xint16 subclass; /* subclass for some classes */
-    xint16 disco; /* discovery status */
+    /* these need to be signed; 'indx' should be big enough to hold a count
+       of the largest pile of items, the others would fit within char */
+    int indx;       /* index into original list (used as tie-breaker) */
+    int orderclass; /* order rather than object class; 0 => not yet init'd */
+    int subclass;   /* subclass for some classes */
+    int disco;      /* discovery status */
 };
 typedef struct sortloot_item Loot;
 
 typedef struct strbuf {
     int    len;
-    char * str;
+    char  *str;
     char   buf[256];
 } strbuf_t;
 
@@ -1205,6 +1216,17 @@ typedef uint32_t mmflags_nht;     /* makemon MM_ flags */
 #define CORPSTAT_FEMALE 1
 #define CORPSTAT_MALE   2
 #define CORPSTAT_NEUTER 3
+
+/* flag bits for collect_coords(); combining ring_pairs with unshuffled
+   makes no sense--if both are specified unshuffled takes precedence */
+#define CC_NO_FLAGS    0x00 /* skip center, collect in distinct rings and
+                             * shuffle each ring, ignore monster occupants */
+#define CC_INCL_CENTER 0x01 /* include center point as ring #0 */
+#define CC_UNSHUFFLED  0x02 /* don't shuffle the rings */
+#define CC_RING_PAIRS  0x04 /* shuffle w/ odd and next even rings together */
+#define CC_SKIP_MONS   0x08 /* skip locations occupied by monsters */
+#define CC_SKIP_INACCS 0x10 /* skip !ZAP_POS: reject rock and wall locations
+                             * but allow pools, unlike !ACCESSIBLE */
 
 /* flags for decide_to_shift() */
 #define SHIFT_SEENMSG 0x01 /* put out a message if in sight */

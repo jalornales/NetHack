@@ -1,4 +1,4 @@
-/* NetHack 3.7	do.c	$NHDT-Date: 1652831519 2022/05/17 23:51:59 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.304 $ */
+/* NetHack 3.7	do.c	$NHDT-Date: 1689629244 2023/07/17 21:27:24 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.358 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Derek S. Ray, 2015. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -253,6 +253,8 @@ flooreffects(struct obj *obj, coordxy x, coordxy y, const char *verb)
  deletedwithboulder:
         if ((t = t_at(x, y)) != 0)
             deltrap(t);
+        if (u.utrap && u_at(x, y))
+            reset_utrap(FALSE);
         useupf(obj, 1L);
         bury_objs(x, y);
         newsym(x, y);
@@ -361,27 +363,26 @@ polymorph_sink(void)
         return;
 
     sinklooted = levl[u.ux][u.uy].looted != 0;
-    gl.level.flags.nsinks--;
-    levl[u.ux][u.uy].doormask = 0; /* levl[][].flags */
+    /* gl.level.flags.nsinks--; // set_levltyp() will update this */
+    levl[u.ux][u.uy].flags = 0;
     switch (rn2(4)) {
     default:
     case 0:
         sym = S_fountain;
-        levl[u.ux][u.uy].typ = FOUNTAIN;
+        set_levltyp(u.ux, u.uy, FOUNTAIN); /* updates level.flags.nfountains */
         levl[u.ux][u.uy].blessedftn = 0;
         if (sinklooted)
             SET_FOUNTAIN_LOOTED(u.ux, u.uy);
-        gl.level.flags.nfountains++;
         break;
     case 1:
         sym = S_throne;
-        levl[u.ux][u.uy].typ = THRONE;
+        set_levltyp(u.ux, u.uy, THRONE);
         if (sinklooted)
             levl[u.ux][u.uy].looted = T_LOOTED;
         break;
     case 2:
         sym = S_altar;
-        levl[u.ux][u.uy].typ = ALTAR;
+        set_levltyp(u.ux, u.uy, ALTAR);
         /* 3.6.3: this used to pass 'rn2(A_LAWFUL + 2) - 1' to
            Align2amask() but that evaluates its argument more than once */
         algn = rn2(3) - 1; /* -1 (A_Cha) or 0 (A_Neu) or +1 (A_Law) */
@@ -390,7 +391,7 @@ polymorph_sink(void)
         break;
     case 3:
         sym = S_room;
-        levl[u.ux][u.uy].typ = ROOM;
+        set_levltyp(u.ux, u.uy, ROOM);
         make_grave(u.ux, u.uy, (char *) 0);
         if (levl[u.ux][u.uy].typ == GRAVE)
             sym = S_grave;
@@ -411,29 +412,36 @@ static boolean
 teleport_sink(void)
 {
     coordxy cx, cy;
-    int cnt = 0;
-    struct trap *trp;
-    struct engr *eng;
+    unsigned alreadylooted;
+    int trycnt = 0;
 
     do {
-        cx = rnd(COLNO - 1);
-        cy = rn2(ROWNO);
-        trp = t_at(cx, cy);
-        eng = engr_at(cx, cy);
-    } while ((levl[cx][cy].typ != ROOM || trp || eng || cansee(cx, cy))
-             && cnt++ < 200);
+#if 0   /* this isn't incorrect but it is extremely unlikely that spots
+         * on the level's edge will be ROOM so picking such wastes tries */
+        cx = rnd(COLNO - 1);           /* 1..COLNO-1 */
+        cy = rn2(ROWNO);               /* 0..ROWNO-1 */
+#else   /* use this instead */
+        cx = 1 + rnd((COLNO - 1) - 2); /* 2..COLNO-2 */
+        cy = 1 + rn2(ROWNO - 2);       /* 1..ROWNO-2 */
+#endif
+        if (levl[cx][cy].typ == ROOM
+            && !t_at(cx, cy) && !engr_at(cx, cy)
+            && (!cansee(cx, cy) || distu(cx, cy) > 3 * 3)) {
+            /* this ends up having set_levltyp() count all sinks and
+               fountains on the level twice but that is not a problem */
+            alreadylooted = levl[u.ux][u.uy].looted;
+            /* remove old sink */
+            set_levltyp(u.ux, u.uy, ROOM); /* was SINK so updates nsinks */
+            levl[u.ux][u.uy].looted = 0;
+            newsym(u.ux, u.uy);
+            /* create sink at new position */
+            set_levltyp(cx, cy, SINK); /* now SINK so also updates nsinks */
+            levl[cx][cy].looted = alreadylooted ? 1 : 0;
+            newsym(cx, cy);
+            return TRUE;
+        }
+    } while (++trycnt < 200);
 
-    if (levl[cx][cy].typ == ROOM && !trp && !eng) {
-        /* create sink at new position */
-        levl[cx][cy].typ = SINK;
-        levl[cx][cy].looted = levl[u.ux][u.uy].looted;
-        newsym(cx, cy);
-        /* remove old sink */
-        levl[u.ux][u.uy].typ = ROOM;
-        levl[u.ux][u.uy].looted = 0;
-        newsym(u.ux, u.uy);
-        return TRUE;
-    }
     return FALSE;
 }
 
@@ -1049,9 +1057,8 @@ int
 dodown(void)
 {
     struct trap *trap = 0;
-    stairway *stway = stairway_at(u.ux, u.uy);
-    boolean stairs_down = (stway && !stway->up && !stway->isladder),
-            ladder_down = (stway && !stway->up &&  stway->isladder);
+    stairway *stway;
+    boolean stairs_down, ladder_down;
 
     set_move_cmd(DIR_DOWN, 0);
 
@@ -1061,6 +1068,13 @@ dodown(void)
     if (stucksteed(TRUE)) {
         return ECMD_OK;
     }
+
+    stairs_down = ladder_down = FALSE;
+    if ((stway = stairway_at(u.ux, u.uy)) != 0 && !stway->up) {
+        stairs_down = !stway->isladder;
+        ladder_down = !stairs_down;
+    }
+
     /* Levitation might be blocked, but player can still use '>' to
        turn off controlled levitation */
     if (HLevitation || ELevitation) {
@@ -1088,16 +1102,18 @@ dodown(void)
         if (BLevitation) {
             ; /* weren't actually floating after all */
         } else if (Blind) {
+            /* glyph_to_cmap() is a macro which expands its argument many
+               times; use this to do part of its work just once */
+            int glyph_at_uxuy = levl[u.ux][u.uy].glyph;
+
             /* Avoid alerting player to an unknown stair or ladder.
              * Changes the message for a covered, known staircase
              * too; staircase knowledge is not stored anywhere.
              */
             if (stairs_down)
-                stairs_down =
-                    (glyph_to_cmap(levl[u.ux][u.uy].glyph) == S_dnstair);
+                stairs_down = (glyph_to_cmap(glyph_at_uxuy) == S_dnstair);
             else if (ladder_down)
-                ladder_down =
-                    (glyph_to_cmap(levl[u.ux][u.uy].glyph) == S_dnladder);
+                ladder_down = (glyph_to_cmap(glyph_at_uxuy) == S_dnladder);
         }
         if (Is_airlevel(&u.uz))
             You("are floating in the %s.", surface(u.ux, u.uy));
@@ -1105,9 +1121,9 @@ dodown(void)
             You("are floating in %s.",
                 is_pool(u.ux, u.uy) ? "the water" : "a bubble of air");
         else
-            floating_above(stairs_down ? "stairs" : ladder_down
-                                                    ? "ladder"
-                                                    : surface(u.ux, u.uy));
+            floating_above(stairs_down ? "stairs"
+                           : ladder_down ? "ladder"
+                             : surface(u.ux, u.uy));
         return ECMD_OK; /* didn't move */
     }
 
@@ -1397,6 +1413,7 @@ goto_level(
     boolean cant_go_back, great_effort,
             up = (depth(newlevel) < depth(&u.uz)),
             newdungeon = (u.uz.dnum != newlevel->dnum),
+            leaving_tutorial = FALSE,
             was_in_W_tower = In_W_tower(u.ux, u.uy, &u.uz),
             familiar = FALSE,
             new = FALSE; /* made a new level? */
@@ -1409,11 +1426,19 @@ goto_level(
 
     if (dunlev(newlevel) > dunlevs_in_dungeon(newlevel))
         newlevel->dlevel = dunlevs_in_dungeon(newlevel);
-    if (newdungeon && In_endgame(newlevel)) { /* 1st Endgame Level !!! */
-        if (!u.uhave.amulet)
-            return;  /* must have the Amulet */
-        if (!wizard) /* wizard ^V can bypass Earth level */
-            assign_level(newlevel, &earth_level); /* (redundant) */
+    if (newdungeon) {
+        if (In_endgame(newlevel)) { /* 1st Endgame Level !!! */
+            if (!u.uhave.amulet)
+                return;  /* must have the Amulet */
+            if (!wizard) /* wizard ^V can bypass Earth level */
+                assign_level(newlevel, &earth_level); /* (redundant) */
+        } else if (In_tutorial(newlevel)) {
+            tutorial(TRUE); /* entering tutorial */
+        } else if (In_tutorial(&u.uz)) {
+            tutorial(FALSE); /* leaving tutorial */
+            up = FALSE; /* re-enter level 1 as if starting new game */
+            leaving_tutorial = TRUE;
+        }
     }
     new_ledger = ledger_no(newlevel);
     if (new_ledger <= 0)
@@ -1464,7 +1489,7 @@ goto_level(
             gc.context.mysteryforce += rn2(diff + 2); /* L:0-4, N:0-3, C:0-2 */
 
             if (on_level(newlevel, &u.uz)) {
-                (void) safe_teleds(FALSE);
+                (void) safe_teleds(TELEDS_NO_FLAGS);
                 (void) next_to_u();
                 return;
             }
@@ -1520,7 +1545,7 @@ goto_level(
     set_ustuck((struct monst *) 0); /* clear u.ustuck and u.uswallow */
     set_uinwater(0); /* u.uinwater = 0 */
     u.uundetected = 0; /* not hidden, even if means are available */
-    if (!u.nofollowers)
+    if (!iflags.nofollowers)
         keepdogs(FALSE);
     recalc_mapseen(); /* recalculate map overview before we leave the level */
     /*
@@ -1537,13 +1562,13 @@ goto_level(
      * for the level being left, to recover dynamic memory in use and
      * to avoid dangling timers and light sources.
      */
-    cant_go_back = (newdungeon && In_endgame(newlevel));
+    cant_go_back = ((newdungeon && In_endgame(newlevel)) || leaving_tutorial);
     if (!cant_go_back) {
         update_mlstmv(); /* current monsters are becoming inactive */
         if (nhfp->structlevel)
             bufon(nhfp->fd);       /* use buffered output */
     } else {
-        free_luathemes(TRUE);
+        free_luathemes(leaving_tutorial ? tut_themes : most_themes);
     }
     save_mode = nhfp->mode;
     nhfp->mode = cant_go_back ? FREEING : (WRITING | FREEING);
@@ -1553,10 +1578,12 @@ goto_level(
     if (cant_go_back) {
         /* discard unreachable levels; keep #0 */
         for (l_idx = maxledgerno(); l_idx > 0; --l_idx)
-            delete_levelfile(l_idx);
+            if (!leaving_tutorial || ledger_to_dnum(l_idx) == tutorial_dnum)
+                delete_levelfile(l_idx);
         /* mark #overview data for all dungeon branches as uninteresting */
         for (l_idx = 0; l_idx < gn.n_dgns; ++l_idx)
-            remdun_mapseen(l_idx);
+            if (!leaving_tutorial || l_idx == tutorial_dnum)
+                remdun_mapseen(l_idx);
         /* get rid of mons & objs scheduled to migrate to discarded levels */
         discard_migrations();
     }
@@ -1621,7 +1648,6 @@ goto_level(
     if (portal && !In_endgame(&u.uz)) {
         /* find the portal on the new level */
         register struct trap *ttrap;
-        struct stairway *stway;
 
         for (ttrap = gf.ftrap; ttrap; ttrap = ttrap->ntrap)
             if (ttrap->ttyp == MAGIC_PORTAL)
@@ -1634,9 +1660,6 @@ goto_level(
                    after already getting expelled once. The portal back
                    doesn't exist anymore - see expulsion(). */
                 u_on_rndspot(0);
-            } else if ((stway = stairway_find_dir(TRUE)) != 0) {
-                /* returning from tutorial via portal */
-                u_on_newpos(stway->sx, stway->sy);
             } else {
                 if (!iflags.debug_fuzzer)
                     impossible("goto_level: no corresponding portal!");

@@ -1,4 +1,4 @@
-/* NetHack 3.7	you.h	$NHDT-Date: 1596498576 2020/08/03 23:49:36 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.48 $ */
+/* NetHack 3.7	you.h	$NHDT-Date: 1686726254 2023/06/14 07:04:14 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.72 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2016. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -358,7 +358,6 @@ struct you {
     d_level utolev;     /* level monster teleported you to, or uz */
     uchar utotype;      /* bitmask of goto_level() flags for utolev */
     d_level ucamefrom;  /* level where you came from; used for tutorial */
-    boolean nofollowers; /* level change ignores monster followers/pets */
     boolean umoved;     /* changed map location (post-move) */
     int last_str_turn;  /* 0: none, 1: half turn, 2: full turn
                          * +: turn right, -: turn left */
@@ -472,6 +471,8 @@ struct you {
     int uinvault;
     struct monst *ustuck;    /* engulfer or grabber, maybe grabbee if Upolyd */
     struct monst *usteed;    /* mount when riding */
+    unsigned ustuck_mid;     /* u.ustuck->m_id, used during save/restore */
+    unsigned usteed_mid;     /* u.usteed->m_id, used during save/restore */
     long ugallop;            /* turns steed will run after being kicked */
     int urideturns;          /* time spent riding, for skill advancement */
     int umortality;          /* how many times you died */
@@ -482,6 +483,7 @@ struct you {
     struct skills weapon_skills[P_NUM_SKILLS];
     boolean twoweap;         /* KMH -- Using two-weapon combat */
     short mcham;             /* vampire mndx if shapeshifted to bat/cloud */
+    short umovement;         /* instead of youmonst.movement */
     schar uachieved[N_ACH];  /* list of achievements in the order attained */
 }; /* end of `struct you' */
 
@@ -501,6 +503,7 @@ struct you {
 struct _hitmon_data {
     int dmg;  /* damage */
     int thrown;
+    int twohits; /* 0: 1 of 1; 1: 1 of 2; 2: 2 of 2 */
     int dieroll;
     struct permonst *mdat;
     boolean use_weapon_skill;
