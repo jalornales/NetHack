@@ -3,7 +3,6 @@
 /* NetHack may be freely redistributed.  See license for details.       */
 
 #include "hack.h"
-#include <assert.h>
 
 /* Circles
  * ==================================================================*/
@@ -256,7 +255,7 @@ vision_reset(void)
         }
     }
 
-    iflags.vision_inited = 1; /* vision is ready */
+    iflags.vision_inited = TRUE; /* vision is ready */
     gv.vision_full_recalc = 1;   /* we want to run vision_recalc() */
 }
 
@@ -839,7 +838,7 @@ vision_recalc(int control)
     gv.viz_rmin = next_rmin;
     gv.viz_rmax = next_rmax;
 
-    recalc_mapseen();
+    notice_all_mons(TRUE);
 }
 
 /*
@@ -2131,6 +2130,7 @@ howmonseen(struct monst *mon)
     int xraydist = (u.xray_range < 0) ? -1 : (u.xray_range * u.xray_range);
     unsigned how_seen = 0; /* result */
 
+    /* assert(mon != NULL) */
     /* normal vision;
        cansee is true for both normal and astral vision,
        but couldsee it not true for astral vision */

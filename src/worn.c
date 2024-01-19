@@ -5,10 +5,10 @@
 
 #include "hack.h"
 
-static void m_lose_armor(struct monst *, struct obj *);
-static void clear_bypass(struct obj *);
-static void m_dowear_type(struct monst *, long, boolean, boolean);
-static int extra_pref(struct monst *, struct obj *);
+static void m_lose_armor(struct monst *, struct obj *, boolean) NONNULLPTRS;
+static void clear_bypass(struct obj *) NO_NNARGS;
+static void m_dowear_type(struct monst *, long, boolean, boolean) NONNULLARG1;
+static int extra_pref(struct monst *, struct obj *) NONNULLARG1;
 
 const struct worn {
     long w_mask;
@@ -71,6 +71,10 @@ setworn(struct obj *obj, long mask)
                         p = objects[oobj->otyp].oc_oprop;
                         u.uprops[p].extrinsic =
                             u.uprops[p].extrinsic & ~wp->w_mask;
+                        /* if the hero removed an extrinsic-granting item,
+                           nearby monsters will notice and attempt attacks of
+                           that type again */
+                        monstunseesu_prop(p);
                         if ((p = w_blocks(oobj, mask)) != 0)
                             u.uprops[p].blocked &= ~wp->w_mask;
                         if (oobj->oartifact)
@@ -132,6 +136,7 @@ setnotworn(struct obj *obj)
             *(wp->w_obj) = (struct obj *) 0;
             p = objects[obj->otyp].oc_oprop;
             u.uprops[p].extrinsic = u.uprops[p].extrinsic & ~wp->w_mask;
+            monstunseesu_prop(p); /* remove this extrinsic from seenres */ 
             obj->owornmask &= ~wp->w_mask;
             if (obj->oartifact)
                 set_artifact_intrinsic(obj, 0, wp->w_mask);
@@ -322,7 +327,7 @@ mon_adjust_speed(
         if (petrify) {
             /* mimic the player's petrification countdown; "slowing down"
                even if fast movement rate retained via worn speed boots */
-            if (Verbose(3, mon_adjust_speed))
+            if (flags.verbose)
                 pline("%s is slowing down.", Monnam(mon));
         } else if (adjust > 0 || mon->mspeed == MFAST)
             pline("%s is suddenly moving %sfaster.", Monnam(mon), howmuch);
@@ -797,10 +802,15 @@ which_armor(struct monst *mon, long flag)
 
 /* remove an item of armor and then drop it */
 static void
-m_lose_armor(struct monst *mon, struct obj *obj)
+m_lose_armor(
+    struct monst *mon,
+    struct obj *obj,
+    boolean polyspot)
 {
     extract_from_minvent(mon, obj, TRUE, FALSE);
     place_object(obj, mon->mx, mon->my);
+    if (polyspot)
+        bypass_obj(obj);
     /* call stackobj() if we ever drop anything that can merge */
     newsym(mon->mx, mon->my);
 }
@@ -932,8 +942,9 @@ mon_break_armor(struct monst *mon, boolean polyspot)
 {
     register struct obj *otmp;
     struct permonst *mdat = mon->data;
-    boolean vis = cansee(mon->mx, mon->my);
-    boolean handless_or_tiny = (nohands(mdat) || verysmall(mdat));
+    boolean vis = cansee(mon->mx, mon->my),
+            handless_or_tiny = (nohands(mdat) || verysmall(mdat)),
+            noride = FALSE;
     const char *pronoun = mhim(mon), *ppronoun = mhis(mon);
 
     if (breakarm(mdat)) {
@@ -959,9 +970,7 @@ mon_break_armor(struct monst *mon, boolean polyspot)
                 if (vis)
                     pline("%s %s falls off!", s_suffix(Monnam(mon)),
                           cloak_simple_name(otmp));
-                if (polyspot)
-                    bypass_obj(otmp);
-                m_lose_armor(mon, otmp);
+                m_lose_armor(mon, otmp, polyspot);
             } else {
                 Soundeffect(se_ripping_sound, 100);
                 if (vis)
@@ -990,9 +999,7 @@ mon_break_armor(struct monst *mon, boolean polyspot)
                       pronoun);
             else
                 You_hear("a thud.");
-            if (polyspot)
-                bypass_obj(otmp);
-            m_lose_armor(mon, otmp);
+            m_lose_armor(mon, otmp, polyspot);
         }
         if ((otmp = which_armor(mon, W_ARMC)) != 0
             /* mummy wrapping adapts to small and very big sizes */
@@ -1005,9 +1012,7 @@ mon_break_armor(struct monst *mon, boolean polyspot)
                     pline("%s shrinks out of %s %s!", Monnam(mon), ppronoun,
                           cloak_simple_name(otmp));
             }
-            if (polyspot)
-                bypass_obj(otmp);
-            m_lose_armor(mon, otmp);
+            m_lose_armor(mon, otmp, polyspot);
         }
         if ((otmp = which_armor(mon, W_ARMU)) != 0) {
             if (vis) {
@@ -1018,9 +1023,7 @@ mon_break_armor(struct monst *mon, boolean polyspot)
                     pline("%s becomes much too small for %s shirt!",
                           Monnam(mon), ppronoun);
             }
-            if (polyspot)
-                bypass_obj(otmp);
-            m_lose_armor(mon, otmp);
+            m_lose_armor(mon, otmp, polyspot);
         }
     }
     if (handless_or_tiny) {
@@ -1029,9 +1032,7 @@ mon_break_armor(struct monst *mon, boolean polyspot)
             if (vis)
                 pline("%s drops %s gloves%s!", Monnam(mon), ppronoun,
                       MON_WEP(mon) ? " and weapon" : "");
-            if (polyspot)
-                bypass_obj(otmp);
-            m_lose_armor(mon, otmp);
+            m_lose_armor(mon, otmp, polyspot);
         }
         if ((otmp = which_armor(mon, W_ARMS)) != 0) {
             Soundeffect(se_clank, 50);
@@ -1040,9 +1041,7 @@ mon_break_armor(struct monst *mon, boolean polyspot)
                       ppronoun);
             else
                 You_hear("a clank.");
-            if (polyspot)
-                bypass_obj(otmp);
-            m_lose_armor(mon, otmp);
+            m_lose_armor(mon, otmp, polyspot);
         }
     }
     if (handless_or_tiny || has_horns(mdat)) {
@@ -1054,9 +1053,7 @@ mon_break_armor(struct monst *mon, boolean polyspot)
                       surface(mon->mx, mon->my));
             else
                 You_hear("a clank.");
-            if (polyspot)
-                bypass_obj(otmp);
-            m_lose_armor(mon, otmp);
+            m_lose_armor(mon, otmp, polyspot);
         }
     }
     if (handless_or_tiny || slithy(mdat) || mdat->mlet == S_CENTAUR) {
@@ -1068,23 +1065,19 @@ mon_break_armor(struct monst *mon, boolean polyspot)
                     pline("%s boots %s off %s feet!", s_suffix(Monnam(mon)),
                           verysmall(mdat) ? "slide" : "are pushed", ppronoun);
             }
-            if (polyspot)
-                bypass_obj(otmp);
-            m_lose_armor(mon, otmp);
+            m_lose_armor(mon, otmp, polyspot);
         }
     }
     if (!can_saddle(mon)) {
         if ((otmp = which_armor(mon, W_SADDLE)) != 0) {
-            if (polyspot)
-                bypass_obj(otmp);
-            m_lose_armor(mon, otmp);
+            m_lose_armor(mon, otmp, polyspot);
             if (vis)
                 pline("%s saddle falls off.", s_suffix(Monnam(mon)));
         }
         if (mon == u.usteed)
-            goto noride;
-    } else if (mon == u.usteed && !can_ride(mon)) {
- noride:
+            noride = TRUE;
+    }
+    if (noride || (mon == u.usteed && !can_ride(mon))) {
         You("can no longer ride %s.", mon_nam(mon));
         if (touch_petrifies(u.usteed->data) && !Stone_resistance && rnl(3)) {
             char buf[BUFSZ];

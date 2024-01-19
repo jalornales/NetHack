@@ -1,4 +1,4 @@
-/* NetHack 3.7	trap.c	$NHDT-Date: 1687033655 2023/06/17 20:27:35 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.540 $ */
+/* NetHack 3.7	trap.c	$NHDT-Date: 1703070192 2023/12/20 11:03:12 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.562 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2013. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -67,7 +67,7 @@ static void untrap_box(struct obj *, boolean, boolean);
 #if 0
 static void join_adjacent_pits(struct trap *);
 #endif
-static boolean thitm(int, struct monst *, struct obj *, int, boolean);
+static boolean thitm(int, struct monst *, struct obj *, int, boolean) NONNULLARG2;
 static void maybe_finish_sokoban(void);
 
 static const char *const a_your[2] = { "a", "your" };
@@ -198,7 +198,7 @@ erode_obj(
 
     switch (type) {
     case ERODE_BURN:
-        if (uvictim && u_adtyp_resistance_obj(AD_FIRE) && rn2(100))
+        if (uvictim && inventory_resistance_check(AD_FIRE))
             return ER_NOTHING;
         vulnerable = is_flammable(otmp);
         check_grease = FALSE;
@@ -215,7 +215,7 @@ erode_obj(
         cost_type = COST_ROT;
         break;
     case ERODE_CORRODE:
-        if (uvictim && u_adtyp_resistance_obj(AD_ACID) && rn2(100))
+        if (uvictim && inventory_resistance_check(AD_ACID))
             return ER_NOTHING;
         vulnerable = is_corrodeable(otmp);
         is_primary = FALSE;
@@ -245,13 +245,13 @@ erode_obj(
     } else if (!erosion_matters(otmp)) {
         return ER_NOTHING;
     } else if (!vulnerable || (otmp->oerodeproof && otmp->rknown)) {
-        if (Verbose(3, erode_obj1) && print && (uvictim || vismon))
+        if (flags.verbose && print && (uvictim || vismon))
             pline("%s %s %s not affected by %s.",
                   uvictim ? "Your" : s_suffix(Monnam(victim)),
                   ostr, vtense(ostr, "are"), bythe[type]);
         return ER_NOTHING;
     } else if (otmp->oerodeproof || (otmp->blessed && !rnl(4))) {
-        if (Verbose(3, erode_obj2) && (print || otmp->oerodeproof)
+        if (flags.verbose && (print || otmp->oerodeproof)
             && (uvictim || vismon || visobj))
             pline("Somehow, %s %s %s not affected by the %s.",
                   uvictim ? "your"
@@ -336,7 +336,7 @@ erode_obj(
         delobj(otmp);
         return ER_DESTROYED;
     } else {
-        if (Verbose(3, erode_obj3) && print) {
+        if (flags.verbose && print) {
             if (uvictim)
                 Your("%s %s completely %s.",
                      ostr, vtense(ostr, Blind ? "feel" : "look"), msg[type]);
@@ -483,7 +483,7 @@ maketrap(coordxy x, coordxy y, int typ)
     } else {
         oldplace = FALSE;
         ttmp = newtrap();
-        (void) memset((genericptr_t)ttmp, 0, sizeof(struct trap));
+        (void) memset((genericptr_t) ttmp, 0, sizeof(struct trap));
         ttmp->ntrap = 0;
         ttmp->tx = x;
         ttmp->ty = y;
@@ -741,7 +741,7 @@ animate_statue(
             mon = makemon(&mons[PM_DOPPELGANGER], x, y, mmflags);
             /* if hero has protection from shape changers, cham field will
                be NON_PM; otherwise, set form to match the statue */
-            if (mon && mon->cham >= LOW_PM)
+            if (mon && ismnum(mon->cham))
                 (void) newcham(mon, mptr, NO_NC_FLAGS);
         } else {
             if (cause == ANIMATE_SPELL)
@@ -989,7 +989,7 @@ set_utrap(unsigned int tim, unsigned int typ)
        have already set u.utrap to 0 so this check won't be sufficient
        in that situation; caller will need to set context.botl itself */
     if (!u.utrap ^ !tim)
-        gc.context.botl = TRUE;
+        disp.botl = TRUE;
 
     u.utrap = tim;
     u.utraptype = tim ? typ : TT_NONE;
@@ -1213,7 +1213,7 @@ trapeffect_rocktrap(
                 } else if (hard_helmet(uarmh)) {
                     pline("Fortunately, you are wearing a hard helmet.");
                     dmg = 2;
-                } else if (Verbose(3, trapeffect_rocktrap)) {
+                } else if (flags.verbose) {
                     pline("%s does not protect you.", Yname2(uarmh));
                 }
             } else if (passes_rocks(gy.youmonst.data)) {
@@ -1283,7 +1283,7 @@ trapeffect_sqky_board(
             }
         } else {
             seetrap(trap);
-            if (trap->tnote >= 0 && trap->tnote < SIZE(tsnds)) {
+            if (IndexOk(trap->tnote, tsnds)) {
                 Soundeffect(tsnds[trap->tnote], 50);
             }
             pline("A board beneath you %s%s%s.",
@@ -1300,7 +1300,7 @@ trapeffect_sqky_board(
         /* stepped on a squeaky board */
         if (in_sight) {
             if (!Deaf) {
-                if (trap->tnote >= 0 && trap->tnote < SIZE(tsnds)) {
+                if (IndexOk(trap->tnote, tsnds)) {
                     Soundeffect(tsnds[trap->tnote], 50);
                 }
                 pline("A board beneath %s squeaks %s loudly.",
@@ -1315,7 +1315,7 @@ trapeffect_sqky_board(
             int range = couldsee(mtmp->mx, mtmp->my) /* 9 or 5 */
                 ? (BOLT_LIM + 1) : (BOLT_LIM - 3);
 
-            if (trap->tnote >= 0 && trap->tnote < SIZE(tsnds)) {
+            if (IndexOk(trap->tnote, tsnds)) {
                 Soundeffect(tsnds[trap->tnote],
                              ((mdistu(mtmp) <= range * range)
                                 ? 40 : 20));
@@ -1422,6 +1422,7 @@ trapeffect_slp_gas_trap(
         } else {
             pline("A cloud of gas puts you to sleep!");
             fall_asleep(-rnd(25), TRUE);
+            monstunseesu(M_SEEN_SLEEP);
         }
         (void) steedintrap(trap, (struct obj *) 0);
     } else {
@@ -1807,7 +1808,8 @@ trapeffect_pit(
                 /* openfallingtrap; not inescapable here */
                 if (in_sight) {
                     seetrap(trap);
-                    pline("%s doesn't fall into the pit.", Monnam(mtmp));
+                    pline_xy(mtmp->mx, mtmp->my,
+                             "%s doesn't fall into the pit.", Monnam(mtmp));
                 }
                 return Trap_Effect_Finished;
             }
@@ -1818,8 +1820,9 @@ trapeffect_pit(
         if (!passes_walls(mptr))
             mtmp->mtrapped = 1;
         if (in_sight) {
-            pline("%s %s into %s pit!", Monnam(mtmp), fallverb,
-                  a_your[trap->madeby_u]);
+            pline_xy(mtmp->mx, mtmp->my,
+                     "%s %s into %s pit!", Monnam(mtmp), fallverb,
+                     a_your[trap->madeby_u]);
             if (mptr == &mons[PM_PIT_VIPER]
                 || mptr == &mons[PM_PIT_FIEND])
                 pline("How pitiful.  Isn't that the pits?");
@@ -1871,18 +1874,20 @@ trapeffect_hole(
                 if (in_sight) {
                     seetrap(trap);
                     if (tt == TRAPDOOR)
-                        pline(
+                        pline_xy(mtmp->mx, mtmp->my,
                             "A trap door opens, but %s doesn't fall through.",
                               mon_nam(mtmp));
                     else /* (tt == HOLE) */
-                        pline("%s doesn't fall through the hole.",
-                              Monnam(mtmp));
+                        pline_xy(mtmp->mx, mtmp->my,
+                                 "%s doesn't fall through the hole.",
+                                 Monnam(mtmp));
                 }
                 return Trap_Effect_Finished; /* inescapable = FALSE; */
             }
             if (inescapable) { /* sokoban hole */
                 if (in_sight) {
-                    pline("%s seems to be yanked down!", Monnam(mtmp));
+                    pline_xy(mtmp->mx, mtmp->my,
+                             "%s seems to be yanked down!", Monnam(mtmp));
                     /* suppress message in mlevel_tele_trap() */
                     in_sight = FALSE;
                     seetrap(trap);
@@ -2381,9 +2386,9 @@ trapeffect_landmine(
         coordxy tx = trap->tx, ty = trap->ty;
 
         /* heavier monsters are more likely to set off a land mine; on the
-           other hand, any mon lighter than the trigger weight is immune. */
-#define MINE_TRIGGER_WT (WT_ELF / 2)
-        if (rn2(mtmp->data->cwt + 1) < MINE_TRIGGER_WT)
+           other hand, any mon lighter than the trigger weight is immune */
+#define MINE_TRIGGER_WT (WT_ELF / 2U)
+        if (rn2(mtmp->data->cwt + 1) < (int) MINE_TRIGGER_WT)
             return Trap_Effect_Finished;
         if (is_flyer(mptr)) {
             boolean already_seen = trap->tseen;
@@ -2541,6 +2546,172 @@ trapeffect_vibrating_square(
         }
     }
     return Trap_Effect_Finished;
+}
+
+/*
+ * for PR#259 - paranoid_confirm:trap
+ *
+ * Will a monster suffer any adverse effects from a certain trap?
+ * Note: does NOT mean "will a monster trigger a trap in the first place",
+ * though if it won't that does imply that they'll not suffer adverse effects.
+ * For example, an elf is considered immune to sleeping gas traps even though
+ * they'll set the trap off.
+ * Return value:
+ *  TRAP_NOT_IMMUNE = not immune at the moment;
+ *  TRAP_CLEARLY_IMMUNE = obviously immune (if player is polymorphed, assume
+ *    they know which traps they are immune to in their current form);
+ *  TRAP_HIDDEN_IMMUNE = immune but in non-obvious way such as an unidentified
+ *    item or hidden intrinsic providing a resistance; the player should still
+ *    be warned of this trap, while monsters implicitly know they're immune.
+ */
+int
+immune_to_trap(struct monst *mon, unsigned ttype)
+{
+    struct permonst *pm;
+    struct obj *obj;
+    boolean is_you;
+
+    if (!mon) {
+        impossible("immune_to_trap: null monster");
+        return TRAP_NOT_IMMUNE;
+    }
+    pm = mon->data;
+    is_you = (mon == &gy.youmonst);
+
+    switch (ttype) {
+    case ARROW_TRAP:
+    case DART_TRAP:
+    case ROCKTRAP:
+        /* can hit anything; even noncorporeal monsters might get a blessed
+           projectile */
+        return TRAP_NOT_IMMUNE;
+    case BEAR_TRAP:
+        if (pm->msize <= MZ_SMALL
+            || amorphous(pm) || is_whirly(pm) || unsolid(pm))
+            return TRAP_CLEARLY_IMMUNE;
+        /*FALLTHRU*/
+    case SQKY_BOARD:
+    case LANDMINE:
+    case ROLLING_BOULDER_TRAP:
+    case HOLE:
+    case TRAPDOOR:
+    case PIT:
+    case SPIKED_PIT:
+        /* ground-based traps, which can be evaded by levitation, flying, or
+           hanging to the ceiling */
+        if (Sokoban && (is_pit(ttype) || is_hole(ttype)))
+            return TRAP_NOT_IMMUNE;
+        if (is_floater(pm) || is_flyer(pm)
+            || (is_clinger(pm) && has_ceiling(&u.uz)))
+            return TRAP_CLEARLY_IMMUNE;
+        else if (is_you && (Levitation || Flying))
+            return TRAP_CLEARLY_IMMUNE;
+        return TRAP_NOT_IMMUNE;
+    case SLP_GAS_TRAP:
+        if (breathless(pm))
+            return TRAP_CLEARLY_IMMUNE;
+        else if (!is_you && resists_sleep(mon))
+            return TRAP_CLEARLY_IMMUNE;
+        else if (is_you && Sleep_resistance)
+            return TRAP_HIDDEN_IMMUNE;
+        return TRAP_NOT_IMMUNE;
+    case LEVEL_TELEP:
+    case TELEP_TRAP:
+        /* consider unintended teleporting to be an adverse effect; if in
+           the endgame or carrying the Amulet, the teleport trap won't work
+           anyway, so anything hitting it is immune. */
+        if (In_endgame(&u.uz) || mon_has_amulet(mon))
+            return TRAP_CLEARLY_IMMUNE;
+        return TRAP_NOT_IMMUNE;
+    case POLY_TRAP:
+        if (resists_magm(mon))
+            /* covers Antimagic for player */
+            return (is_you ? TRAP_HIDDEN_IMMUNE : TRAP_CLEARLY_IMMUNE);
+        return TRAP_NOT_IMMUNE;
+    case STATUE_TRAP:
+        /* no effect on monsters, only affects players; only trap detection
+           can let player know that this is a statue trap there ahead of time;
+           in the rare case this happens, do consider it an adverse effect */
+        if (!is_you)
+            return TRAP_CLEARLY_IMMUNE;
+        return TRAP_NOT_IMMUNE;
+    case WEB:
+        /* most of this code is lifted from mu_maybe_destroy_web */
+        if (webmaker(pm) || amorphous(pm) || is_whirly(pm) || flaming(pm)
+            || unsolid(pm) || pm == &mons[PM_GELATINOUS_CUBE])
+            return TRAP_CLEARLY_IMMUNE;
+        return TRAP_NOT_IMMUNE;
+    case ANTI_MAGIC:
+        /* doesn't hurt any non-magic-resistant monster with no magic */
+        if (is_you) {
+            if (Antimagic)
+                return TRAP_NOT_IMMUNE;
+            else if (u.uenmax == 0)
+                /* player won't lose HP and can't lose more Pw */
+                return TRAP_HIDDEN_IMMUNE;
+
+        /* following conditional lifted from mintrap ANTI_MAGIC logic */
+        } else if (!resists_magm(mon)
+                   && (mon->mcan || (!attacktype(pm, AT_MAGC)
+                                     && !attacktype(pm, AT_BREA)))) {
+            return TRAP_CLEARLY_IMMUNE;
+        }
+        return TRAP_NOT_IMMUNE;
+    case RUST_TRAP:
+        /* harmful if wearing anything rustable or if mon is an iron golem */
+        if (pm == &mons[PM_IRON_GOLEM])
+            return TRAP_NOT_IMMUNE;
+
+        for (obj = is_you ? gi.invent : mon->minvent; obj; obj = obj->nobj) {
+            /* rust traps can currently hit only worn armor and weapons */
+            if (is_rustprone(obj) && obj->owornmask) {
+                if (is_you && (obj == uquiver
+                               || (obj == uswapwep && !u.twoweap)))
+                    continue;
+                return TRAP_NOT_IMMUNE;
+            }
+        }
+        return TRAP_CLEARLY_IMMUNE;
+    case MAGIC_TRAP:
+        /* for player, any number of bad effects;
+           for monsters, only replicates fire trap, so fall through */
+        if (is_you)
+            return TRAP_NOT_IMMUNE;
+        /*FALLTHRU*/
+    case FIRE_TRAP: /* can always destroy items being carried */
+        /* harmful if not resistant or if carrying anything that could burn */
+        if (is_you ? !Fire_resistance : !resists_fire(mon))
+            return TRAP_NOT_IMMUNE;
+
+        for (obj = is_you ? gi.invent : mon->minvent; obj; obj = obj->nobj) {
+            if (obj->oclass == SCROLL_CLASS || obj->oclass == POTION_CLASS
+                || obj->oclass == SPBOOK_CLASS
+                || (obj->owornmask && is_flammable(obj))) {
+                if ((obj->otyp == SCR_FIRE || obj->otyp == SPE_FIREBALL)
+                    /* mon knows scroll of fire or spellbook of fireball
+                       won't be affected; hero knows iff this one has been
+                       seen and its type has been discovered */
+                    && (!is_you
+                        || (obj->dknown && objects[obj->otyp].oc_name_known)))
+                    continue;
+                return TRAP_NOT_IMMUNE;
+            }
+        }
+        return (is_you ? TRAP_HIDDEN_IMMUNE : TRAP_CLEARLY_IMMUNE);
+    case MAGIC_PORTAL:
+        /* never hurts anything, but player is considered non-immune so they
+           can be asked about entering it */
+        if (!is_you)
+            return TRAP_CLEARLY_IMMUNE;
+        return TRAP_NOT_IMMUNE;
+    case VIBRATING_SQUARE:
+        /* no adverse effects */
+        return TRAP_CLEARLY_IMMUNE;
+    default:
+        impossible("immune_to_trap: bad ttype %u", ttype);
+        break;
+    }
+    return TRAP_NOT_IMMUNE;
 }
 
 static int
@@ -2756,20 +2927,8 @@ steedintrap(struct trap *trap, struct obj *otmp)
         break;
     case POLY_TRAP:
         if (!resists_magm(steed) && !resist(steed, WAND_CLASS, 0, NOTELL)) {
-            struct permonst *mdat = steed->data;
-
+            /* newcham() will probably end up calling poly_steed() */
             (void) newcham(steed, (struct permonst *) 0, NC_SHOW_MSG);
-            if (!can_saddle(steed) || !can_ride(steed)) {
-                dismount_steed(DISMOUNT_POLY);
-            } else {
-                char buf[BUFSZ];
-
-                Strcpy(buf, x_monnam(steed, ARTICLE_YOUR, (char *) 0,
-                                            SUPPRESS_SADDLE, FALSE));
-                if (mdat != steed->data)
-                    (void) strsubst(buf, "your ", "your new ");
-                You("adjust yourself in the saddle on %s.", buf);
-            }
         }
         steedhit = TRUE;
         break;
@@ -3127,16 +3286,25 @@ launch_obj(
                 unblock_point(gb.bhitpos.x, gb.bhitpos.y);
         }
 
-        /* if about to hit iron bars, do so now */
-        if (dist > 0 && isok(gb.bhitpos.x + dx, gb.bhitpos.y + dy)
-            && levl[gb.bhitpos.x + dx][gb.bhitpos.y + dy].typ == IRONBARS) {
-            x2 = gb.bhitpos.x, y2 = gb.bhitpos.y; /* object stops here */
-            if (hits_bars(&singleobj, x2, y2, x2 + dx, y2 + dy, !rn2(20), 0)) {
-                if (!singleobj) {
-                    used_up = TRUE;
-                    launch_drop_spot((struct obj *) 0, 0, 0);
+        /* if about to hit something, do so now */
+        if (dist > 0 && isok(gb.bhitpos.x + dx, gb.bhitpos.y + dy)) {
+            coordxy fx = gb.bhitpos.x + dx, fy = gb.bhitpos.y + dy;
+            uchar typ = levl[fx][fy].typ;
+
+            if (typ == IRONBARS) {
+                x2 = gb.bhitpos.x, y2 = gb.bhitpos.y; /* object stops here */
+                if (hits_bars(&singleobj, x2, y2, fx, fy, !rn2(20), 0)) {
+                    if (!singleobj) {
+                        used_up = TRUE;
+                        launch_drop_spot((struct obj *) 0, 0, 0);
+                    }
+                    break;
                 }
-                break;
+            } else if (IS_STWALL(typ) || IS_TREE(typ)) {
+                x2 = gb.bhitpos.x, y2 = gb.bhitpos.y; /* object stops here */
+                if (!Deaf)
+                    pline("Thump!");
+                wake_nearto(x2, y2, 16);
             }
         }
     }
@@ -3284,8 +3452,10 @@ isclearpath(
     while (distance-- > 0) {
         x += dx;
         y += dy;
+        if (!isok(x, y))
+            return FALSE;
         typ = levl[x][y].typ;
-        if (!isok(x, y) || !ZAP_POS(typ) || closed_door(x, y))
+        if (!ZAP_POS(typ) || closed_door(x, y))
             return FALSE;
         if ((t = t_at(x, y)) != 0
             && (is_pit(t->ttyp) || is_hole(t->ttyp) || is_xport(t->ttyp)))
@@ -3494,7 +3664,7 @@ mselftouch(
 void
 float_up(void)
 {
-    gc.context.botl = TRUE;
+    disp.botl = TRUE;
     if (u.utrap) {
         if (u.utraptype == TT_PIT) {
             reset_utrap(FALSE);
@@ -3607,7 +3777,7 @@ float_down(
         (void) encumber_msg(); /* carrying capacity might have changed */
         return 0;
     }
-    gc.context.botl = TRUE;
+    disp.botl = TRUE;
     nomul(0); /* stop running or resting */
     if (BFlying) {
         /* controlled flight no longer overridden by levitation */
@@ -3770,7 +3940,7 @@ climb_pit(void)
             pitname);
         fill_pit(u.ux, u.uy);
         gv.vision_full_recalc = 1; /* vision limits change */
-    } else if (u.dz || Verbose(3, climb_pit)) {
+    } else if (u.dz || flags.verbose) {
         /* these should use 'pitname' rather than "pit" for hallucination
            but that would nullify Norep (this message can be repeated
            many times without further user intervention by using a run
@@ -3832,23 +4002,25 @@ dofiretrap(
         if (alt > num)
             num = alt;
         if (u.mhmax > mons[u.umonnum].mlevel)
-            u.mhmax -= rn2(min(u.mhmax, num + 1)), gc.context.botl = TRUE;
+            u.mhmax -= rn2(min(u.mhmax, num + 1)), disp.botl = TRUE;
         if (u.mh > u.mhmax)
-            u.mh = u.mhmax, gc.context.botl = TRUE;
+            u.mh = u.mhmax, disp.botl = TRUE;
+        monstunseesu(M_SEEN_FIRE);
     } else {
         int uhpmin = minuhpmax(1), olduhpmax = u.uhpmax;
 
         num = d(2, 4);
         if (u.uhpmax > uhpmin) {
-            u.uhpmax -= rn2(min(u.uhpmax, num + 1)), gc.context.botl = TRUE;
+            u.uhpmax -= rn2(min(u.uhpmax, num + 1)), disp.botl = TRUE;
         } /* note: no 'else' here */
         if (u.uhpmax < uhpmin) {
-            setuhpmax(min(olduhpmax, uhpmin)); /* sets gc.context.botl */
+            setuhpmax(min(olduhpmax, uhpmin)); /* sets disp.botl */
             if (!Drain_resistance)
                 losexp(NULL); /* never fatal when 'drainer' is Null */
         }
         if (u.uhp > u.uhpmax)
-            u.uhp = u.uhpmax, gc.context.botl = TRUE;
+            u.uhp = u.uhpmax, disp.botl = TRUE;
+        monstunseesu(M_SEEN_FIRE);
     }
     if (!num)
         You("are uninjured.");
@@ -3894,12 +4066,12 @@ domagictrap(void)
             Soundeffect(se_deafening_roar_atmospheric, 100);
             You_hear("a deafening roar!");
             incr_itimeout(&HDeaf, rn1(20, 30));
-            gc.context.botl = TRUE;
+            disp.botl = TRUE;
         } else {
             /* magic vibrations still hit you */
             You_feel("rankled.");
             incr_itimeout(&HDeaf, rn1(5, 15));
-            gc.context.botl = TRUE;
+            disp.botl = TRUE;
         }
         while (cnt--)
             (void) makemon((struct permonst *) 0, u.ux, u.uy, NO_MM_FLAGS);
@@ -4184,7 +4356,7 @@ acid_damage(struct obj* obj)
     victim = carried(obj) ? &gy.youmonst : mcarried(obj) ? obj->ocarry : NULL;
     vismon = victim && (victim != &gy.youmonst) && canseemon(victim);
 
-    if (victim == &gy.youmonst && u_adtyp_resistance_obj(AD_ACID) && rn2(100))
+    if (victim == &gy.youmonst && inventory_resistance_check(AD_ACID))
         return;
 
     if (obj->greased) {
@@ -4297,25 +4469,22 @@ water_damage(
             update_inventory();
         return ER_DAMAGED;
     } else if (obj->oclass == SPBOOK_CLASS) {
-        if (obj->otyp == SPE_BOOK_OF_THE_DEAD) {
-            /*
-             * FIXME?
-             *  This might be given when hero can't see or feel it.
-             *  The book can't be inside a container but it could get
-             *  dunked away from hero if laying on ice which melts.
-             */
-            pline("Steam rises from %s.", the(xname(obj)));
+        int otyp = obj->otyp;
+
+        if (otyp == SPE_BOOK_OF_THE_DEAD) {
+            coordxy ox = 0, oy = 0;
+
+            /* note: The Book of the Dead can't be contained or buried */
+            if (get_obj_location(obj, &ox, &oy, CONTAINED_TOO | BURIED_TOO))
+                obj->ox = ox, obj->oy = oy;
+            if (isok(ox, oy) && cansee(ox, oy))
+                pline("Steam rises from %s.", the(xname(obj)));
             return 0;
-        } else if (obj->otyp == SPE_BLANK_PAPER) {
+        } else if (otyp == SPE_BLANK_PAPER) {
             return 0;
         }
         if (in_invent)
             Your("%s %s.", ostr, vtense(ostr, "fade"));
-
-        if (obj->otyp == SPE_NOVEL) {
-            obj->novelidx = 0;
-            free_oname(obj);
-        }
 
         obj->otyp = SPE_BLANK_PAPER;
         /* same re-init as over-reading or polymorph; matters if it gets
@@ -4324,6 +4493,17 @@ water_damage(
         if (obj->spestudied)
             obj->spestudied = rn2(obj->spestudied);
         obj->dknown = 0;
+        /* blanking a novel is more involved than blanking a spellbook */
+        if (otyp == SPE_NOVEL) { /* old type */
+            obj->novelidx = 0; /* overloads corpsenm, not used for splbooks */
+            free_oname(obj);
+            /* novels weigh less than spellbooks; apparently blanking them
+               magically makes them become heavier */
+            do {
+                obj->owt = weight(obj);
+                obj = (obj->where == OBJ_CONTAINED) ? obj->ocontainer : 0;
+            } while (obj);
+        }
         if (in_invent)
             update_inventory();
         return ER_DAMAGED;
@@ -4409,6 +4589,7 @@ water_damage_chain(
 {
     struct obj *otmp;
     coordxy x, y;
+    coord save_bhitpos;
 
     if (!obj)
         return;
@@ -4417,7 +4598,10 @@ water_damage_chain(
        acid nor unseen have exploded during this water damage sequence */
     ga.acid_ctx.dkn_boom = ga.acid_ctx.unk_boom = 0;
     ga.acid_ctx.ctx_valid = TRUE;
-
+    /* we don't want to permanently overwrite bhitpos below, since we can get
+       here from scenarios where it was in use up the call stack (e.g. thrown
+       item hurtling the levitating hero into a wall of water) */
+    save_bhitpos = gb.bhitpos;
     /* erode_obj() relies on bhitpos if target objects aren't carried by
        the hero or a monster, to check visibility controlling feedback */
     if (get_obj_location(obj, &x, &y, CONTAINED_TOO))
@@ -4428,9 +4612,10 @@ water_damage_chain(
         water_damage(obj, (char *) 0, FALSE);
     }
 
-    /* reset acid context */
+    /* reset acid context and bhitpos */
     ga.acid_ctx.dkn_boom = ga.acid_ctx.unk_boom = 0;
     ga.acid_ctx.ctx_valid = FALSE;
+    gb.bhitpos = save_bhitpos;
 }
 
 /*
@@ -4456,14 +4641,16 @@ emergency_disrobe(boolean *lostsome)
                  * Undroppables are: body armor, boots, gloves,
                  * amulets, and rings because of the time and effort
                  * in removing them + loadstone and other cursed stuff
-                 * for obvious reasons.
+                 * for obvious reasons.  Also, any item in the midst
+                 * of being taken off or stolen.
                  */
                 if (!((obj->otyp == LOADSTONE && obj->cursed) || obj == uamul
                       || obj == uleft || obj == uright || obj == ublindf
                       || obj == uarm || obj == uarmc || obj == uarmg
                       || obj == uarmf || obj == uarmu
                       || (obj->cursed && (obj == uarmh || obj == uarms))
-                      || welded(obj)))
+                      || welded(obj)
+                      || obj->o_id == gs.stealoid || obj->in_use))
                     otmp = obj;
                 /* reached the mark and found some stuff to drop? */
                 if (--i < 0 && otmp)
@@ -4514,11 +4701,47 @@ rnd_nextto_goodpos(coordxy *x, coordxy *y, struct monst *mtmp)
     return FALSE;
 }
 
+/* print a message about being back on the ground after leaving a pool */
+void
+back_on_ground(boolean rescued)
+{
+    const char *preposit = (Levitation || Flying) ? "over" : "on", 
+               *surf = surface(u.ux, u.uy), *you_are_back;
+    char icebuf[QBUFSZ];
+
+    if (is_ice(u.ux, u.uy)) {
+        /* "on ice" */
+        surf = ice_descr(u.ux, u.uy, icebuf);
+    } else if (!strcmpi(surf, "floor") || !strcmpi(surf, "ground")) {
+        /* "on solid ground" */
+        surf = "solid ground";
+    } else if (!strcmpi(surf, "bridge") || !strcmpi(surf, "altar")
+               || !strcmpi(surf, "headstone")) {
+        /* "on a bridge" */
+        surf = an(surf);
+    } else if (!strcmpi(surf, "stairs") || !strcmpi(surf, "lava")
+               || !strcmpi(surf, "bottom")) {
+        /* "on the stairs" */
+        surf = the(surf);
+    } else { /* "cloud", "air", "air bubble", "wall", "fountain", "doorway" */
+        /* "in a cloud", "in the air" */
+        surf = !strcmp(surf, "air") ? the(surf) : an(surf);
+        preposit = "in";
+    }
+    if (rescued) {
+        you_are_back = "You find yourself";
+    } else {
+        you_are_back = flags.verbose ? "You are back" : "Back";
+    }
+    pline("%s %s %s.", you_are_back, preposit, surf);
+    iflags.last_msg = PLNMSG_BACK_ON_GROUND;
+}
+
 /* life-saving or divine rescue has attempted to get the hero out of hostile
    terrain and put hero in an unexpected spot or failed due to overfull level
    and just prevented death so "back on solid ground" may be inappropriate */
 void
-back_on_ground(int how)
+rescued_from_terrain(int how)
 {
     static const char find_yourself[] = "find yourself";
     struct rm *lev = &levl[u.ux][u.uy];
@@ -4553,11 +4776,12 @@ back_on_ground(int how)
         break;
     }
     if (!mesggiven)
-        You("%s back on solid %s.", find_yourself, surface(u.ux, u.uy));
+        back_on_ground(TRUE);
 
     iflags.last_msg = PLNMSG_BACK_ON_GROUND; /* for describe_decor() */
     /* feedback just disclosed this */
-    iflags.prev_decor = gl.lastseentyp[u.ux][u.uy] = lev->typ;
+    update_lastseentyp(u.ux, u.uy);
+    iflags.prev_decor = gl.lastseentyp[u.ux][u.uy];
 }
 
 /* return TRUE iff player relocated */
@@ -4611,7 +4835,7 @@ drown(void)
 
     if (Amphibious || Breathless || Swimming) {
         if (Amphibious || Breathless) {
-            if (Verbose(3, drown))
+            if (flags.verbose)
                 pline("But you aren't drowning.");
             if (!Is_waterlevel(&u.uz)) {
                 if (Hallucination)
@@ -4697,7 +4921,7 @@ drown(void)
 
     if (u.uinwater)
         set_uinwater(0); /* u.uinwater = 0 */
-    back_on_ground(DROWNING);
+    rescued_from_terrain(DROWNING);
     return TRUE;
 }
 
@@ -4716,7 +4940,7 @@ drain_en(int n, boolean max_already_drained)
         /* energy is completely gone */
         if (u.uen || u.uenmax) { /* paranoia */
             u.uen = u.uenmax = 0;
-            gc.context.botl = TRUE;
+            disp.botl = TRUE;
         }
         mesg = "momentarily lethargic";
     } else {
@@ -4739,7 +4963,7 @@ drain_en(int n, boolean max_already_drained)
                and then we throttled the loss being applied to current */
             u.uen = u.uenmax;
         }
-        gc.context.botl = TRUE;
+        disp.botl = TRUE;
     }
     /* after manipulating u.uen,uenmax and setting context.botl, so
        that You_feel() -> pline() will update status before the message */
@@ -5573,6 +5797,7 @@ openholdingtrap(
     if (!which)
         which = t->tseen ? the_your[t->madeby_u]
                          : strchr(vowels, *trapdescr) ? "an" : "a";
+    assert(which != 0);
     if (*which)
         which = strcat(strcpy(whichbuf, which), " ");
 
@@ -5843,8 +6068,10 @@ chest_trap(
                 You("don't seem to be affected.");
                 monstseesu(M_SEEN_ELEC);
                 dmg = 0;
-            } else
+            } else {
                 dmg = d(4, 4);
+                monstunseesu(M_SEEN_ELEC);
+            }
             destroy_item(RING_CLASS, AD_ELEC);
             destroy_item(WAND_CLASS, AD_ELEC);
             if (dmg)
@@ -5867,7 +6094,7 @@ chest_trap(
         case 1:
         case 0:
             pline("A cloud of %s gas billows from %s.",
-                  Blind ? blindgas[rn2(SIZE(blindgas))] : rndcolor(),
+                  Blind ? ROLL_FROM(blindgas) : rndcolor(),
                   the(xname(obj)));
             if (!Stunned) {
                 if (Hallucination)
@@ -6094,7 +6321,7 @@ b_trapped(const char* item, int bodypart)
     wake_nearby();
     losehp(Maybe_Half_Phys(dmg), "explosion", KILLED_BY_AN);
     exercise(A_STR, FALSE);
-    if (bodypart)
+    if (bodypart != NO_PART)
         exercise(A_CON, FALSE);
     make_stunned((HStun & TIMEOUT) + (long) dmg, TRUE);
 }
@@ -6126,7 +6353,7 @@ thitm(
             pline("%s is almost hit by %s!", Monnam(mon), doname(obj));
     } else {
         int dam = 1;
-        boolean harmless = (stone_missile(obj) && passes_rocks(mon->data));
+        boolean harmless = (obj && stone_missile(obj) && passes_rocks(mon->data));
 
         if (obj && cansee(mon->mx, mon->my))
             pline("%s is hit by %s%s", Monnam(mon), doname(obj),
@@ -6318,7 +6545,7 @@ lava_effects(void)
                 set_itimeout(&HWwalking, 5L);
             goto burn_stuff;
         }
-        back_on_ground(BURNING);
+        rescued_from_terrain(BURNING);
 
         /* normally done via safe_teleds() -> teleds() -> spoteffects() but
            spoteffects() was no-op when called with nonzero in_lava_effects */
@@ -6336,6 +6563,8 @@ lava_effects(void)
                        : " and are about to be immolated");
         if (Fire_resistance)
             monstseesu(M_SEEN_FIRE);
+        else
+            monstunseesu(M_SEEN_FIRE);
         if (u.uhp > 1)
             losehp(!boil_away ? 1 : (u.uhp / 2), lava_killer,
                    KILLED_BY); /* lava damage */

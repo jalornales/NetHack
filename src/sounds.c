@@ -406,7 +406,7 @@ growl(register struct monst* mtmp)
 
     /* presumably nearness and soundok checks have already been made */
     if (Hallucination)
-        growl_verb = h_sounds[rn2(SIZE(h_sounds))];
+        growl_verb = ROLL_FROM(h_sounds);
     else
         growl_verb = growl_sound(mtmp);
     if (growl_verb) {
@@ -432,7 +432,7 @@ yelp(register struct monst* mtmp)
 
     /* presumably nearness and soundok checks have already been made */
     if (Hallucination)
-        yelp_verb = h_sounds[rn2(SIZE(h_sounds))];
+        yelp_verb = ROLL_FROM(h_sounds);
     else
         switch (mtmp->data->msound) {
         case MS_MEW:
@@ -483,7 +483,7 @@ whimper(register struct monst* mtmp)
 
     /* presumably nearness and soundok checks have already been made */
     if (Hallucination)
-        whimper_verb = h_sounds[rn2(SIZE(h_sounds))];
+        whimper_verb = ROLL_FROM(h_sounds);
     else
         switch (mtmp->data->msound) {
         case MS_MEW:
@@ -602,7 +602,7 @@ maybe_gasp(struct monst* mon)
         break;
     }
     if (dogasp) {
-        return Exclam[rn2(SIZE(Exclam))]; /* [mon->m_id % SIZE(Exclam)]; */
+        return ROLL_FROM(Exclam); /* [mon->m_id % SIZE(Exclam)]; */
     }
     return (const char *) 0;
 }
@@ -1767,7 +1767,7 @@ activate_chosen_soundlib(void)
 {
     int idx = gc.chosen_soundlib;
 
-    if (idx < soundlib_nosound || idx >= SIZE(soundlib_choices))
+    if (!IndexOk(idx, soundlib_choices))
         panic("activate_chosen_soundlib: invalid soundlib (%d)", idx);
 
     if (ga.active_soundlib != soundlib_nosound || idx != soundlib_nosound) {
@@ -1784,7 +1784,7 @@ activate_chosen_soundlib(void)
 void
 assign_soundlib(int idx)
 {
-    if (idx < soundlib_nosound || idx >= SIZE(soundlib_choices))
+    if (!IndexOk(idx, soundlib_choices))
         panic("assign_soundlib: invalid soundlib (%d)", idx);
 
     gc.chosen_soundlib
@@ -1854,7 +1854,7 @@ get_soundlib_name(char *dest, int maxlen)
     const char *src;
 
     idx = ga.active_soundlib;
-    if (idx < soundlib_nosound || idx >= SIZE(soundlib_choices))
+    if (!IndexOk(idx, soundlib_choices))
         panic("get_soundlib_name: invalid active_soundlib (%d)", idx);
 
     src = soundlib_choices[idx].sndprocs->soundname;

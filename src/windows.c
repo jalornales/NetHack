@@ -1,4 +1,4 @@
-/* NetHack 3.7	windows.c	$NHDT-Date: 1661202202 2022/08/22 21:03:22 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.97 $ */
+/* NetHack 3.7	windows.c	$NHDT-Date: 1700012891 2023/11/15 01:48:11 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.109 $ */
 /* Copyright (c) D. Cohrs, 1993. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -59,8 +59,13 @@ extern void trace_procs_init(int);
 extern void *trace_procs_chain(int, int, void *, void *, void *);
 #endif
 
-static void def_raw_print(const char *s);
+#if defined(WINCHAIN) || defined(TTY_GRAPHICS)
+static struct win_choices *win_choices_find(const char *s) NONNULLARG1;
+#endif
+
+static void def_raw_print(const char *s) NONNULLARG1;
 static void def_wait_synch(void);
+static boolean get_menu_coloring(const char *, int *, int *) NONNULLPTRS;
 
 #ifdef DUMPLOG
 static winid dump_create_nhwindow(int);
@@ -221,7 +226,29 @@ def_wait_synch(void)
      return;
 }
 
-#ifdef WINCHAIN
+#ifdef TTY_GRAPHICS
+boolean
+check_tty_wincap(unsigned long wincap)
+{
+    struct win_choices *wc = win_choices_find("tty");
+
+    if (wc)
+        return ((wc->procs->wincap & wincap) == wincap);
+    return FALSE;
+}
+
+boolean
+check_tty_wincap2(unsigned long wincap2)
+{
+    struct win_choices *wc = win_choices_find("tty");
+
+    if (wc)
+        return ((wc->procs->wincap2 & wincap2) == wincap2);
+    return FALSE;
+}
+#endif
+
+#if defined(WINCHAIN) || defined(TTY_GRAPHICS)
 static struct win_choices *
 win_choices_find(const char *s)
 {
@@ -625,7 +652,7 @@ hup_exit_nhwindows(const char *lastgasp)
         (*previnterface_exit_nhwindows)(lastgasp);
         previnterface_exit_nhwindows = 0;
     }
-    iflags.window_inited = 0;
+    iflags.window_inited = FALSE;
 }
 
 static int
@@ -664,7 +691,7 @@ hup_getlin(const char *prompt UNUSED, char *outbuf)
 static void
 hup_init_nhwindows(int *argc_p UNUSED, char **argv UNUSED)
 {
-    iflags.window_inited = 1;
+    iflags.window_inited = TRUE;
 }
 
 /*ARGUSED*/
@@ -1360,12 +1387,10 @@ dump_redirect(boolean onoff_flag)
 }
 
 #ifdef TTY_GRAPHICS
-#ifdef TEXTCOLOR
 #ifdef TOS
 extern const char *hilites[CLR_MAX];
 #else
 extern NEARDATA char *hilites[CLR_MAX];
-#endif
 #endif
 #endif
 
@@ -1375,7 +1400,7 @@ has_color(int color)
     return (iflags.use_color && windowprocs.name
             && (windowprocs.wincap & WC_COLOR) && windowprocs.has_color[color]
 #ifdef TTY_GRAPHICS
-#if defined(TEXTCOLOR) && defined(TERMLIB) && !defined(NO_TERMS)
+#if defined(TERMLIB) && !defined(NO_TERMS)
              && (hilites[color] != 0)
 #endif
 #endif
@@ -1563,4 +1588,283 @@ menuitem_invert_test(
     return TRUE;
 }
 
+/*
+ * helper routine if a window port wants to extract the glyph
+ * information from a glyph number representation in the string;
+ * the returned string is the remainder of the string after
+ * extracting the \GNNNNNNNN information. The glyph details,
+ * including the utf8 representation under ENHANCED_SYMBOLS,
+ * will be stored in the glyph_info struct pointed to by gip.
+ */
+const char *
+mixed_to_glyphinfo(const char *str, glyph_info *gip)
+{
+    int dcount, ggv;
+
+    if (!str || !gip)
+        return " ";
+
+    *gip = nul_glyphinfo;
+    if (*str == '\\' && *(str + 1) == 'G') {
+        if ((dcount = decode_glyph(str + 2, &ggv))) {
+            map_glyphinfo(0, 0, ggv, 0, gip);
+            /* 'str' is ready for the next loop iteration and
+                '*str' should not be copied at the end of this
+                iteration */
+            str += (dcount + 2);
+        }
+    }
+    return str;
+}
+
+/*
+ * This is a somewhat generic menu for taking a list of NetHack style
+ * class choices and presenting them via a description
+ * rather than the traditional NetHack characters.
+ * (Benefits users whose first exposure to NetHack is via tiles).
+ *
+ * prompt
+ *           The title at the top of the menu.
+ *
+ * category: 0 = monster class
+ *           1 = object  class
+ *
+ * way
+ *           FALSE = PICK_ONE, TRUE = PICK_ANY
+ *
+ * class_list
+ *           a null terminated string containing the list of choices.
+ *
+ * class_selection
+ *           a null terminated string containing the selected characters.
+ *
+ * Returns number selected.
+ */
+int
+choose_classes_menu(const char *prompt,
+                    int category,
+                    boolean way,
+                    char *class_list,
+                    char *class_select)
+{
+    menu_item *pick_list = (menu_item *) 0;
+    winid win;
+    anything any;
+    char buf[BUFSZ];
+    const char *text = 0;
+    boolean selected;
+    int ret, i, n, next_accelerator, accelerator;
+    int clr = NO_COLOR;
+
+    if (!class_list || !class_select)
+        return 0;
+    accelerator = 0;
+    next_accelerator = 'a';
+    any = cg.zeroany;
+    win = create_nhwindow(NHW_MENU);
+    start_menu(win, MENU_BEHAVE_STANDARD);
+    while (*class_list) {
+        int idx;
+
+        selected = FALSE;
+        switch (category) {
+        case 0:
+            idx = def_char_to_monclass(*class_list);
+            if (!IndexOk(idx, def_monsyms)) {
+                panic("choose_classes_menu: invalid monclass '%c'", *class_list);
+                /*NOTREACHED*/
+            }
+            text = def_monsyms[idx].explain;
+            accelerator = *class_list;
+            Sprintf(buf, "%s", text);
+            break;
+        case 1:
+            idx = def_char_to_objclass(*class_list);
+            if (!IndexOk(idx, def_oc_syms)) {
+                panic("choose_classes_menu: invalid objclass '%c'", *class_list);
+                /*NOTREACHED*/
+            }
+            text = def_oc_syms[idx].explain;
+            accelerator = next_accelerator;
+            Sprintf(buf, "%c  %s", *class_list, text);
+            break;
+        default:
+            panic("choose_classes_menu: invalid category %d", category);
+            /*NOTREACHED*/
+        }
+        if (way && *class_select) { /* Selections there already */
+            if (strchr(class_select, *class_list)) {
+                selected = TRUE;
+            }
+        }
+        any.a_int = *class_list;
+        add_menu(win, &nul_glyphinfo, &any, accelerator,
+                 category ? *class_list : 0, ATR_NONE, clr, buf,
+                 selected ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE);
+        if (category > 0) {
+            if (next_accelerator == 'Z')
+                break;
+            else if (next_accelerator == 'z')
+                next_accelerator = 'A';
+            else
+                ++next_accelerator;
+        }
+        ++class_list;
+    }
+    if (category == 1 && next_accelerator <= 'z') {
+        /* for objects, add "A - ' '  all classes", after a separator */
+        add_menu_str(win, "");
+        any = cg.zeroany;
+        any.a_int = (int) ' ';
+        Sprintf(buf, "%c  %s", (char) any.a_int, "All classes of objects");
+        /* we won't preselect this even if the incoming list is empty;
+           having it selected means that it would have to be explicitly
+           de-selected in order to select anything else */
+        add_menu(win, &nul_glyphinfo, &any, 'A', 0,
+                 ATR_NONE, clr, buf, MENU_ITEMFLAGS_SKIPINVERT);
+        if (!strcmp(prompt, "Autopickup what?")) {
+            add_menu_str(win,
+                   "Note: when no choices are selected, \"all\" is implied.");
+            /* for 'O', "toggle" should be intuitive; for 'm O', it would
+               probably be better to say "Set 'autopickup' to true|false" */
+            add_menu_str(win, flags.pickup
+                        ? "Toggle off 'autopickup' to not pick up anything."
+           : "Toggle on 'autopickup' to automatically pick these things up.");
+        }
+    }
+    end_menu(win, prompt);
+    n = select_menu(win, way ? PICK_ANY : PICK_ONE, &pick_list);
+    destroy_nhwindow(win);
+    if (n > 0) {
+        if (category == 1) {
+            /* for object classes, first check for 'all'; it means 'use
+               a blank list' rather than 'collect every possible choice' */
+            for (i = 0; i < n; ++i)
+                if (pick_list[i].item.a_int == ' ') {
+                    pick_list[0].item.a_int = ' ';
+                    n = 1; /* return 1; also an implicit 'break;' */
+                }
+        }
+        for (i = 0; i < n; ++i)
+            *class_select++ = (char) pick_list[i].item.a_int;
+        free((genericptr_t) pick_list);
+        ret = n;
+    } else if (n == -1) {
+        class_select = eos(class_select);
+        ret = -1;
+    } else {
+        ret = 0;
+    }
+    *class_select = '\0';
+    return ret;
+}
+
+/* enum and structs are defined in wintype.h */
+
+win_request_info zerowri = { { 0L, 0, 0, 0, 0, 0, 0, 0 },
+                             { 0, 0, { NO_COLOR, ATR_NONE }}};
+
+void
+adjust_menu_promptstyle(winid window, color_attr *style)
+{
+    win_request_info wri = zerowri;
+    wri.fromcore.menu_promptstyle.color = style->color;
+    wri.fromcore.menu_promptstyle.attr = style->attr;
+    /*  relay the style change to the window port */
+    (void) ctrl_nhwindow(window, set_menu_promptstyle, &wri);
+    go.opt_need_promptstyle = FALSE;
+}
+
+/*
+ *   Common code point leading into the interface-specifc
+ *   add_menu() to allow single-spot adjustments to the parameters,
+ *   such as those done by menu_colors.
+ */
+void
+add_menu(
+    winid window,  /* window to use, must be of type NHW_MENU */
+    const glyph_info *glyphinfo, /* glyph info with glyph to
+                                  * display with item */
+    const anything *identifier, /* what to return if selected */
+    char ch,                    /* selector letter (0 = pick our own) */
+    char gch,                   /* group accelerator (0 = no group) */
+    int attr,                   /* attribute for menu text (str) */
+    int color,                  /* color for menu text (str) */
+    const char *str,            /* menu text */
+    unsigned int itemflags)     /* itemflags such as MENU_ITEMFLAGS_SELECTED */
+{
+    if (iflags.use_menu_color) {
+        if ((itemflags & MENU_ITEMFLAGS_SKIPMENUCOLORS) == 0)
+            (void) get_menu_coloring(str, &color, &attr);
+    }
+    /* this is the only function that cared about this flag; remove it now */
+    itemflags &= ~MENU_ITEMFLAGS_SKIPMENUCOLORS;
+
+    (*windowprocs.win_add_menu)(window, glyphinfo, identifier,
+                                ch, gch, attr, color, str, itemflags);
+}
+
+/* insert a non-selectable, possibly highlighted line of text into a menu */
+void
+add_menu_heading(winid tmpwin, const char *buf)
+{
+    anything any = cg.zeroany;
+    int attr = iflags.menu_headings.attr,
+        color = iflags.menu_headings.color;
+
+    /* suppress highlighting during end-of-game disclosure */
+    if (gp.program_state.gameover)
+        attr = ATR_NONE, color = NO_COLOR;
+
+    add_menu(tmpwin, &nul_glyphinfo, &any, '\0', '\0', attr, color,
+             buf, MENU_ITEMFLAGS_SKIPMENUCOLORS);
+}
+
+/* insert a non-selectable, unhighlighted line of text into a menu */
+void
+add_menu_str(winid tmpwin, const char *buf)
+{
+    anything any = cg.zeroany;
+
+    add_menu(tmpwin, &nul_glyphinfo, &any, '\0', '\0', ATR_NONE, NO_COLOR,
+             buf, MENU_ITEMFLAGS_NONE);
+}
+
+static boolean
+get_menu_coloring(const char *str, int *color, int *attr)
+{
+    struct menucoloring *tmpmc;
+
+    if (iflags.use_menu_color)
+        for (tmpmc = gm.menu_colorings; tmpmc; tmpmc = tmpmc->next)
+            if (regex_match(str, tmpmc->match)) {
+                *color = tmpmc->color;
+                *attr = tmpmc->attr;
+                return TRUE;
+            }
+    return FALSE;
+}
+
+int select_menu(winid window, int how, menu_item **menu_list)
+{
+    int reslt;
+    boolean old_bot_disabled = gb.bot_disabled;
+
+    gb.bot_disabled = TRUE;
+    reslt = (*windowprocs.win_select_menu)(window, how, menu_list);
+    gb.bot_disabled = old_bot_disabled;
+    return reslt;
+}
+
+void
+getlin(const char *query, register char *bufp)
+{
+    boolean old_bot_disabled = gb.bot_disabled;
+
+    gp.program_state.in_getlin = 1;
+    gb.bot_disabled = TRUE;
+    (*windowprocs.win_getlin)(query, bufp);
+    gb.bot_disabled = old_bot_disabled;
+    gp.program_state.in_getlin = 0;
+}
 /*windows.c*/

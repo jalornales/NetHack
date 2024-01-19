@@ -14,8 +14,10 @@ blind          your character is permanently blind                [False]
 bones          allow loading bones files                           [True]
 clicklook      look at map by clicking right mouse button         [False]
 cmdassist      give help for errors on direction & other commands  [True]
+color          use different colors for objects on screen  [True for micros]
 confirm        ask before hitting tame or peaceful monsters        [True]
 dark_room      show floor not in sight in different color          [True]
+dropped_nopick exclude dropped objects from autopickup             [True]
 eight_bit_tty  send 8-bit characters straight to terminal         [False]
 extmenu        tty, curses: use menu for # (extended commands)    [False]
                X11: menu has all commands (T) or traditional subset (F)
@@ -27,6 +29,8 @@ goldX          when filtering objects by bless/curse state,       [False]
 help           print all available info when using the / command   [True]
 herecmd_menu   show menu of some possible commands when clicking
                on yourself or next to you with mouse              [False]
+hilite_pet     display pets in a highlighted manner               [False]
+hilite_pile    display item piles in a highlighted manner         [False]
 ignintr        ignore interrupt signal, including breaks          [False]
 implicit_uncursed  omit "uncursed" from inventory, if possible     [True]
 legacy         print introductory message                          [True]
@@ -46,6 +50,7 @@ null           allow nulls to be sent to your terminal             [True]
                try turning this option off (forcing NetHack to use its own
                delay code) if moving objects seem to teleport across rooms
 perm_invent    keep inventory in a permanent window               [False]
+pickup_stolen  override pickup_types for stolen objects            [True]
 pickup_thrown  override pickup_types for thrown objects            [True]
 pushweapon     when wielding a new weapon, put your previously    [False]
                wielded weapon into the secondary weapon slot
@@ -90,11 +95,6 @@ news           print any news from game administrator on startup   [True]
 
 Boolean option if SCORE_ON_BOTL was set at compile time:
 showscore      display your approximate accumulated score         [False]
-
-Boolean options if TEXTCOLOR was set at compile time:
-color          use different colors for objects on screen  [True for micros]
-hilite_pet     display pets in a highlighted manner               [False]
-hilite_pile    display item piles in a highlighted manner         [False]
 
 Boolean option if TIMED_DELAY was set at compile time (tty or curses only):
 timed_delay    on unix and VMS, use a timer instead of sending     [True]
@@ -214,7 +214,7 @@ packorder     a list of default symbols for kinds of       [")[%?+!=/(*`0_]
 paranoid_confirmation  space separated list    [paranoid_confirm:pray swim]
               of situations where alternate prompting is desired
               Confirm -- when requiring "yes", also require "no" to reject;
-                      also requires yes rather than y for pray, Autoall
+                      also requires yes rather than y for pray, trap, Autoall
               quit    -- yes vs y to confirm quitting or to enter explore mode
               die     -- yes vs y to confirm dying (for explore or debug mode)
               bones   -- yes vs y to confirm saving bones data in debug mode
@@ -224,12 +224,22 @@ paranoid_confirmation  space separated list    [paranoid_confirm:pray swim]
               Were-change -- yes vs y to confirm changing form due to
                       lycanthropy when hero has polymorph control;
               pray    -- y to confirm an attempt to pray; on by default
+              trap    -- y to enter a known trap unless it is harmless;
               swim    -- require m prefix to move into water or lava when
                       hero has seen it and isn't impaired; on by default;
               AutoAll -- y to confirm if using menustyle:Full and choice 'A'
                       in the object class filtering menu is selected;
               Remove  -- always pick from inventory for 'R' and 'T' even when
                       wearing just one applicable item to remove or take off
+perminv_mode  if the interface supports a persistent inventory window   [a]
+              and the perm_invent option is true, this controls what
+              will be shown:
+              none/off -- behave as if perm_invent is false
+              all/on   -- show inventory except for gold (default)
+              full     -- show inventory including gold
+              in-use   -- only show worn and wielded items
+              (the tty interface's optional perm_invent support includes
+              a couple of additional choices that vary all and full)
 pickup_burden when you pick up an item that exceeds this encumbrance    [S]
               level (Unencumbered, Burdened, streSsed, straiNed, overTaxed,
               or overLoaded), you will be asked if you want to continue.

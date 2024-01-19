@@ -1,4 +1,4 @@
-/* NetHack 3.7	config.h	$NHDT-Date: 1610141601 2021/01/08 21:33:21 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.148 $ */
+/* NetHack 3.7	config.h	$NHDT-Date: 1704043695 2023/12/31 17:28:15 $  $NHDT-Branch: keni-luabits2 $:$NHDT-Revision: 1.181 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2016. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -24,7 +24,7 @@
 /* #define TOS */ /* define for Atari ST/TT */
 
 /* #define STUPID */ /* avoid some complicated expressions if
-                        your C compiler chokes on them */
+                      * your C compiler chokes on them */
 /* #define MINIMAL_TERM */
 /* if a terminal handles highlighting or tabs poorly,
    try this define, used in pager.c and termcap.c */
@@ -96,8 +96,8 @@
 
 #ifdef QT_GRAPHICS
 #ifndef DEFAULT_WC_TILED_MAP
-#define DEFAULT_WC_TILED_MAP /* Default to tiles if users doesn't say \
-                                wc_ascii_map */
+#define DEFAULT_WC_TILED_MAP /* Default to tiles if users doesn't request
+                              * wc_ascii_map */
 #endif
 #ifndef USE_XPM
 #define USE_XPM           /* Use XPM format for images (required) */
@@ -154,7 +154,8 @@
  * the free XPM library.  The second option allows you to then use other
  * programs to generate tiles files.  For example, the PBMPlus tools
  * would allow:
- *  xpmtoppm <x11tiles.xpm | pnmscale 1.25 | ppmquant 90 >x11tiles_big.xpm
+ *  xpmtoppm <x11tiles.xpm | pnmscale 1.25 | ppmquant 90 | \
+ *      ppmtoxpm >x11tiles_big.xpm
  */
 /* # define USE_XPM */ /* Disable if you do not have the XPM library */
 #ifdef USE_XPM
@@ -205,6 +206,10 @@
  *            The following options pertain to crash reporting:
  *              GREPPATH     (the path to the system grep(1) utility)
  *              GDBPATH      (the path to the system gdb(1) program)
+ *              CRASHREPORT  (use CRASHREPORTURL if defined in syscf; this
+ *                           define specifies the name of the helper program
+ *                           used to launch the browser and enables the
+ *                           feature))
  *            Regular nethack options can also be specified in order to
  *            provide system-wide default values local to your system:
  *              OPTIONS      (same as in users' .nethackrc or defaults.nh)
@@ -235,6 +240,17 @@
 #define GREPPATH "/bin/grep"
 #endif
 
+#ifndef CRASHREPORT
+# ifdef MACOS
+    /* NB: This needs to be a full path unless it's in the playground. */
+/*#define CRASHREPORT "NetHackCrashReport.JavaScript"*/
+# endif
+# ifdef __linux__
+    /* NB: This expects to find the nhlua binary as "./nhlua" */
+/*#define CRASHREPORT "nhcrashreport.lua"*/
+# endif
+#endif
+
 /* note: "larger" is in comparison with 'record', the high-scores file
    (whose name can be overridden via #define in global.h if desired) */
 #define LOGFILE  "logfile"  /* larger file for debugging purposes */
@@ -245,6 +261,21 @@
 /* alternative paniclog format, better suited for public servers with
    many players, as it saves the player name and the game start time */
 /* #define PANICLOG_FMT2 */
+
+/*
+ *      When building the program, whether the 'makedefs' utility
+ *      checks for non-ASCII or non-printable (control) characters
+ *      in various data files (data.base, rumors.tru, rumors.fal,
+ *      {oracles,epitaphs,engravings,bogusmons}.txt and warns about them.
+ *      They also get changed to '#' instead of possibly remaining
+ *      unprintable.
+ *
+ *      If you modify the data files to intentionally add accented
+ *      letters or something comparable, comment this out.  (Such things
+ *      won't necessarily work as intended within nethack but at least
+ *      makedefs wouldn't reject them.)
+ */
+#define MAKEDEFS_FILTER_NONASCII
 
 /*
  *      PERSMAX, POINTSMIN, ENTRYMAX, PERS_IS_UID:
@@ -532,7 +563,7 @@ typedef unsigned char uchar;
 #define SELECTSAVED /* support for restoring via menu */
 
 /* TTY_TILES_ESCCODES: Enable output of special console escape codes
- * which act as hints for external programs such as EbonHack, or hterm.
+ * which act as hints for external programs such as EbonHack or hterm.
  *
  * TTY_SOUND_ESCCODES: Enable output of special console escape codes
  * which act as hints for theoretical external programs to play sound effect.
@@ -559,7 +590,8 @@ typedef unsigned char uchar;
  *
  * To compile NetHack with this, add tile.c to WINSRC and tile.o to WINOBJ
  * in the hints file or Makefile.
- * Set boolean option vt_xdata in your config file to turn either of these on.
+ * Set boolean option vt_tiledata and/or vt_sounddata in your config file
+ * to turn either of these on.
  * Note that gnome-terminal at least doesn't work with this. */
 /* #define TTY_TILES_ESCCODES */
 /* #define TTY_SOUND_ESCCODES */
@@ -582,13 +614,13 @@ typedef unsigned char uchar;
 
 #if defined(DEBUG) && !defined(DEBUG_MIGRATING_MONS)
 #define DEBUG_MIGRATING_MONS  /* add a wizard-mode command to help debug
-                                 migrating monsters */
+                               * migrating monsters */
 #endif
 
 /* SCORE_ON_BOTL is neither experimental nor inadequately tested,
    but doesn't seem to fit in any other section... */
 /* #define SCORE_ON_BOTL */         /* enable the 'showscore' option to
-                                       show estimated score on status line */
+                                     * show estimated score on status line */
 
 /* FREE_ALL_MEMORY is neither experimental nor inadequately tested,
    but it isn't necessary for successful operation of the program */
@@ -636,6 +668,13 @@ typedef unsigned char uchar;
 /* TEMPORARY - MAKE UNCONDITIONAL BEFORE RELEASE */
 /* undef this to check if sandbox breaks something */
 #define NHL_SANDBOX
+
+#ifdef NHL_SANDBOX
+#ifdef CHRONICLE
+    /* LIVELOG (and therefore CHRONICLE)  is needed for --loglua */
+#define LIVELOG
+#endif
+#endif
 
 /* End of Section 4 */
 

@@ -35,8 +35,12 @@ glyph_info mesg_gi;
 #define USE_CURSES_PUTMIXED
 #else  /* WIDE */
 #ifdef NH_PRAGMA_MESSAGE
+#ifdef _MSC_VER
+#pragma message("Curses wide support not defined so NetHack curses message window functionality reduced")
+#else
 #pragma message "Curses wide support not defined so NetHack curses message window functionality reduced"
-#endif
+#endif /* _MSC_VER */
+#endif /* NH_PRAGMA_MESSAGE */
 #endif /* WIDE */
 #endif /* CURSES_GENL_PUTMIXED */
 
@@ -204,12 +208,12 @@ curses_message_win_puts(const char *message, boolean recursed)
         /* split needed */
         tmpstr = curses_break_str(message, (width - 3), 1);
 #ifdef USE_CURSES_PUTMIXED
-	if (have_mixed_leadin) {
+        if (have_mixed_leadin) {
             mvwadd_wch(win, my, mx, mixed_leadin_cchar);
             ++mx;
             message_length--;
-	    have_mixed_leadin = FALSE;
-	    mesg_mixed = 0;
+            have_mixed_leadin = FALSE;
+            mesg_mixed = 0;
         }
 #endif
         mvwprintw(win, my, mx, "%s", tmpstr), mx += (int) strlen(tmpstr);
@@ -229,8 +233,8 @@ curses_message_win_puts(const char *message, boolean recursed)
             mvwadd_wch(win, my, mx, mixed_leadin_cchar);
             ++mx;
             message_length--;
-	    have_mixed_leadin = FALSE;
-	    mesg_mixed = 0;
+            have_mixed_leadin = FALSE;
+            mesg_mixed = 0;
         }
 #endif
         mvwprintw(win, my, mx, "%s", message), mx += message_length;
@@ -484,7 +488,7 @@ curses_prev_mesg(void)
     boolean do_lifo = (iflags.prevmsg_window != 'f');
 #ifdef DEBUG
     static int showturn = 0; /* 1: show hero_seq value in separators */
-    int clr = 0;
+    int clr = NO_COLOR;
 
     /*
      * Set DEBUGFILES=MesgTurn in environment or sysconf to decorate
@@ -943,8 +947,8 @@ mesg_add_line(const char *mline)
         ++num_messages;
     } else {
         /* at capacity; old head is being removed */
-        first_mesg = first_mesg->next_mesg; /* new head */
-        first_mesg->prev_mesg = NULL; /* head has no prev_mesg */
+        if ((first_mesg = first_mesg->next_mesg) != 0) /* new head */
+            first_mesg->prev_mesg = NULL; /* head has no prev_mesg */
     }
     /* since 'current_mesg' might be reusing 'first_mesg' and has now
        become 'last_mesg', this update must be after head replacement */
@@ -1052,7 +1056,8 @@ curses_putmsghistory(const char *msg, boolean restoring_msghist)
            however, we aren't only called when restoring history;
            core uses putmsghistory() for other stuff during play
            and those messages should have a normal turn value */
-        last_mesg->turn = restoring_msghist ? (1L << 3) : gh.hero_seq;
+        if (last_mesg) /* appease static analyzer */
+            last_mesg->turn = restoring_msghist ? (1L << 3) : gh.hero_seq;
 #ifdef DUMPLOG
         dumplogmsg(last_mesg->str);
 #endif
@@ -1068,18 +1073,20 @@ curses_putmsghistory(const char *msg, boolean restoring_msghist)
                stashed messages as newly occurring ones is much simpler;
                we ignore the backlinks because the list is destroyed as it
                gets processed hence there can't be any other traversals */
-            mesg = stash_head;
-            stash_head = mesg->next_mesg;
-            --stash_count;
-            mesg_turn = mesg->turn;
-            mesg_add_line(mesg->str);
-            /* added line became new tail */
-            last_mesg->turn = mesg_turn;
+            if ((mesg = stash_head) != 0) {
+                stash_head = mesg->next_mesg;
+                --stash_count;
+                mesg_turn = mesg->turn;
+                mesg_add_line(mesg->str);
+                /* added line became new tail */
+                if (last_mesg) /* appease static analyzer */
+                    last_mesg->turn = mesg_turn;
 #ifdef DUMPLOG
-            dumplogmsg(mesg->str);
+                dumplogmsg(mesg->str);
 #endif
-            free((genericptr_t) mesg->str);
-            free((genericptr_t) mesg);
+                free((genericptr_t) mesg->str);
+                free((genericptr_t) mesg);
+            }
         }
         initd = FALSE; /* reset */
     }

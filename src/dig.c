@@ -1,4 +1,4 @@
-/* NetHack 3.7	dig.c	$NHDT-Date: 1596498156 2020/08/03 23:42:36 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.142 $ */
+/* NetHack 3.7	dig.c	$NHDT-Date: 1702206282 2023/12/10 11:04:42 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.204 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -10,8 +10,8 @@ static void mkcavepos(coordxy, coordxy, int, boolean, boolean);
 static void mkcavearea(boolean);
 static int dig(void);
 static void dig_up_grave(coord *);
-static boolean watchman_canseeu(struct monst *);
-static int adj_pit_checks(coord *, char *);
+static boolean watchman_canseeu(struct monst *) NONNULLARG1;
+static int adj_pit_checks(coord *, char *) NONNULLARG2;
 static void pit_flow(struct trap *, schar);
 static boolean furniture_handled(coordxy, coordxy, boolean);
 
@@ -454,7 +454,7 @@ dig(void)
         }
         if (IS_DOOR(lev->typ) && (lev->doormask & D_TRAPPED)) {
             lev->doormask = D_NODOOR;
-            b_trapped("door", 0);
+            b_trapped("door", NO_PART);
             newsym(dpx, dpy);
         }
  cleanup:
@@ -560,15 +560,16 @@ void
 digactualhole(coordxy x, coordxy y, struct monst *madeby, int ttyp)
 {
     struct obj *oldobjs, *newobjs;
-    register struct trap *ttmp;
-    char surface_type[BUFSZ];
+    struct trap *ttmp;
+    const char *surface_type, *tname, *in_thru;
+    char furniture[BUFSZ];
     struct rm *lev = &levl[x][y];
-    boolean shopdoor;
     struct monst *mtmp = m_at(x, y); /* may be madeby */
-    boolean madeby_u = (madeby == BY_YOU);
-    boolean madeby_obj = (madeby == BY_OBJECT);
-    boolean at_u = u_at(x, y);
-    boolean wont_fall = Levitation || Flying;
+    boolean madeby_u = (madeby == BY_YOU), madeby_obj = (madeby == BY_OBJECT),
+            /* BY_OBJECT means the hero broke a wand, so blame her for it */
+            heros_fault = (madeby_u || madeby_obj);
+    boolean shopdoor, at_u = u_at(x, y), wont_fall = Levitation || Flying;
+    int old_typ, old_aligntyp = A_NONE;
 
     if (at_u && u.utrap) {
         if (u.utraptype == TT_BURIEDBALL)
@@ -586,41 +587,63 @@ digactualhole(coordxy x, coordxy y, struct monst *madeby, int ttyp)
         ttyp = PIT;
     }
 
-    /* maketrap() might change it, also, in this situation,
-       surface() returns an inappropriate string for a grave */
-    if (IS_GRAVE(lev->typ))
-        Strcpy(surface_type, "grave");
-    else
-        Strcpy(surface_type, surface(x, y));
+    /* maketrap() might change terrain type but we deliver messages after
+       that, so prepare in advance */
+    old_typ = lev->typ;
+    furniture[0] = '\0';
+    if (IS_FURNITURE(lev->typ)) {
+        /* should mirror the word used by surface() for normal floor */
+        surface_type = (IS_ROOM(lev->typ) && !Is_earthlevel(&u.uz)
+                         ? "floor" : "ground");
+        if (IS_ALTAR(lev->typ)) {
+            old_aligntyp = Amask2align(levl[x][y].altarmask & AM_MASK);
+            Strcpy(furniture, align_str(old_aligntyp));
+            Strcat(furniture, " ");
+        }
+        Strcat(furniture, surface(x, y));
+    } else {
+        surface_type = surface(x, y);
+    }
     shopdoor = IS_DOOR(lev->typ) && *in_rooms(x, y, SHOPBASE);
     oldobjs = gl.level.objects[x][y];
     ttmp = maketrap(x, y, ttyp);
     if (!ttmp)
         return;
     newobjs = gl.level.objects[x][y];
-    ttmp->madeby_u = madeby_u;
+    ttmp->madeby_u = heros_fault;
     ttmp->tseen = 0;
     if (cansee(x, y))
         seetrap(ttmp);
     else if (madeby_u)
         feeltrap(ttmp);
 
+    tname = trapname(ttyp, TRUE);
+    in_thru = (ttyp == HOLE ? "through" : "in");
+    if (madeby_u) {
+        if (x != u.ux || y != u.uy)
+            You("dig an adjacent %s.", tname);
+        else
+            You("dig %s %s the %s.", an(tname), in_thru, surface_type);
+    } else if (!madeby_obj && canseemon(madeby)) {
+        pline("%s digs %s %s the %s.", Monnam(madeby), an(tname), in_thru,
+              surface_type);
+    } else if (cansee(x, y) && flags.verbose) {
+        pline("%s appears in the %s.", An(tname), surface_type);
+    }
+    if (IS_FURNITURE(old_typ) && cansee(x, y))
+        pline_The("%s falls into the %s!", furniture, tname);
+    /* wrath should immediately follow altar destruction message */
+    if (heros_fault && old_typ == ALTAR)
+        desecrate_altar(FALSE, old_aligntyp);
+
+    /* now deal with actual post-trap creation effects */
     if (ttyp == PIT) {
-        if (madeby_u) {
-            if (x != u.ux || y != u.uy)
-                You("dig an adjacent pit.");
-            else
-                You("dig a pit in the %s.", surface_type);
-            if (shopdoor)
-                pay_for_damage("ruin", FALSE);
-            else
-                add_damage(x, y, madeby_u ? SHOP_PIT_COST : 0L);
+        if (shopdoor && heros_fault)
+            pay_for_damage("ruin", FALSE);
+        else
+            add_damage(x, y, heros_fault ? SHOP_PIT_COST : 0L);
+        if (madeby_u)
             wake_nearby();
-        } else if (!madeby_obj && canseemon(madeby)) {
-            pline("%s digs a pit in the %s.", Monnam(madeby), surface_type);
-        } else if (cansee(x, y) && Verbose(0, digactualhole1)) {
-            pline("A pit appears in the %s.", surface_type);
-        }
         /* in case we're digging down while encased in solid rock
            which is blocking levitation or flight */
         switch_terrain();
@@ -644,15 +667,6 @@ digactualhole(coordxy x, coordxy y, struct monst *madeby, int ttyp)
                 (void) mintrap(mtmp, NO_TRAP_FLAGS);
         }
     } else { /* was TRAPDOOR now a HOLE*/
-
-        if (madeby_u)
-            You("dig a hole through the %s.", surface_type);
-        else if (!madeby_obj && canseemon(madeby))
-            pline("%s digs a hole through the %s.", Monnam(madeby),
-                  surface_type);
-        else if (cansee(x, y) && Verbose(0, digactualhole2))
-            pline("A hole appears in the %s.", surface_type);
-
         if (at_u) {
             /* in case we're digging down while encased in solid rock
                which is blocking levitation or flight */
@@ -675,18 +689,15 @@ digactualhole(coordxy x, coordxy y, struct monst *madeby, int ttyp)
                     impact_drop((struct obj *) 0, x, y, 0);
                 if (oldobjs != newobjs)
                     (void) pickup(1);
-                if (shopdoor && madeby_u)
+                if (shopdoor && heros_fault)
                     pay_for_damage("ruin", FALSE);
-
             } else {
                 d_level newlevel;
 
-                if (*u.ushops && madeby_u)
+                if (*u.ushops && heros_fault)
                     shopdig(1); /* shk might snatch pack */
-                /* handle earlier damage, eg breaking wand of digging */
-                else if (!madeby_u)
+                else /* handle any earlier hero-caused damage */
                     pay_for_damage("dig into", TRUE);
-
                 You("fall through...");
                 /* Earlier checks must ensure that the destination
                  * level exists and is in the present dungeon.
@@ -698,7 +709,7 @@ digactualhole(coordxy x, coordxy y, struct monst *madeby, int ttyp)
                 spoteffects(FALSE);
             }
         } else {
-            if (shopdoor && madeby_u)
+            if (shopdoor && heros_fault)
                 pay_for_damage("ruin", FALSE);
             if (newobjs)
                 impact_drop((struct obj *) 0, x, y, 0);
@@ -736,19 +747,32 @@ digactualhole(coordxy x, coordxy y, struct monst *madeby, int ttyp)
 DISABLE_WARNING_FORMAT_NONLITERAL
 
 /*
- * Called from dighole(), but also from do_break_wand()
- * in apply.c.
+ * Called from dighole(); also from do_break_wand() in apply.c
+ * and do_earthquake() in music.c.
  */
 void
-liquid_flow(coordxy x, coordxy y, schar typ, struct trap *ttmp,
-            const char *fillmsg)
+liquid_flow(
+    coordxy x, coordxy y,
+    schar typ,
+    struct trap *ttmp,
+    const char *fillmsg)
 {
     struct obj *objchain;
     struct monst *mon;
     boolean u_spot = u_at(x, y);
 
+    /* caller should have changed levl[x][y].typ to POOL, MOAT, or LAVA */
+    if (!is_pool_or_lava(x, y)) {
+        if (iflags.sanity_check) {
+            impossible("Insane liquid_flow(%d,%d,%s,%s).", x, y,
+                       ttmp ? trapname(ttmp->ttyp, TRUE) : "no trap",
+                       fillmsg ? fillmsg : "no mesg");
+        }
+        return;
+    }
+
     if (ttmp)
-        (void) delfloortrap(ttmp);
+        (void) delfloortrap(ttmp); /* will untrap monster is one is here */
     /* if any objects were frozen here, they're released now */
     unearth_objs(x, y);
 
@@ -802,7 +826,10 @@ dighole(boolean pit_only, boolean by_magic, coord *cc)
             && (lev->wall_info & W_NONDIGGABLE) != 0)) {
         pline_The("%s %shere is too hard to dig in.", surface(dig_x, dig_y),
                   (dig_x != u.ux || dig_y != u.uy) ? "t" : "");
-
+    } else if (ttmp && is_magical_trap(ttmp->ttyp)) {
+        explode(dig_x, dig_y, 0, 20 + d(3, 6), TRAP_EXPLODE, EXPL_MAGICAL);
+        deltrap(ttmp);
+        newsym(dig_x, dig_y);
     } else if (is_pool_or_lava(dig_x, dig_y)) {
         pline_The("%s sloshes furiously for a moment, then subsides.",
                   hliquid(is_lava(dig_x, dig_y) ? "lava" : "water"));
@@ -1069,7 +1096,7 @@ use_pick_axe2(struct obj *obj)
         You("hit yourself with %s.", yname(uwep));
         Sprintf(buf, "%s own %s", uhis(), OBJ_NAME(objects[obj->otyp]));
         losehp(Maybe_Half_Phys(dam), buf, KILLED_BY);
-        gc.context.botl = 1;
+        disp.botl = TRUE;
         return ECMD_TIME;
     } else if (u.dz == 0) {
         confdir(FALSE);
@@ -1304,7 +1331,7 @@ mdig_tunnel(struct monst *mtmp)
                 return TRUE;
             }
         } else {
-            if (Verbose(0, mdig_tunnel1)) {
+            if (flags.verbose) {
                 if (!Unaware && !rn2(3)) /* not too often.. */
                     draft_message(TRUE); /* "You feel an unexpected draft." */
             }
@@ -1331,7 +1358,7 @@ mdig_tunnel(struct monst *mtmp)
 
     if (IS_WALL(here->typ)) {
         /* KMH -- Okay on arboreal levels (room walls are still stone) */
-        if (Verbose(0, mdig_tunnel2) && !rn2(5)) {
+        if (flags.verbose && !rn2(5)) {
             Soundeffect(se_crashing_rock, 75);
             You_hear("crashing rock.");
         }
@@ -2018,7 +2045,7 @@ rot_corpse(anything *arg, long timeout)
         x = obj->ox;
         y = obj->oy;
     } else if (in_invent) {
-        if (Verbose(0, rot_corpse)) {
+        if (flags.verbose) {
             char *cname = corpse_xname(obj, (const char *) 0, CXN_NO_PFX);
 
             Your("%s%s %s away%c", obj == uwep ? "wielded " : "", cname,
@@ -2126,7 +2153,7 @@ escape_tomb(void)
                 surface(u.ux, u.uy));
 
             good = (tunnels(gy.youmonst.data) && !needspick(gy.youmonst.data))
-                      ? dighole(TRUE, FALSE, (coord *)0) : TRUE;
+                      ? dighole(TRUE, FALSE, (coord *) 0) : TRUE;
             if (good)
                 unearth_you();
         }

@@ -1,4 +1,4 @@
-/* NetHack 3.7	mhitm.c	$NHDT-Date: 1627412283 2021/07/27 18:58:03 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.199 $ */
+/* NetHack 3.7	mhitm.c	$NHDT-Date: 1698939796 2023/11/02 15:43:16 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.244 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2011. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -454,6 +454,8 @@ mattackm(
                             pline("%s divides as %s hits it!",
                                   Monnam(mdef), mon_nam(magr));
                         (void) mintrap(mclone, NO_TRAP_FLAGS);
+                        if (DEADMONSTER(magr))
+                            res[i] |= M_ATTK_AGR_DIED;
                     }
                 }
             } else
@@ -568,7 +570,7 @@ mattackm(
         if (res[i] & M_ATTK_AGR_DIED)
             return res[i];
         /* return if aggressor can no longer attack */
-        if (helpless(magr))
+        if ((res[i] & M_ATTK_AGR_DONE) || helpless(magr))
             return res[i];
         /* eg. defender was knocked into a level teleport trap */
         if (mon_offmap(mdef))
@@ -795,7 +797,9 @@ boolean
 engulf_target(struct monst *magr, struct monst *mdef)
 {
     struct rm *lev;
-    int dx, dy;
+    int ax, ay, dx, dy;
+    boolean uatk = (magr == &gy.youmonst),
+            udef = (mdef == &gy.youmonst);
 
     /* can't swallow something that's too big */
     if (mdef->data->msize >= MZ_HUGE
@@ -806,21 +810,25 @@ engulf_target(struct monst *magr, struct monst *mdef)
     if (mdef->mtrapped || magr->mtrapped)
         return FALSE;
 
-    /* (hypothetical) engulfers who can pass through walls aren't
-       limited by rock|trees|bars */
-    if ((magr == &gy.youmonst) ? Passes_walls : passes_walls(magr->data))
-        return TRUE;
-
-    /* don't swallow something in a spot where attacker wouldn't
-       otherwise be able to move onto; we don't want to engulf
-       a wall-phaser and end up with a non-phaser inside a wall */
-    dx = mdef->mx, dy = mdef->my;
-    if (mdef == &gy.youmonst)
-        dx = u.ux, dy = u.uy;
+    /* if attacker is phasing in solid rock and defender can't move there,
+       or vice versa, don't allow engulf to succeeed; otherwise expelling
+       might not be able to place attacker and defender both back on map;
+       when defender is the hero, a sanity_check complaint about placing
+       the hero on top of a monster can occur */
+    dx = (mdef == &gy.youmonst) ? u.ux : mdef->mx;
+    dy = (mdef == &gy.youmonst) ? u.uy : mdef->my;
     lev = &levl[dx][dy];
-    if (IS_ROCK(lev->typ) || closed_door(dx, dy) || IS_TREE(lev->typ)
-        /* not passes_bars(); engulfer isn't squeezing through */
-        || (lev->typ == IRONBARS && !is_whirly(magr->data)))
+    if (!(udef ? Passes_walls : passes_walls(mdef->data))
+          && (IS_ROCK(lev->typ) || closed_door(dx, dy) || IS_TREE(lev->typ)
+              /* not passes_bars(); engulfer isn't squeezing through */
+              || (lev->typ == IRONBARS && !is_whirly(magr->data))))
+        return FALSE;
+    ax = (magr == &gy.youmonst) ? u.ux : magr->mx;
+    ay = (magr == &gy.youmonst) ? u.uy : magr->my;
+    lev = &levl[ax][ay];
+    if (!(uatk ? Passes_walls : passes_walls(magr->data))
+        && (IS_ROCK(lev->typ) || closed_door(ax, ay) || IS_TREE(lev->typ)
+            || (lev->typ == IRONBARS && !is_whirly(mdef->data))))
         return FALSE;
 
     return TRUE;
@@ -1040,8 +1048,8 @@ mdamagem(
 
     if (mhitm_knockback(magr, mdef, mattk, &mhm.hitflags,
                         (MON_WEP(magr) != 0))
-        && ((mhm.hitflags & (M_ATTK_DEF_DIED|M_ATTK_HIT)) != 0
-            || (mdef->mstate & (MON_DETACH|MON_MIGRATING|MON_LIMBO)) != 0))
+        && ((mhm.hitflags & (M_ATTK_DEF_DIED | M_ATTK_HIT)) != 0
+            || mon_offmap(mdef)))
         return mhm.hitflags;
 
     if (mhm.done)
@@ -1076,7 +1084,7 @@ mdamagem(
         if (mattk->adtyp == AD_DGST) {
             /* various checks similar to dog_eat and meatobj.
              * after monkilled() to provide better message ordering */
-            if (mdef->cham >= LOW_PM) {
+            if (ismnum(mdef->cham)) {
                 (void) newcham(magr, (struct permonst *) 0, NC_SHOW_MSG);
             } else if (pd == &mons[PM_GREEN_SLIME] && !slimeproof(pa)) {
                 (void) newcham(magr, &mons[PM_GREEN_SLIME], NC_SHOW_MSG);
@@ -1152,7 +1160,7 @@ mon_poly(struct monst *magr, struct monst *mdef, int dmg)
         } else if (newcham(mdef, (struct permonst *) 0, NO_NC_FLAGS)) {
             if (gv.vis) { /* either seen or adjacent */
                 boolean was_seen = !!strcmpi("It", Before),
-                        verbosely = Verbose(1, monpoly1) || !was_seen;
+                        verbosely = flags.verbose || !was_seen;
 
                 if (canspotmon(mdef))
                     pline("%s%s%s turns into %s.", Before,
@@ -1172,7 +1180,7 @@ mon_poly(struct monst *magr, struct monst *mdef, int dmg)
                     (void) rloc(magr, RLOC_MSG);
             }
         } else {
-            if (gv.vis && Verbose(1, monpoly2))
+            if (gv.vis && flags.verbose)
                 pline1(nothing_happens);
         }
     }
@@ -1257,7 +1265,7 @@ mswingsm(
     struct monst *mdef, /* defender */
     struct obj *otemp)  /* attacker's weapon */
 {
-    if (Verbose(1, mswingsm) && !Blind && mon_visible(magr)) {
+    if (flags.verbose && !Blind && mon_visible(magr)) {
         boolean bash = (is_pole(otemp)
                         && dist2(magr->mx, magr->my, mdef->mx, mdef->my) <= 2);
 

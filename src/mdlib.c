@@ -1,4 +1,4 @@
-/* NetHack 3.7  mdlib.c  $NHDT-Date: 1655402414 2022/06/16 18:00:14 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.31 $ */
+/* NetHack 3.7  mdlib.c  $NHDT-Date: 1701499945 2023/12/02 06:52:25 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.51 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Kenneth Lorber, Kensington, Maryland, 2015. */
 /* Copyright (c) M. Stephenson, 1990, 1991.                       */
@@ -55,14 +55,12 @@
 static boolean date_via_env = FALSE;
 
 extern unsigned long md_ignored_features(void);
-char *mdlib_version_string(char *, const char *);
-char *version_id_string(char *, size_t, const char *);
-char *bannerc_string(char *, size_t, const char *);
-int case_insensitive_comp(const char *, const char *);
+char *version_id_string(char *, size_t, const char *) NONNULL NONNULLPTRS;
+char *bannerc_string(char *, size_t, const char *) NONNULL NONNULLPTRS;
+int case_insensitive_comp(const char *, const char *) NONNULLPTRS;
 
 static void make_version(void);
-static char *eos(char *);
-int mstrength(struct permonst *);
+static char *eos(char *) NONNULL NONNULLARG1;
 
 #if 0
 static char *mdlib_strsubst(char *, const char *, const char *);
@@ -81,26 +79,31 @@ extern int GUILaunched;
 #endif
 
 /* these are in extern.h but we don't include hack.h */
-void runtime_info_init(void);
-const char *do_runtime_info(int *);
-void release_runtime_info(void);
-void populate_nomakedefs(struct version_info *);
+extern void populate_nomakedefs(struct version_info *) NONNULLARG1; /* date.c */
 extern void free_nomakedefs(void); /* date.c */
+void runtime_info_init(void);
+const char *do_runtime_info(int *) NO_NNARGS;
+void release_runtime_info(void);
+char *mdlib_version_string(char *, const char *) NONNULL NONNULLPTRS;
 
-void build_options(void);
+static void build_options(void);
 static int count_and_validate_winopts(void);
-static void opt_out_words(char *, int *);
+static void opt_out_words(char *, int *) NONNULLPTRS;
 static void build_savebones_compat_string(void);
 
 static int idxopttext, done_runtime_opt_init_once = 0;
-#define MAXOPT 40
-static char *opttext[120] = { 0 };
+#define MAXOPT 60 /* 3.7: currently 40 lines get inserted into opttext[] */
+static char *opttext[MAXOPT] = { 0 };
+#define STOREOPTTEXT(line) \
+    ((void) ((idxopttext < MAXOPT)                      \
+             ? (opttext[idxopttext++] = dupstr(line))   \
+             : 0))
 char optbuf[COLBUFSZ];
 static struct version_info version;
 static const char opt_indent[] = "    ";
 
 struct win_information {
-    const char *id, /* DEFAULT_WINDOW_SYS string */
+    const char *id, /* windowtype value */
         *name;      /* description, often same as id */
     boolean valid;
 };
@@ -108,7 +111,7 @@ struct win_information {
 static struct win_information window_opts[] = {
 #ifdef TTY_GRAPHICS
     { "tty",
-      /* testing 'TILES_IN_GLYPHMAP' here would bring confusion because it could
+      /* testing TILES_IN_GLYPHMAP here would bring confusion because it could
          apply to another interface such as X11, so check MSDOS explicitly
          instead; even checking TTY_TILES_ESCCODES would probably be
          confusing to most users (and it will already be listed separately
@@ -279,9 +282,7 @@ make_version(void)
 #endif
 /* objects (10..14) */
 /* flag bits and/or other global variables (15..26) */
-#ifdef TEXTCOLOR
-                                           | (1L << 17)
-#endif
+ /* color support always*/                 | (1L << 17)
 #ifdef INSURANCE
                                            | (1L << 18)
 #endif
@@ -356,7 +357,7 @@ nh_snprintf(const char *func UNUSED, int line UNUSED, char *str, size_t size,
     n = vsnprintf(str, size, fmt, ap);
     va_end(ap);
 
-    if (n < 0 || (size_t)n >= size) { /* is there a problem? */
+    if (n < 0 || (size_t) n >= size) { /* is there a problem? */
         str[size-1] = 0; /* make sure it is nul terminated */
     }
 
@@ -501,9 +502,7 @@ static const char *const build_opts[] = {
 #ifdef ANSI_DEFAULT
     "ANSI default terminal",
 #endif
-#ifdef TEXTCOLOR
     "color",
-#endif
 #ifdef TTY_GRAPHICS
 #ifdef TTY_TILES_ESCCODES
     "console escape codes for tile hinting",
@@ -739,9 +738,7 @@ opt_out_words(
         if (word)
             *word = '\0';
         if (*length_p + (int) strlen(str) > COLNO - 5) {
-            opttext[idxopttext] = dupstr(optbuf);
-            if (idxopttext < (MAXOPT - 1))
-                idxopttext++;
+            STOREOPTTEXT(optbuf);
             Sprintf(optbuf, "%s", opt_indent),
                 *length_p = (int) strlen(opt_indent);
         } else {
@@ -752,7 +749,7 @@ opt_out_words(
     }
 }
 
-void
+static void
 build_options(void)
 {
     char buf[COLBUFSZ];
@@ -766,9 +763,7 @@ build_options(void)
 #endif
 #endif
     build_savebones_compat_string();
-    opttext[idxopttext] = dupstr(optbuf);
-    if (idxopttext < (MAXOPT - 1))
-        idxopttext++;
+    STOREOPTTEXT(optbuf);
 #if (NH_DEVEL_STATUS != NH_STATUS_RELEASED)
 #if (NH_DEVEL_STATUS == NH_STATUS_BETA)
 #define STATUS_ARG " [beta]"
@@ -780,13 +775,9 @@ build_options(void)
 #endif /* NH_DEVEL_STATUS == NH_STATUS_RELEASED */
     Sprintf(optbuf, "%sNetHack version %d.%d.%d%s\n",
             opt_indent, VERSION_MAJOR, VERSION_MINOR, PATCHLEVEL, STATUS_ARG);
-    opttext[idxopttext] = dupstr(optbuf);
-    if (idxopttext < (MAXOPT - 1))
-        idxopttext++;
+    STOREOPTTEXT(optbuf);
     Sprintf(optbuf, "Options compiled into this edition:");
-    opttext[idxopttext] = dupstr(optbuf);
-    if (idxopttext < (MAXOPT - 1))
-        idxopttext++;
+    STOREOPTTEXT(optbuf);
     optbuf[0] = '\0';
     length = COLNO + 1; /* force 1st item onto new line */
     for (i = 0; i < SIZE(build_opts); i++) {
@@ -802,19 +793,13 @@ build_options(void)
                (i < SIZE(build_opts) - 1) ? "," : ".");
         opt_out_words(buf, &length);
     }
-    opttext[idxopttext] = dupstr(optbuf);
-    if (idxopttext < (MAXOPT - 1))
-        idxopttext++;
+    STOREOPTTEXT(optbuf);
     optbuf[0] = '\0';
     winsyscnt = count_and_validate_winopts();
-    opttext[idxopttext] = dupstr(optbuf);
-    if (idxopttext < (MAXOPT - 1))
-        idxopttext++;
+    STOREOPTTEXT(optbuf);
     Sprintf(optbuf, "Supported windowing system%s:",
             (winsyscnt > 1) ? "s" : "");
-    opttext[idxopttext] = dupstr(optbuf);
-    if (idxopttext < (MAXOPT - 1))
-        idxopttext++;
+    STOREOPTTEXT(optbuf);
     optbuf[0] = '\0';
     length = COLNO + 1; /* force 1st item onto new line */
 
@@ -846,19 +831,12 @@ build_options(void)
 
 #if !defined(MAKEDEFS_C)
     cnt = 0;
-    opttext[idxopttext] = dupstr(optbuf);
-    if (idxopttext < (MAXOPT - 1))
-        idxopttext++;
+    STOREOPTTEXT(optbuf);
     optbuf[0] = '\0';
     soundlibcnt = count_and_validate_soundlibopts();
-    opttext[idxopttext] = dupstr(optbuf);
-    if (idxopttext < (MAXOPT - 1))
-        idxopttext++;
-    Sprintf(optbuf, "Supported soundlib%s:",
-            (soundlibcnt > 1) ? "s" : "");
-    opttext[idxopttext] = dupstr(optbuf);
-    if (idxopttext < (MAXOPT - 1))
-        idxopttext++;
+    STOREOPTTEXT(optbuf);
+    Sprintf(optbuf, "Supported soundlib%s:", (soundlibcnt > 1) ? "s" : "");
+    STOREOPTTEXT(optbuf);
     optbuf[0] = '\0';
     length = COLNO + 1; /* force 1st item onto new line */
 
@@ -896,9 +874,7 @@ build_options(void)
 #endif
 #endif  /* !MAKEDEFS_C */
 
-    opttext[idxopttext] = dupstr(optbuf);
-    if (idxopttext < (MAXOPT - 1))
-        idxopttext++;
+    STOREOPTTEXT(optbuf);
     optbuf[0] = '\0';
 
 #if defined(MAKEDEFS_C) || defined(FOR_RUNTIME)
@@ -924,19 +900,17 @@ build_options(void)
         /* add lua copyright notice;
            ":TAG:" substitutions are deferred to caller */
         for (i = 0; lua_info[i]; ++i) {
-            opttext[idxopttext] = dupstr(lua_info[i]);
-            if (idxopttext < (MAXOPT - 1))
-                idxopttext++;
+            STOREOPTTEXT(lua_info[i]);
         }
     }
 #endif /* MAKEDEFS_C || FOR_RUNTIME */
 
     /* end with a blank line */
-    opttext[idxopttext] = dupstr("");
-    if (idxopttext < (MAXOPT - 1))
-        idxopttext++;
+    STOREOPTTEXT("");
     return;
 }
+
+#undef STOREOPTTEXT
 
 int
 case_insensitive_comp(const char *s1, const char *s2)
@@ -978,7 +952,7 @@ do_runtime_info(int *rtcontext)
     if (!done_runtime_opt_init_once)
         runtime_info_init();
     if (idxopttext && rtcontext)
-        if (*rtcontext >= 0 && *rtcontext < (MAXOPT - 1)) {
+        if (*rtcontext >= 0 && *rtcontext < MAXOPT) {
             retval = opttext[*rtcontext];
             *rtcontext += 1;
         }

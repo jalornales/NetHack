@@ -226,6 +226,10 @@ can_blnd(
     if (!haseyes(mdef->data))
         return FALSE;
 
+    /* if monster has been permanently blinded, the deed is already done */
+    if (!is_you && mon_perma_blind(mdef))
+        return FALSE;
+
     /* /corvus oculum corvi non eruit/
        a saying expressed in Latin rather than a zoological observation:
        "a crow will not pluck out the eye of another crow"
@@ -766,26 +770,6 @@ same_race(struct permonst *pm1, struct permonst *pm2)
     /* didn't match */
     return FALSE;
 }
-
-DISABLE_WARNING_UNREACHABLE_CODE
-
-/* return an index into the mons array */
-int
-monsndx(struct permonst *ptr)
-{
-    register int i;
-
-    i = (int) (ptr - &mons[0]);
-    if (i < LOW_PM || i >= NUMMONS) {
-        panic("monsndx - could not index monster (%s)",
-              fmt_ptr((genericptr_t) ptr));
-        /*NOTREACHED*/
-        return NON_PM; /* will not get here */
-    }
-    return i;
-}
-
-RESTORE_WARNING_UNREACHABLE_CODE
 
 /* for handling alternate spellings */
 struct alt_spl {
@@ -1450,7 +1434,25 @@ cvt_adtyp_to_mseenres(uchar adtyp)
     }
 }
 
-/* Monsters remember hero resisting effect M_SEEN_foo */
+/* Convert property resistance to M_SEEN_bar */
+unsigned long
+cvt_prop_to_mseenres(uchar prop)
+{
+    switch (prop) {
+    case ANTIMAGIC: return M_SEEN_MAGR;
+    case FIRE_RES: return M_SEEN_FIRE;
+    case COLD_RES: return M_SEEN_COLD;
+    case SLEEP_RES: return M_SEEN_SLEEP;
+    case DISINT_RES: return M_SEEN_DISINT;
+    case POISON_RES: return M_SEEN_POISON;
+    case SHOCK_RES: return M_SEEN_ELEC;
+    case ACID_RES: return M_SEEN_ACID;
+    case REFLECTING: return M_SEEN_REFL;
+    default: return M_SEEN_NOTHING;
+    }
+}
+
+/* Monsters in line of sight remember hero resisting effect M_SEEN_foo */
 void
 monstseesu(unsigned long seenres)
 {
@@ -1462,6 +1464,33 @@ monstseesu(unsigned long seenres)
     for (mtmp = fmon; mtmp; mtmp = mtmp->nmon)
         if (!DEADMONSTER(mtmp) && m_canseeu(mtmp))
             m_setseenres(mtmp, seenres);
+}
+
+/* Monsters in line of sight forget hero resistance to M_SEEN_foo */
+void
+monstunseesu(unsigned long seenres)
+{
+    struct monst *mtmp;
+
+    if (seenres == M_SEEN_NOTHING || u.uswallow)
+        return;
+
+    for (mtmp = fmon; mtmp; mtmp = mtmp->nmon)
+        if (!DEADMONSTER(mtmp) && m_canseeu(mtmp))
+            m_clearseenres(mtmp, seenres);
+}
+
+/* give monster mtmp the same intrinsics hero has */
+void
+give_u_to_m_resistances(struct monst *mtmp)
+{
+    const int u_intrins[] = { FIRE_RES, COLD_RES, SLEEP_RES, DISINT_RES, SHOCK_RES, POISON_RES, ACID_RES, STONE_RES };
+    const int m_intrins[] = { MR_FIRE,  MR_COLD,  MR_SLEEP,  MR_DISINT,  MR_ELEC,   MR_POISON,  MR_ACID,  MR_STONE };
+    int i;
+
+    for (i = 0; i < SIZE(u_intrins); i++)
+        if (u.uprops[u_intrins[i]].intrinsic & INTRINSIC)
+            mtmp->mintrinsics |= m_intrins[i];
 }
 
 /* Can monster resist conflict caused by hero?
@@ -1530,7 +1559,7 @@ get_atkdam_type(int adtyp)
         static const int rnd_breath_typ[] = {
             AD_MAGM, AD_FIRE, AD_COLD, AD_SLEE,
             AD_DISN, AD_ELEC, AD_DRST, AD_ACID };
-        return rnd_breath_typ[rn2(SIZE(rnd_breath_typ))];
+        return ROLL_FROM(rnd_breath_typ);
     }
     return adtyp;
 }

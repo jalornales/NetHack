@@ -1,4 +1,4 @@
-/* NetHack 3.7	end.c	$NHDT-Date: 1685863329 2023/06/04 07:22:09 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.274 $ */
+/* NetHack 3.7	end.c	$NHDT-Date: 1702023265 2023/12/08 08:14:25 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.285 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -26,7 +26,7 @@ static void done_hangup(int);
 #endif
 #endif
 static void disclose(int, boolean);
-static void get_valuables(struct obj *);
+static void get_valuables(struct obj *) NO_NNARGS;
 static void sort_valuables(struct valuable_data *, int);
 static void artifact_score(struct obj *, boolean, winid);
 static boolean fuzzer_savelife(int);
@@ -47,19 +47,19 @@ ATTRNORETURN extern void nethack_exit(int) NORETURN;
 #define done_stopprint gp.program_state.stopprint
 
 #ifndef PANICTRACE
-#define NH_abort NH_abort_
+#define NH_abort(x) NH_abort_
 #endif
 
 #ifdef AMIGA
-#define NH_abort_() Abort(0)
+#define NH_abort_ Abort(0)
 #else
 #ifdef SYSV
-#define NH_abort_() (void) abort()
+#define NH_abort_ (void) abort()
 #else
 #ifdef WIN32
-#define NH_abort_() win32_abort()
+#define NH_abort_ win32_abort()
 #else
-#define NH_abort_() abort()
+#define NH_abort_ abort()
 #endif
 #endif /* !SYSV */
 #endif /* !AMIGA */
@@ -77,6 +77,10 @@ ATTRNORETURN extern void nethack_exit(int) NORETURN;
  * gdb:   +gives more detailed information
  *        +works on more OS versions
  *        -requires -g, which may preclude -O on some compilers
+ *
+ * And the UI: if sysopt.crashreporturl, and defined(CRASHREPORT)
+ * we gather the stacktrace (etc) and launch a helper to submit a bug report
+ * otherwise we just use stdout.  Requires libc for now.
  */
 #ifdef SYSCF
 #define SYSOPT_PANICTRACE_GDB sysopt.panictrace_gdb
@@ -94,11 +98,13 @@ ATTRNORETURN extern void nethack_exit(int) NORETURN;
 #endif
 #endif
 
-static void NH_abort(void);
+#ifdef PANICTRACE
+static void NH_abort(char *);
+#endif
 #ifndef NO_SIGNAL
 static void panictrace_handler(int);
 #endif
-static boolean NH_panictrace_libc(void);
+static boolean NH_panictrace_libc(char *);
 static boolean NH_panictrace_gdb(void);
 
 #ifndef NO_SIGNAL
@@ -126,7 +132,7 @@ panictrace_handler(int sig_unused UNUSED)
 
     f2 = (int) write(2, SIG_MSG, sizeof SIG_MSG - 1);
     nhUse(f2);  /* what could we do if write to fd#2 (stderr) fails  */
-    NH_abort(); /* ... and we're already in the process of quitting? */
+    NH_abort(NULL); /* ... and we're already in the process of quitting? */
 }
 
 void
@@ -165,8 +171,9 @@ panictrace_setsignals(boolean set)
 }
 #endif /* NO_SIGNAL */
 
+#ifdef PANICTRACE
 static void
-NH_abort(void)
+NH_abort(char *why)
 {
     int gdb_prio = SYSOPT_PANICTRACE_GDB;
     int libc_prio = SYSOPT_PANICTRACE_LIBC;
@@ -183,9 +190,9 @@ NH_abort(void)
         gdb_prio++;
 
     if (gdb_prio > libc_prio) {
-        (void) (NH_panictrace_gdb() || (libc_prio && NH_panictrace_libc()));
+        (void) (NH_panictrace_gdb() || (libc_prio && NH_panictrace_libc(why)));
     } else {
-        (void) (NH_panictrace_libc() || (gdb_prio && NH_panictrace_gdb()));
+        (void) (NH_panictrace_libc(why) || (gdb_prio && NH_panictrace_gdb()));
     }
 
 #else /* VMS */
@@ -200,12 +207,252 @@ NH_abort(void)
 #ifndef NO_SIGNAL
     panictrace_setsignals(FALSE);
 #endif
-    NH_abort_();
+    NH_abort_;
+}
+#endif
+
+/* Build a URL with a query string and try to launch a new browser window
+ * to report from panic() or impossible().  Requires libc support for
+ * the stacktrace.  Uses memory on the stack to avoid memory allocation
+ * (but libc can still do anything it wants). */
+
+/* size of argument list for execve(2) */
+#define SWR_LINES 20
+/* max stack frames and header lines (details field) */
+#define SWR_FRAMES 20
+#define SWR_ADD(line) {if(xargc<(SWR_LINES-1)) xargv[xargc++] = line;}
+
+#ifdef CRASHREPORT
+# include <fcntl.h>
+# define HASH_PRAGMA_START \
+    _Pragma("GCC diagnostic push"); \
+    _Pragma("GCC diagnostic ignored \"-Wdeprecated-declarations\"")
+# define HASH_PRAGMA_END   _Pragma("GCC diagnostic pop");
+# ifdef MACOS
+#  include <CommonCrypto/CommonDigest.h>
+#  define HASH_CONTEXT CC_MD4_CTX
+#  define HASH_INIT(ctx) CC_MD4_Init(ctx)
+#  define HASH_UPDATE(ctx, ptr, len) CC_MD4_Update(ctx, ptr, len)
+#  define HASH_FINISH(ctx, out) CC_MD4_Final(out, ctx)
+#  define HASH_RESULT_SIZE CC_MD4_DIGEST_LENGTH
+# endif
+# ifdef __linux__
+#  include <openssl/md4.h>
+#  define HASH_CONTEXT MD4_CTX
+#  define HASH_INIT(ctx) MD4_Init(ctx)
+#  define HASH_UPDATE(ctx, ptr, len) MD4_Update(ctx, ptr, len)
+#  define HASH_FINISH(ctx, out) MD4_Final(out, ctx)
+#  define HASH_RESULT_SIZE MD4_DIGEST_LENGTH
+# endif
+/* Binary ID - Use only as a hint to contact.html for recognizing our own
+ * binaries.  This is easily spoofed! */
+static char bid[(2 * HASH_RESULT_SIZE) + 1];
+
+/* ARGSUSED */
+void
+crashreport_init(int argc UNUSED, char *argv[] UNUSED)
+{
+    unsigned char tmp[HASH_RESULT_SIZE];
+    HASH_PRAGMA_START
+    HASH_CONTEXT ctx;
+    HASH_INIT(&ctx);
+#ifdef MACOS
+    char *binfile = argv[0];
+
+    if (!binfile || !*binfile) {
+#ifdef BETA
+                /* If this triggers, investigate CFBundleGetMainBundle
+                 * or CFBundleCopyExecutableURL. */
+        raw_print("BETA warning: crashreport_init called without useful info");
+#endif
+        goto skip;
+    }
+#endif
+#ifdef __linux__
+    char binfile[PATH_MAX + 1];
+    int len = readlink("/proc/self/exe", binfile, sizeof binfile - 1);
+
+    if (len > 0) {
+        binfile[len] = '\0';
+    } else {
+        goto skip;
+    }
+#endif
+    int fd = open(binfile, O_RDONLY, 0);
+
+    if (fd == -1) {
+#ifdef BETA
+        raw_printf("open e=%s", strerror(errno));
+#endif
+        goto skip;
+    }
+    int segsize;
+    char segment[4096];
+
+    while (0 < (segsize = read(fd, segment,sizeof(segment)))) {
+        HASH_UPDATE(&ctx, segment, segsize);
+    }
+    HASH_FINISH(&ctx, tmp);
+    close(fd);
+
+    char *p = bid;
+    unsigned char *in = &tmp[0];
+    char cnt = HASH_RESULT_SIZE;
+
+    while (cnt--) {
+        p += snprintf(p, HASH_RESULT_SIZE - (p - bid), "%02x", *(in++));
+    }
+    *p = '\0';
+    return;
+ skip:
+    strncpy((char *) bid, "unknown", sizeof bid - 1);
+    HASH_PRAGMA_END
+}
+#undef HASH_CONTEXT
+#undef HASH_INIT
+#undef HASH_UPDATE
+#undef HASH_FINISH
+#undef HASH_RESULT_SIZE
+#undef HASH_PRAGMA_START
+#undef HASH_PRAGMA_END
+
+void
+crashreport_bidshow(void)
+{
+    raw_print(bid);
 }
 
-static boolean
-NH_panictrace_libc(void)
+boolean
+submit_web_report(const char *msg, char *why)
 {
+    if (sysopt.crashreporturl) {
+        const char *xargv[SWR_LINES];
+        char version[100];
+        char versionstring[200];        /* used twice as a temp */
+        int  xargc = 0;
+        char wholetrace[SWR_LINES * 80];  /* XXX roughly 71 on MacOS,
+                                           * plus buffer */
+        int  prelines = 0;              /* count of lines in trace header */
+        char nbuf[6];                   /* number buffer */
+        extern char **environ;
+        pid_t pid;
+
+        SWR_ADD(CRASHREPORT);
+        SWR_ADD(sysopt.crashreporturl);
+                /* then pairs of key value */
+                /* subject, generate something useful */
+        SWR_ADD("subject");
+        snprintf(version, sizeof version, "%s report for NetHack %s",
+                 msg, version_string(versionstring, sizeof versionstring));
+        SWR_ADD(version);
+                /* name:  someday, this might be stored in nethackcnf
+                 * email: someday, this might be stored in nethackcnf
+                 * gitver, pull from version.c */
+        SWR_ADD("gitver");
+        SWR_ADD(getversionstring(versionstring, sizeof versionstring));
+                /* hardware: leave for user
+                 * software: leave for user
+                 * comments: leave for user
+                 * details: stack trace */
+        SWR_ADD("details");
+
+/* // XXX header for wholetrace - what other info do we want? */
+/* // NB: prelines not tested against size of SWR_FRAMES. */
+#define SWR_HDR(line) \
+    do {                                                                    \
+        if (endp < &wholetrace[sizeof wholetrace]) {                        \
+            endp += snprintf(endp, sizeof wholetrace - (endp - wholetrace), \
+                             "%s\n", line);                                 \
+            prelines++;                                                     \
+        }                                                                   \
+    } while (0)
+#define SWR_HDRnonl(line) \
+    do {                                                                    \
+        if (endp < &wholetrace[sizeof wholetrace]) {                        \
+            endp += snprintf(endp, sizeof wholetrace - (endp - wholetrace), \
+                             "%s", line);                                   \
+        }                                                                   \
+    } while (0)
+
+        char *endp = wholetrace;
+
+        wholetrace[0] = '\0';
+        if (why) {
+            SWR_HDR(why);
+        }
+
+        SWR_HDRnonl("bid: ");
+        SWR_HDR(bid);
+
+        void *bt[SWR_FRAMES];
+        int count, x;
+        char **info, buf[BUFSZ];
+
+        count = backtrace(bt, SIZE(bt));
+        info = backtrace_symbols(bt, count);
+        for (x = 0; x < count; x++) {
+            copynchars(buf, info[x], (int) sizeof buf - 1);
+                /* try to remove up to 16 blank spaces by removing 8 twice */
+            (void) strsubst(buf, "        ", "");
+            (void) strsubst(buf, "        ", "");
+            snprintf(endp, SWR_FRAMES * 80 - (endp - wholetrace),
+                     "[%02lu] %s\n", (unsigned long) x, buf);
+            endp = eos(endp);
+        }
+        *(endp - 1) = '\0'; /* remove last newline */
+        SWR_ADD(wholetrace);
+
+                /* detailrows min(actual,50)  Guess since we can't know the
+                 * width of the window. */
+        SWR_ADD("detailrows");
+        (void) snprintf(nbuf, sizeof nbuf, "%d", count + prelines);
+        SWR_ADD(nbuf);
+        xargv[xargc++] = 0; /* terminate array */
+
+        pid = fork();
+        if (pid == 0) {
+            char err[100];
+
+            (void) execve(CRASHREPORT, (char * const *) xargv, environ);
+            Sprintf(err, "Can't start " CRASHREPORT ": %s", strerror(errno));
+            raw_print(err);
+        } else {
+            int status;
+            errno=0;
+                    /* XXX do we _really_ know this is the right pid? */
+            (void) waitpid(pid, &status, 0);
+            if (status) {         /* // XXX check could be more precise */
+#if 0
+                /* // Not useful at the moment. XXX */
+                char err[100];
+
+                Sprintf(err, "pid=%d e=%d status=%0x", wpid, errno, status);
+                raw_print(err);
+#endif
+                return FALSE;
+            }
+        }
+        /* free(info);   -- Don't risk it. */
+        return TRUE;
+    }
+    return FALSE;
+}
+#endif  /* CRASHREPORT */
+#undef SWR_ADD
+#undef SWR_FRAMES
+#undef SWR_HDR
+#undef SWR_HDRnonl
+#undef SWR_LINES
+
+/*ARGSUSED*/
+static boolean
+NH_panictrace_libc(char *why UNUSED)
+{
+#ifdef CRASHREPORT
+    if (submit_web_report("Panic", why))
+        return TRUE;
+#endif
+
 #ifdef PANICTRACE_LIBC
     void *bt[20];
     int count, x;
@@ -309,6 +556,7 @@ done1(int sig_unused UNUSED)
 #ifndef NO_SIGNAL
     (void) signal(SIGINT, SIG_IGN);
 #endif
+    iflags.debug_fuzzer = FALSE;
     if (flags.ignintr) {
 #ifndef NO_SIGNAL
         (void) signal(SIGINT, (SIG_RET_TYPE) done1);
@@ -375,7 +623,7 @@ done2(void)
                 (*soundprocs.sound_exit_nhsound)("done2");
 
             exit_nhwindows((char *) 0);
-            NH_abort();
+            NH_abort(NULL);
         } else if (c == 'q')
             done_stopprint++;
     }
@@ -423,8 +671,8 @@ done_in_by(struct monst *mtmp, int how)
 {
     char buf[BUFSZ];
     struct permonst *mptr = mtmp->data,
-                    *champtr = (mtmp->cham >= LOW_PM) ? &mons[mtmp->cham]
-                                                      : mptr;
+                    *champtr = ismnum(mtmp->cham) ? &mons[mtmp->cham]
+                                                  : mptr;
     boolean distorted = (boolean) (Hallucination && canspotmon(mtmp)),
             mimicker = (M_AP_TYPE(mtmp) == M_AP_MONSTER),
             imitator = (mptr != champtr || mimicker);
@@ -552,8 +800,8 @@ done_in_by(struct monst *mtmp, int how)
         u.ugrave_arise = PM_WRAITH;
     else if (mptr->mlet == S_MUMMY && gu.urace.mummynum != NON_PM)
         u.ugrave_arise = gu.urace.mummynum;
-    else if (zombie_maker(mtmp) && zombie_form(gy.youmonst.data) != NON_PM)
-        u.ugrave_arise = zombie_form(gy.youmonst.data);
+    else if (zombie_maker(mtmp) && gu.urace.zombienum != NON_PM)
+        u.ugrave_arise = gu.urace.zombienum;
     else if (mptr->mlet == S_VAMPIRE && Race_if(PM_HUMAN))
         u.ugrave_arise = PM_VAMPIRE;
     else if (mptr == &mons[PM_GHOUL])
@@ -618,19 +866,21 @@ DISABLE_WARNING_FORMAT_NONLITERAL
 ATTRNORETURN void
 panic VA_DECL(const char *, str)
 {
+    char buf[BUFSZ];
     VA_START(str);
     VA_INIT(str, char *);
 
     if (gp.program_state.panicking++)
-        NH_abort(); /* avoid loops - this should never happen*/
+        NH_abort(NULL); /* avoid loops - this should never happen*/
 
+    gb.bot_disabled = TRUE;
     if (iflags.window_inited) {
         raw_print("\r\nOops...");
         wait_synch(); /* make sure all pending output gets flushed */
         if (soundprocs.sound_exit_nhsound)
             (*soundprocs.sound_exit_nhsound)("panic");
         exit_nhwindows((char *) 0);
-        iflags.window_inited = 0; /* they're gone; force raw_print()ing */
+        iflags.window_inited = FALSE; /* they're gone; force raw_print()ing */
     }
 
     raw_print(gp.program_state.gameover
@@ -651,6 +901,7 @@ panic VA_DECL(const char *, str)
                                      ? "."
                                      : "\nand it may be possible to rebuild.";
 
+// XXX this is probably wrong if defined(CRASHREPORT)
         if (sysopt.support)
             raw_printf("To report this error, %s%s", sysopt.support,
                        maybe_rebuild);
@@ -674,19 +925,19 @@ panic VA_DECL(const char *, str)
         }
     }
 #endif /* !MICRO */
-    {
-        char buf[BUFSZ];
 
-        (void) vsnprintf(buf, sizeof buf, str, VA_ARGS);
-        raw_print(buf);
-        paniclog("panic", buf);
-    }
+    (void) vsnprintf(buf, sizeof buf, str, VA_ARGS);
+    raw_print(buf);
+    paniclog("panic", buf);
+
 #ifdef WIN32
     interject(INTERJECT_PANIC);
 #endif
 #if defined(UNIX) || defined(VMS) || defined(LATTICE) || defined(WIN32)
+# ifndef CRASHREPORT
     if (wizard)
-        NH_abort(); /* generate core dump */
+# endif
+        NH_abort(buf); /* generate core dump */
 #endif
     VA_END();
     really_done(PANICKED);
@@ -955,7 +1206,7 @@ savelife(int how)
 
     if (u.utrap && u.utraptype == TT_LAVA)
         reset_utrap(FALSE);
-    gc.context.botl = TRUE;
+    disp.botl = TRUE;
     u.ugrave_arise = NON_PM;
     HUnchanging = 0L;
     curs_on_u();
@@ -1115,7 +1366,7 @@ done_object_cleanup(void)
        a normal popup one; avoids "Bad fruit #n" when saving bones */
     if (iflags.perm_invent) {
         iflags.perm_invent = FALSE;
-        update_inventory(); /* make interface notice the change */
+        perm_invent_toggled(TRUE); /* make interface notice the change */
     }
     return;
 }
@@ -1187,7 +1438,7 @@ fuzzer_savelife(int how)
 
             /* get rid of temporary potion with obfree() rather than useup()
                because it doesn't get entered into inventory */
-            if (u.ulycn >= LOW_PM && !rn2(3)) {
+            if (ismnum(u.ulycn) && !rn2(3)) {
                 potion = mksobj(POT_WATER, TRUE, FALSE);
                 bless(potion);
                 (void) peffects(potion);
@@ -1250,10 +1501,10 @@ done(int how)
         || (how == QUIT && done_stopprint)) {
         /* skip status update if panicking or disconnected
            or answer of 'q' to "Really quit?" */
-        gc.context.botl = gc.context.botlx = iflags.time_botl = FALSE;
+        disp.botl = disp.botlx = disp.time_botl = FALSE;
     } else {
         /* otherwise force full status update */
-        gc.context.botlx = TRUE;
+        disp.botlx = TRUE;
         bot();
     }
 
@@ -1286,7 +1537,7 @@ done(int how)
                negative (-1 is used as a flag in some circumstances
                which don't apply when actually dying due to HP loss) */
             u.uhp = u.mh = 0;
-            gc.context.botl = 1;
+            disp.botl = TRUE;
         }
     }
     if (Lifesaved && (how <= GENOCIDED)) {
@@ -1360,7 +1611,7 @@ really_done(int how)
         done_stopprint++;
 #endif
     /* render vision subsystem inoperative */
-    iflags.vision_inited = 0;
+    iflags.vision_inited = FALSE;
 
     /* maybe use up active invent item(s), place thrown/kicked missile,
        deal with ball and chain possibly being temporarily off the map */
@@ -1420,7 +1671,7 @@ really_done(int how)
     else if (how == BURNING || how == DISSOLVED) /* corpse burns up too */
         u.ugrave_arise = (NON_PM - 2); /* leave no corpse */
     else if (how == STONING)
-        u.ugrave_arise = (NON_PM - 1); /* statue instead of corpse */
+        u.ugrave_arise = LEAVESTATUE; /* statue instead of corpse */
     else if (how == TURNED_SLIME
              /* it's possible to turn into slime even though green slimes
                 have been genocided:  genocide could occur after hero is
@@ -1557,7 +1808,7 @@ really_done(int how)
         }
     }
 
-    if (u.ugrave_arise >= LOW_PM && !done_stopprint) {
+    if (ismnum(u.ugrave_arise) && !done_stopprint) {
         /* give this feedback even if bones aren't going to be created,
            so that its presence or absence doesn't tip off the player to
            new bones or their lack; it might be a lie if makemon fails */
@@ -1588,7 +1839,7 @@ really_done(int how)
         if (WIN_INVEN != WIN_ERR) {
             destroy_nhwindow(WIN_INVEN),  WIN_INVEN = WIN_ERR;
             /* precaution in case any late update_inventory() calls occur */
-            iflags.perm_invent = 0;
+            iflags.perm_invent = FALSE;
         }
         display_nhwindow(WIN_MESSAGE, TRUE);
         destroy_nhwindow(WIN_MAP),  WIN_MAP = WIN_ERR;
@@ -1972,7 +2223,7 @@ save_killers(NHFILE *nhfp)
     if (perform_bwrite(nhfp)) {
         for (kptr = &gk.killer; kptr != (struct kinfo *) 0; kptr = kptr->next) {
             if (nhfp->structlevel)
-                bwrite(nhfp->fd, (genericptr_t)kptr, sizeof(struct kinfo));
+                bwrite(nhfp->fd, (genericptr_t) kptr, sizeof(struct kinfo));
         }
     }
     if (release_data(nhfp)) {
@@ -1991,7 +2242,7 @@ restore_killers(NHFILE *nhfp)
 
     for (kptr = &gk.killer; kptr != (struct kinfo *) 0; kptr = kptr->next) {
         if (nhfp->structlevel)
-            mread(nhfp->fd, (genericptr_t)kptr, sizeof(struct kinfo));
+            mread(nhfp->fd, (genericptr_t) kptr, sizeof(struct kinfo));
         if (kptr->next) {
             kptr->next = (struct kinfo *) alloc(sizeof (struct kinfo));
         }

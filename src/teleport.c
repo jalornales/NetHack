@@ -502,7 +502,6 @@ teleds(coordxy nux, coordxy nuy, int teleds_flags)
     fill_pit(u.ux0, u.uy0);
     if (ball_active && uchain && uchain->where == OBJ_FREE)
         placebc(); /* put back the ball&chain if they were taken off map */
-    initrack(); /* teleports mess up tracking monsters without this */
     update_player_regions();
     /*
      *  Make sure the hero disappears from the old location.  This will
@@ -514,11 +513,12 @@ teleds(coordxy nux, coordxy nuy, int teleds_flags)
     see_monsters();
     gv.vision_full_recalc = 1;
     nomul(0);
+    notice_mon_off();
     vision_recalc(0); /* vision before effects */
 
     /* this used to take place sooner, but if a --More-- prompt was issued
        then the old map display was shown instead of the new one */
-    if (is_teleport && Verbose(2, teleds))
+    if (is_teleport && flags.verbose)
         You("materialize in %s location!",
             (nux == u.ux0 && nuy == u.uy0) ? "the same" : "a different");
     /* if terrain type changes, levitation or flying might become blocked
@@ -543,6 +543,8 @@ teleds(coordxy nux, coordxy nuy, int teleds_flags)
     /* possible shop entry message comes after guard's shrill whistle */
     spoteffects(TRUE);
     invocation_message();
+    notice_mon_on();
+    notice_all_mons(TRUE);
     return;
 }
 
@@ -911,7 +913,7 @@ dotelecmd(void)
         menu_item *picks = (menu_item *) 0;
         anything any;
         winid win;
-        int i, tmode, clr = 0;
+        int i, tmode, clr = NO_COLOR;
 
         win = create_nhwindow(NHW_MENU);
         start_menu(win, MENU_BEHAVE_STANDARD);
@@ -1084,7 +1086,7 @@ dotele(
         } else {
             /* bypassing spelleffects(); apply energy cost directly */
             u.uen -= energy;
-            gc.context.botl = 1;
+            disp.botl = TRUE;
         }
     }
 
@@ -1152,17 +1154,13 @@ level_tele(void)
                             the previous input was invalid so don't use it
                             as getlin()'s preloaded default answer */
             getlin(qbuf, buf);
-            if (!strcmp(buf, "\033")) { /* cancelled */
-                if (Confusion && rnl(5)) {
-                    pline("Oops...");
-                    goto random_levtport;
-                }
-                return;
-            } else if (!strcmp(buf, "*")) {
+            if (!strcmp(buf, "*")) {
                 goto random_levtport;
             } else if (Confusion && rnl(5)) {
                 pline("Oops...");
                 goto random_levtport;
+            } else if (!strcmp(buf, "\033")) { /* cancelled */
+                return;
             }
             if (wizard && !strcmp(buf, "?")) {
                 schar destlev;
@@ -1370,9 +1368,8 @@ level_tele(void)
     }
 
     schedule_goto(&newlevel, UTOTYPE_NONE, (char *) 0,
-                  Verbose(2, level_tele)
-                      ? "You materialize on a different level!"
-                      : (char *) 0);
+                  flags.verbose ? "You materialize on a different level!"
+                                : (char *) 0);
 #if 0   /* always wait until end of turn to change level, otherwise code
          * that references monsters as this call stack unwinds won't be
          * able to access them reliably; the do-the-change-now code here
@@ -1619,6 +1616,7 @@ rloc_to_core(
         const char *next = (du <= 2) ? " next to you" : 0, /* next2u() */
                    *nearu = (du <= BOLT_LIM * BOLT_LIM) ? " close by" : 0;
 
+        set_msg_xy(x, y);
         mtmp->mstrategy &= ~STRAT_APPEARMSG; /* one chance only */
         if (telemsg && (couldsee(x, y) || sensemon(mtmp))) {
             pline("%s vanishes and reappears%s.",
@@ -2156,8 +2154,8 @@ u_teleport_mon(struct monst* mtmp, boolean give_feedback)
             You("are no longer inside %s!", mon_nam(mtmp));
         unstuck(mtmp);
         (void) rloc(mtmp, RLOC_MSG);
-    } else if (is_rider(mtmp->data) && rn2(13)
-               && enexto(&cc, u.ux, u.uy, mtmp->data))
+    } else if ((is_rider(mtmp->data) || control_teleport(mtmp->data))
+               && rn2(13) && enexto(&cc, u.ux, u.uy, mtmp->data))
         rloc_to(mtmp, cc.x, cc.y);
     else
         (void) rloc(mtmp, RLOC_MSG);

@@ -10,10 +10,10 @@
 #define OPTIONS_AT_RUNTIME
 #endif
 
-extern char *mdlib_version_string(char *, const char *);
-static void insert_rtoption(char *);
+static void insert_rtoption(char *) NONNULLARG1;
 
-/* fill buffer with short version (so caller can avoid including date.h) */
+/* fill buffer with short version (so caller can avoid including date.h)
+ * buf cannot be NULL */
 char *
 version_string(char *buf, size_t bufsz)
 {
@@ -311,7 +311,8 @@ check_version(
         ) {
         if (complain) {
             pline("Version mismatch for file \"%s\".", filename);
-            display_nhwindow(WIN_MESSAGE, TRUE);
+            if (WIN_MESSAGE != WIN_ERR)
+                 display_nhwindow(WIN_MESSAGE, TRUE);
         }
         return FALSE;
     } else if (
@@ -358,14 +359,17 @@ uptodate(NHFILE *nhfp, const char *name, unsigned long utdflags)
     if (rlen == 0) {
         if (verbose) {
             pline("File \"%s\" is empty?", name);
-            wait_synch();
+            if ((utdflags & UTD_WITHOUT_WAITSYNCH_PERFILE) == 0)
+                wait_synch();
         }
         return FALSE;
     }
 
     if (!check_version(&vers_info, name, verbose, utdflags)) {
-        if (verbose)
-            wait_synch();
+        if (verbose) {
+            if ((utdflags & UTD_WITHOUT_WAITSYNCH_PERFILE) == 0)
+                wait_synch();
+        }
         return FALSE;
     }
     return TRUE;

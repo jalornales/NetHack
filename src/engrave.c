@@ -532,7 +532,7 @@ doengrave(void)
     if (!otmp) /* otmp == cg.zeroobj if fingers */
         return ECMD_CANCEL;
 
-    if (otmp == &cg.zeroobj) {
+    if (otmp == &hands_obj) {
         Strcat(strcpy(fbuf, "your "), body_part(FINGERTIP));
         writer = fbuf;
     } else {
@@ -563,7 +563,7 @@ doengrave(void)
         return ECMD_OK;
     }
     if (IS_GRAVE(levl[u.ux][u.uy].typ)) {
-        if (otmp == &cg.zeroobj) { /* using only finger */
+        if (otmp == &hands_obj) { /* using only finger */
             You("would only make a small smudge on the %s.",
                 surface(u.ux, u.uy));
             return ECMD_OK;
@@ -736,7 +736,7 @@ doengrave(void)
                 ptext = TRUE;
                 type = ENGRAVE;
                 if (!objects[otmp->otyp].oc_name_known) {
-                    if (Verbose(1, doengrave1))
+                    if (flags.verbose)
                         pline("This %s is a wand of digging!", xname(otmp));
                     doknown = TRUE;
                 }
@@ -759,7 +759,7 @@ doengrave(void)
                 ptext = TRUE;
                 type = BURN;
                 if (!objects[otmp->otyp].oc_name_known) {
-                    if (Verbose(1, doengrave2))
+                    if (flags.verbose)
                         pline("This %s is a wand of fire!", xname(otmp));
                     doknown = TRUE;
                 }
@@ -770,7 +770,7 @@ doengrave(void)
                 ptext = TRUE;
                 type = BURN;
                 if (!objects[otmp->otyp].oc_name_known) {
-                    if (Verbose(1, doengrave3))
+                    if (flags.verbose)
                         pline("This %s is a wand of lightning!", xname(otmp));
                     doknown = TRUE;
                 }
@@ -1024,7 +1024,7 @@ doengrave(void)
     }
 
     /* Tell adventurer what is going on */
-    if (otmp != &cg.zeroobj)
+    if (otmp != &hands_obj)
         You("%s the %s with %s.", everb, eloc, doname(otmp));
     else
         You("%s the %s with your %s.", everb, eloc, body_part(FINGERTIP));
@@ -1131,7 +1131,7 @@ engrave(void)
     }
     /* Stylus might have been taken out of inventory and destroyed somehow.
      * Not safe to dereference stylus until after this. */
-    if (gc.context.engraving.stylus == &cg.zeroobj) { /* bare finger */
+    if (gc.context.engraving.stylus == &hands_obj) { /* bare finger */
         stylus = (struct obj *) 0;
     } else {
         for (stylus = gi.invent; stylus; stylus = stylus->nobj) {
@@ -1357,9 +1357,9 @@ save_engravings(NHFILE *nhfp)
         if (ep->engr_alloc
             && ep->engr_txt[actual_text][0] && perform_bwrite(nhfp)) {
             if (nhfp->structlevel) {
-                bwrite(nhfp->fd, (genericptr_t)&(ep->engr_alloc),
+                bwrite(nhfp->fd, (genericptr_t) &(ep->engr_alloc),
                        sizeof ep->engr_alloc);
-                bwrite(nhfp->fd, (genericptr_t)ep,
+                bwrite(nhfp->fd, (genericptr_t) ep,
                        sizeof (struct engr) + ep->engr_alloc);
             }
         }
@@ -1368,7 +1368,7 @@ save_engravings(NHFILE *nhfp)
     }
     if (perform_bwrite(nhfp)) {
         if (nhfp->structlevel)
-            bwrite(nhfp->fd, (genericptr_t)&no_more_engr, sizeof no_more_engr);
+            bwrite(nhfp->fd, (genericptr_t) &no_more_engr, sizeof no_more_engr);
     }
     if (release_data(nhfp))
         head_engr = 0;
@@ -1549,7 +1549,7 @@ static const char blind_writing[][21] = {
 static const char *
 blengr(void)
 {
-    return blind_writing[rn2(SIZE(blind_writing))];
+    return ROLL_FROM(blind_writing);
 }
 
 /*engrave.c*/

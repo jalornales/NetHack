@@ -1,4 +1,4 @@
-/* NetHack 3.7	lock.c	$NHDT-Date: 1654464994 2022/06/05 21:36:34 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.114 $ */
+/* NetHack 3.7	lock.c	$NHDT-Date: 1703070191 2023/12/20 11:03:11 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.131 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2011. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -569,7 +569,7 @@ pick_lock(
         }
         if (!IS_DOOR(door->typ)) {
             int res = PICKLOCK_DID_NOTHING, oldglyph = door->glyph;
-            schar oldlastseentyp = gl.lastseentyp[cc.x][cc.y];
+            schar oldlastseentyp = update_mapseen_for(cc.x, cc.y);
 
             /* this is probably only relevant when blind */
             feel_location(cc.x, cc.y);
@@ -819,7 +819,7 @@ doopen_indir(coordxy x, coordxy y)
     /* this used to be 'if (Blind)' but using a key skips that so we do too */
     {
         int oldglyph = door->glyph;
-        schar oldlastseentyp = gl.lastseentyp[cc.x][cc.y];
+        schar oldlastseentyp = update_mapseen_for(cc.x, cc.y);
 
         newsym(cc.x, cc.y);
         if (door->glyph != oldglyph
@@ -860,6 +860,7 @@ doopen_indir(coordxy x, coordxy y)
             locked = TRUE;
             break;
         }
+        set_msg_xy(cc.x, cc.y);
         pline("This door%s.", mesg);
         if (locked && flags.autounlock) {
             struct obj *unlocktool;
@@ -887,6 +888,7 @@ doopen_indir(coordxy x, coordxy y)
 
     /* door is known to be CLOSED */
     if (rnl(20) < (ACURRSTR + ACURR(A_DEX) + ACURR(A_CON)) / 3) {
+        set_msg_xy(cc.x, cc.y);
         pline_The("door opens.");
         if (door->doormask & D_TRAPPED) {
             b_trapped("door", FINGER);
@@ -899,6 +901,7 @@ doopen_indir(coordxy x, coordxy y)
         unblock_point(cc.x, cc.y); /* vision: new see through there */
     } else {
         exercise(A_STR, TRUE);
+        set_msg_xy(cc.x, cc.y);
         pline_The("door resists!");
     }
 
@@ -979,7 +982,7 @@ doclose(void)
     portcullis = (is_drawbridge_wall(x, y) >= 0);
     if (Blind) {
         int oldglyph = door->glyph;
-        schar oldlastseentyp = gl.lastseentyp[x][y];
+        schar oldlastseentyp = update_mapseen_for(x, y);
 
         feel_location(x, y);
         if (door->glyph != oldglyph || gl.lastseentyp[x][y] != oldlastseentyp)
@@ -1199,7 +1202,7 @@ doorlock(struct obj *otmp, coordxy x, coordxy y)
                 } else {
                     /* for mtmp, mb_trapped() does is own wake_nearto() */
                     loudness = 40;
-                    if (Verbose(1, doorlock1)) {
+                    if (flags.verbose) {
                         Soundeffect(se_kaboom_door_explodes, 75);
                         if ((sawit || seeit) && !Unaware) {
                             pline("KABOOM!!  You see a door explode.");
@@ -1218,7 +1221,7 @@ doorlock(struct obj *otmp, coordxy x, coordxy y)
             unblock_point(x, y);
             seeit = cansee(x, y);
             newsym(x, y);
-            if (Verbose(1, doorlock2)) {
+            if (flags.verbose) {
                 if ((sawit || seeit) && !Unaware) {
                     pline_The("door crashes open!");
                 } else if (!Deaf) {

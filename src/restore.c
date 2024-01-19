@@ -250,6 +250,7 @@ restobjchn(NHFILE *nhfp, boolean frozen)
             break;
 
         otmp = newobj();
+        assert(otmp != 0);
         restobj(nhfp, otmp);
         if (!first)
             first = otmp;
@@ -387,6 +388,7 @@ restmonchn(NHFILE *nhfp)
             break;
 
         mtmp = newmonst();
+        assert(mtmp != 0);
         restmon(nhfp, mtmp);
         if (!first)
             first = mtmp;
@@ -512,7 +514,7 @@ restgamestate(NHFILE *nhfp)
     struct obj *bc_obj;
     char timebuf[15];
     unsigned long uid = 0;
-    boolean defer_perm_invent;
+    boolean defer_perm_invent, restoring_special;
 
     if (nhfp->structlevel)
         Mread(nhfp->fd, &uid, sizeof uid);
@@ -529,7 +531,7 @@ restgamestate(NHFILE *nhfp)
     newgamecontext = gc.context; /* copy statically init'd context */
     if (nhfp->structlevel)
         Mread(nhfp->fd, &gc.context, sizeof gc.context);
-    gc.context.warntype.species = (gc.context.warntype.speciesidx >= LOW_PM)
+    gc.context.warntype.species = (ismnum(gc.context.warntype.speciesidx))
                                   ? &mons[gc.context.warntype.speciesidx]
                                   : (struct permonst *) 0;
     /* gc.context.victual.piece, .tin.tin, .spellbook.book, and .polearm.hitmon
@@ -557,11 +559,12 @@ restgamestate(NHFILE *nhfp)
        in the discover case, we don't want to set that for a normal
        game until after the save file has been removed */
     iflags.deferred_X = (newgameflags.explore && !discover);
+    restoring_special = (wizard || discover);
     if (newgameflags.debug) {
         /* authorized by startup code; wizard mode exists and is allowed */
         wizard = TRUE, discover = iflags.deferred_X = FALSE;
-    } else if (wizard) {
-        /* specified by save file; check authorization now */
+    } else if (restoring_special) {
+        /* specified by save file; check authorization now. */
         set_playmode();
     }
     role_init(); /* Reset the initial role, race, gender, and alignment */
@@ -571,6 +574,13 @@ restgamestate(NHFILE *nhfp)
     if (nhfp->structlevel)
         Mread(nhfp->fd, &u, sizeof u);
     gy.youmonst.cham = u.mcham;
+
+    if (restoring_special && iflags.explore_error_flag) {
+        /* savefile has wizard or explore mode, but player is no longer
+           authorized to access either; can't downgrade mode any further, so
+           fail restoration. */
+        u.uhp = 0; 
+    }
 
     if (nhfp->structlevel)
         Mread(nhfp->fd, timebuf, 14);
@@ -682,6 +692,7 @@ restgamestate(NHFILE *nhfp)
     /* must come after all mons & objs are restored */
     relink_timers(FALSE);
     relink_light_sources(FALSE);
+    adj_erinys(u.ualign.abuse);
     /* inventory display is now viable */
     iflags.perm_invent = defer_perm_invent;
     return TRUE;
@@ -812,7 +823,7 @@ dorecover(NHFILE *nhfp)
     }
     restoreinfo.mread_flags = 0;
     rewind_nhfile(nhfp);        /* return to beginning of file */
-    (void) validate(nhfp, (char *) 0);
+    (void) validate(nhfp, (char *) 0, FALSE);
     get_plname_from_file(nhfp, gp.plname);
 
     getlev(nhfp, 0, (xint8) 0);
@@ -1047,11 +1058,15 @@ getlev(NHFILE *nhfp, int pid, xint8 lev)
         Mread(nhfp->fd, &gu.updest, sizeof gu.updest);
         Mread(nhfp->fd, &gd.dndest, sizeof gd.dndest);
         Mread(nhfp->fd, &gl.level.flags, sizeof gl.level.flags);
-        if (gd.doors)
+        if (gd.doors) {
             free(gd.doors);
+            gd.doors = 0;
+        }
         Mread(nhfp->fd, &gd.doors_alloc, sizeof gd.doors_alloc);
-        gd.doors = (coord *) alloc(gd.doors_alloc * sizeof (coord));
-        Mread(nhfp->fd, gd.doors, gd.doors_alloc * sizeof (coord));
+        if (gd.doors_alloc) { /* avoid pointless alloc(0) */
+            gd.doors = (coord *) alloc(gd.doors_alloc * sizeof (coord));
+            Mread(nhfp->fd, gd.doors, gd.doors_alloc * sizeof (coord));
+        }
     }
     rest_rooms(nhfp); /* No joke :-) */
     if (gn.nroom)
@@ -1141,6 +1156,8 @@ getlev(NHFILE *nhfp, int pid, xint8 lev)
     restdamage(nhfp);
     rest_regions(nhfp);
     rest_bubbles(nhfp); /* for water and air; empty marker on other levels */
+    load_exclusions(nhfp);
+    rest_track(nhfp);
 
     if (ghostly) {
         stairway *stway = gs.stairs;
@@ -1394,7 +1411,7 @@ restore_menu(
     char **saved;
     menu_item *chosen_game = (menu_item *) 0;
     int k, clet, ch = 0; /* ch: 0 => new game */
-    int clr = 0;
+    int clr = NO_COLOR;
 
     *gp.plname = '\0';
     saved = get_saved_games(); /* array of character names */
@@ -1407,13 +1424,10 @@ restore_menu(
             clear_nhwindow(bannerwin);
             /* COPYRIGHT_BANNER_[ABCD] */
             for (k = 1; k <= 4; ++k)
-                add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-                         clr, copyright_banner_line(k), MENU_ITEMFLAGS_NONE);
-            add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr, "",
-                     MENU_ITEMFLAGS_NONE);
+                add_menu_str(tmpwin, copyright_banner_line(k));
+            add_menu_str(tmpwin, "");
         }
-        add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-                 clr, "Select one of your saved games", MENU_ITEMFLAGS_NONE);
+        add_menu_str(tmpwin, "Select one of your saved games");
         for (k = 0; saved[k]; ++k) {
             any.a_int = k + 1;
             add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
@@ -1455,7 +1469,7 @@ restore_menu(
 #endif /* SELECTSAVED */
 
 int
-validate(NHFILE *nhfp, const char *name)
+validate(NHFILE *nhfp, const char *name, boolean without_waitsynch_perfile)
 {
     readLenType rlen = 0;
     struct savefile_info sfi;
@@ -1464,6 +1478,8 @@ validate(NHFILE *nhfp, const char *name)
 
     if (nhfp->structlevel)
         utdflags |= UTD_CHECKSIZES;
+    if (without_waitsynch_perfile)
+        utdflags |= UTD_WITHOUT_WAITSYNCH_PERFILE;
     if (!(reslt = uptodate(nhfp, name, utdflags)))
         return 1;
 

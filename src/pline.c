@@ -1,4 +1,4 @@
-/* NetHack 3.7	pline.c	$NHDT-Date: 1646255375 2022/03/02 21:09:35 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.109 $ */
+/* NetHack 3.7	pline.c	$NHDT-Date: 1693083243 2023/08/26 20:54:03 $  $NHDT-Branch: keni-crashweb2 $:$NHDT-Revision: 1.124 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2018. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -92,6 +92,47 @@ pline(const char *line, ...)
     va_end(the_args);
 }
 
+void
+pline_dir(int dir, const char *line, ...)
+{
+    va_list the_args;
+
+    set_msg_dir(dir);
+
+    va_start(the_args, line);
+    vpline(line, the_args);
+    va_end(the_args);
+}
+
+void
+pline_xy(coordxy x, coordxy y, const char *line, ...)
+{
+    va_list the_args;
+
+    set_msg_xy(x, y);
+
+    va_start(the_args, line);
+    vpline(line, the_args);
+    va_end(the_args);
+}
+
+/* set the direction where next message happens */
+void
+set_msg_dir(int dir)
+{
+    dtoxy(&a11y.msg_loc, dir);
+    a11y.msg_loc.x += u.ux;
+    a11y.msg_loc.y += u.uy;
+}
+
+/* set the coordinate where next message happens */
+void
+set_msg_xy(coordxy x, coordxy y)
+{
+    a11y.msg_loc.x = x;
+    a11y.msg_loc.y = y;
+}
+
 static void
 vpline(const char *line, va_list the_args)
 {
@@ -109,6 +150,24 @@ vpline(const char *line, va_list the_args)
 #endif
     if (gp.program_state.wizkit_wishing)
         return;
+
+    if (a11y.accessiblemsg && isok(a11y.msg_loc.x,a11y.msg_loc.y)) {
+        char *tmp;
+        char *dirstr;
+        static char dirstrbuf[BUFSZ];
+        int g = (iflags.getpos_coords == GPCOORDS_NONE)
+            ? GPCOORDS_COMFULL : iflags.getpos_coords;
+
+        dirstr = coord_desc(a11y.msg_loc.x, a11y.msg_loc.y, dirstrbuf, g);
+        a11y.msg_loc.x = a11y.msg_loc.y = 0;
+        tmp = (char *)alloc(strlen(line) + sizeof ": " + strlen(dirstr));
+        Strcpy(tmp, dirstr);
+        Strcat(tmp, ": ");
+        Strcat(tmp, line);
+        vpline(tmp, the_args);
+        free((genericptr_t) tmp);
+        return;
+    }
 
     if (!strchr(line, '%')) {
         /* format does not specify any substitutions; use it as-is */
@@ -505,6 +564,7 @@ impossible(const char *s, ...)
 {
     va_list the_args;
     char pbuf[BIGBUFSZ]; /* will be chopped down to BUFSZ-1 if longer */
+    char pbuf2[BUFSZ];
 
     va_start(the_args, s);
     if (gp.program_state.in_impossible)
@@ -521,15 +581,25 @@ impossible(const char *s, ...)
     gp.pline_flags = URGENT_MESSAGE;
     pline("%s", pbuf);
     gp.pline_flags = 0;
-    /* reuse pbuf[] */
-    Strcpy(pbuf, "Program in disorder!");
+
+    Strcpy(pbuf2, "Program in disorder!");
     if (gp.program_state.something_worth_saving)
-        Strcat(pbuf, "  (Saving and reloading may fix this problem.)");
-    pline("%s", pbuf);
+        Strcat(pbuf2, "  (Saving and reloading may fix this problem.)");
+    pline("%s", pbuf2);
     pline("Please report these messages to %s.", DEVTEAM_EMAIL);
     if (sysopt.support) {
         pline("Alternatively, contact local support: %s", sysopt.support);
     }
+
+#ifdef CRASHREPORT
+    if(sysopt.crashreporturl){
+        boolean report = ('y' == yn_function("Report now?","yn",'n',FALSE));
+        raw_print("");  // prove to the user the character was accepted
+        if(report){
+            submit_web_report("Impossible", pbuf);
+        }
+    }
+#endif
 
     gp.program_state.in_impossible = 0;
 }

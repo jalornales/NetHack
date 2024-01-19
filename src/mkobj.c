@@ -1,4 +1,4 @@
-/* NetHack 3.7	mkobj.c	$NHDT-Date: 1689180492 2023/07/12 16:48:12 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.272 $ */
+/* NetHack 3.7	mkobj.c	$NHDT-Date: 1704316444 2024/01/03 21:14:04 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.282 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Derek S. Ray, 2015. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -13,7 +13,7 @@ static void mksobj_init(struct obj *, boolean);
 static int item_on_ice(struct obj *);
 static void shrinking_glob_gone(struct obj *);
 static void obj_timer_checks(struct obj *, coordxy, coordxy, int);
-static void container_weight(struct obj *);
+static void container_weight(struct obj *) NONNULLARG1;
 static struct obj *save_mtraits(struct obj *, struct monst *);
 static void objlist_sanity(struct obj *, int, const char *);
 static void shop_obj_sanity(struct obj *, const char *);
@@ -416,6 +416,7 @@ copy_oextra(struct obj *obj2, struct obj *obj1)
     if (has_omonst(obj1)) {
         if (!OMONST(obj2))
             newomonst(obj2);
+        assert(has_omonst(obj2));
         (void) memcpy((genericptr_t) OMONST(obj2),
                       (genericptr_t) OMONST(obj1), sizeof (struct monst));
         OMONST(obj2)->mextra = (struct mextra *) 0;
@@ -1839,7 +1840,7 @@ weight(struct obj *obj)
         struct obj *contents;
         int cwt;
 
-        if (obj->otyp == STATUE && obj->corpsenm >= LOW_PM) {
+        if (obj->otyp == STATUE && ismnum(obj->corpsenm)) {
             int msize = (int) mons[obj->corpsenm].msize, /* 0..7 */
                 minwt = (msize + msize + 1) * 100;
 
@@ -1881,7 +1882,7 @@ weight(struct obj *obj)
 
         return wt + cwt;
     }
-    if (obj->otyp == CORPSE && obj->corpsenm >= LOW_PM) {
+    if (obj->otyp == CORPSE && ismnum(obj->corpsenm)) {
         long long_wt = obj->quan * (long) mons[obj->corpsenm].cwt;
 
         wt = (long_wt > LARGEST_INT) ? LARGEST_INT : (int) long_wt;
@@ -1910,7 +1911,7 @@ static const int treefruits[] = {
 struct obj *
 rnd_treefruit_at(coordxy x, coordxy y)
 {
-    return mksobj_at(treefruits[rn2(SIZE(treefruits))], x, y, TRUE, FALSE);
+    return mksobj_at(ROLL_FROM(treefruits), x, y, TRUE, FALSE);
 }
 
 /* create a stack of N gold pieces; never returns Null */
@@ -1932,6 +1933,34 @@ mkgold(long amount, coordxy x, coordxy y)
     }
     gold->owt = weight(gold);
     return gold;
+}
+
+/* potions of oil use their obj->age field differently from other potions
+   so changing potion type to or from oil needs to have that fixed up */
+void
+fixup_oil(
+    struct obj *potion, /* potion that just had its otyp changed */
+    struct obj *source) /* item used to create potion; might be Null */
+{
+    if (potion->otyp == POT_OIL) {
+        if (source && source->otyp == POT_OIL) {
+            /* potion of oil being used to set potion's otyp to oil;
+               source might be partly used */
+            potion->age = source->age;
+        } else {
+            /* non-oil is being turned into oil; change absolute age
+               (turn created) into relative age (amount remaining /
+               burn time available) */
+            potion->age = MAX_OIL_IN_FLASK;
+        }
+    } else if (source && source->otyp == POT_OIL) {
+        /* potion is no longer oil, being turned into non-oil */
+        if (potion->age == source->age)
+            potion->age = gm.moves;
+        /* when source is a partly used oil, mark potion as diluted */
+        if (source->age < MAX_OIL_IN_FLASK)
+            potion->odiluted = 1;
+    }
 }
 
 /* return TRUE if the corpse has special timing;
@@ -2047,13 +2076,12 @@ save_mtraits(struct obj *obj, struct monst *mtmp)
     if (!has_omonst(obj))
         newomonst(obj);
     if (has_omonst(obj)) {
-        int baselevel = mtmp->data->mlevel;
+        int baselevel = mtmp->data->mlevel; /* mtmp->data is valid ptr */
         struct monst *mtmp2 = OMONST(obj);
 
         *mtmp2 = *mtmp;
         mtmp2->mextra = (struct mextra *) 0;
-        if (mtmp->data)
-            mtmp2->mnum = monsndx(mtmp->data);
+        mtmp2->mnum = monsndx(mtmp->data);
         /* invalidate pointers */
         /* m_id is needed to know if this is a revived quest leader */
         /* but m_id must be cleared when loading bones */
@@ -2209,6 +2237,7 @@ place_object(struct obj *otmp, coordxy x, coordxy y)
         panic("place_object: obj \"%s\" [%d] not free",
               safe_typename(otmp->otyp), otmp->where);
 
+    assert(x >= 0 && x < COLNO && y >= 0 && y < ROWNO);
     otmp2 = gl.level.objects[x][y];
 
     obj_no_longer_held(otmp);
@@ -2631,6 +2660,10 @@ dealloc_obj(struct obj *obj)
         panic("dealloc_obj with nobj");
     if (obj->cobj)
         panic("dealloc_obj with cobj");
+    if (obj == &hands_obj) {
+        impossible("dealloc_obj with hands_obj");
+        return;
+    }
 
     /* free up any timers attached to the object */
     if (obj->timed)
@@ -2695,10 +2728,14 @@ hornoplenty(
         consume_obj_charge(horn, !tipping);
         if (!rn2(13)) {
             obj = mkobj(POTION_CLASS, FALSE);
-            if (objects[obj->otyp].oc_magic)
+            if (objects[obj->otyp].oc_magic) {
                 do {
                     obj->otyp = rnd_class(POT_BOOZE, POT_WATER);
                 } while (obj->otyp == POT_SICKNESS);
+                /* oil uses obj->age field differently from other potions */
+                if (obj->otyp == POT_OIL)
+                    fixup_oil(obj, (struct obj *) NULL);
+            }
             what = (obj->quan > 1L) ? "Some potions" : "A potion";
         } else {
             obj = mkobj(FOOD_CLASS, FALSE);
@@ -2860,6 +2897,11 @@ objlist_sanity(struct obj *objlist, int wheretype, const char *mesg)
     for (obj = objlist; obj; obj = obj->nobj) {
         if (obj->where != wheretype)
             insane_object(obj, ofmt0, mesg, (struct monst *) 0);
+        if (obj->where == OBJ_INVENT && obj->how_lost != LOST_NONE) {
+            char lostbuf[40];
+            Sprintf(lostbuf, "how_lost=%d obj in inventory!", obj->how_lost);
+            insane_object(obj, ofmt0, lostbuf, (struct monst *) 0);
+        }
         if (Has_contents(obj)) {
             if (wheretype == OBJ_ONBILL)
                 /* containers on shop bill should always be empty */

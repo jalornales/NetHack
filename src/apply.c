@@ -1,4 +1,4 @@
-/* NetHack 3.7	apply.c	$NHDT-Date: 1685202442 2023/05/27 15:47:22 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.420 $ */
+/* NetHack 3.7	apply.c	$NHDT-Date: 1695159606 2023/09/19 21:40:06 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.422 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -37,9 +37,12 @@ static int use_royal_jelly(struct obj **);
 static int grapple_range(void);
 static boolean can_grapple_location(coordxy, coordxy);
 static int use_grapple(struct obj *);
+static void discard_broken_wand(void);
+static void broken_wand_explode(struct obj *, int, int);
 static int do_break_wand(struct obj *);
 static int apply_ok(struct obj *);
 static int flip_through_book(struct obj *);
+static int flip_coin(struct obj *);
 static boolean figurine_location_checks(struct obj *, coord *, boolean);
 static boolean check_jump(genericptr_t, coordxy, coordxy);
 static boolean is_valid_jump_pos(coordxy, coordxy, int, boolean);
@@ -48,7 +51,6 @@ static boolean get_valid_polearm_position(coordxy, coordxy);
 static boolean find_poleable_mon(coord *, int, int);
 
 static const char
-    Nothing_seems_to_happen[] = "Nothing seems to happen.",
     no_elbow_room[] = "don't have enough elbow-room to maneuver.";
 
 static int
@@ -421,7 +423,7 @@ use_stethoscope(struct obj *obj)
             pline("%s %s %s really %s.",
                   use_plural ? "Those" : "That", what,
                   use_plural ? "are" : "is", mnm);
-        } else if (Verbose(0, use_stethoscope) && !canspotmon(mtmp)) {
+        } else if (flags.verbose && !canspotmon(mtmp)) {
             There("is %s there.", mnm);
         }
 
@@ -1009,7 +1011,7 @@ use_mirror(struct obj *obj)
         if (!Blind)
             pline_The("%s fogs up and doesn't reflect!", mirror);
         else
-            pline("%s", Nothing_seems_to_happen);
+            pline("%s", nothing_seems_to_happen);
         return ECMD_TIME;
     }
     if (!u.dx && !u.dy && !u.dz) {
@@ -1142,6 +1144,7 @@ use_mirror(struct obj *obj)
         if (!tele_restrict(mtmp))
             (void) rloc(mtmp, RLOC_MSG);
     } else if (!is_unicorn(mtmp->data) && !humanoid(mtmp->data)
+               && !is_demon(mtmp->data)
                && (!mtmp->minvis || perceives(mtmp->data)) && rn2(5)) {
         boolean do_react = TRUE;
 
@@ -1628,7 +1631,7 @@ use_lamp(struct obj *obj)
             if (!Blind)
                 Your("lantern is out of power.");
             else
-                pline("%s", Nothing_seems_to_happen);
+                pline("%s", nothing_seems_to_happen);
         } else {
             pline("This %s has no oil.", xname(obj));
         }
@@ -1643,7 +1646,7 @@ use_lamp(struct obj *obj)
             pline("%s for a moment, then %s.", Tobjnam(obj, "flicker"),
                   otense(obj, "die"));
         } else {
-            pline("%s", Nothing_seems_to_happen);
+            pline("%s", nothing_seems_to_happen);
         }
     } else {
         if (lamp) { /* lamp or lantern */
@@ -1684,10 +1687,14 @@ light_cocktail(struct obj **optr)
         /*
          * Free & add to re-merge potion.  This will average the
          * age of the potions.  Not exactly the best solution,
-         * but its easy.
+         * but its easy.  Don't do that unless obj is not worn (uwep,
+         * uswapwep, or uquiver) because if wielded and other oil is
+         * quivered a "null obj after quiver merge" panic will occur.
          */
-        freeinv(obj);
-        *optr = addinv(obj);
+        if (!obj->owornmask) {
+            freeinv(obj);
+            *optr = addinv(obj);
+        }
         return;
     } else if (Underwater) {
         There("is not enough oxygen to sustain a fire.");
@@ -1702,7 +1709,8 @@ light_cocktail(struct obj **optr)
         Blind ? "" : "  It gives off a dim light.");
 
     if (obj->unpaid && costly_spot(u.ux, u.uy)) {
-        struct monst *shkp VOICEONLY = shop_keeper(*in_rooms(u.ux, u.uy, SHOPBASE));
+        struct monst *shkp VOICEONLY = shop_keeper(*in_rooms(u.ux, u.uy,
+                                                             SHOPBASE));
 
         /* Normally, we shouldn't both partially and fully charge
          * for an item, but (Yendorian Fuel) Taxes are inevitable...
@@ -2226,7 +2234,7 @@ use_unicorn_horn(struct obj **optr)
             break;
         case 6:
             if (Deaf) /* make_deaf() won't give feedback when already deaf */
-                pline("%s", Nothing_seems_to_happen);
+                pline("%s", nothing_seems_to_happen);
             make_deaf((HDeaf & TIMEOUT) + lcount, TRUE);
             break;
         }
@@ -2312,9 +2320,9 @@ use_unicorn_horn(struct obj **optr)
     }
 
     if (did_prop)
-        gc.context.botl = TRUE;
+        disp.botl = TRUE;
     else
-        pline("%s", Nothing_seems_to_happen);
+        pline("%s", nothing_seems_to_happen);
 
 #undef PROP_COUNT
 #undef prop_trouble
@@ -2558,7 +2566,7 @@ use_grease(struct obj *obj)
         consume_obj_charge(obj, TRUE);
 
         oldglib = (int) (Glib & TIMEOUT);
-        if (otmp != &cg.zeroobj) {
+        if (otmp != &hands_obj) {
             You("cover %s with a thick layer of grease.", yname(otmp));
             otmp->greased = 1;
             if (obj->cursed && !nohands(gy.youmonst.data)) {
@@ -3117,7 +3125,7 @@ use_whip(struct obj *obj)
 
                         hitvalu = 8 + otmp->spe;
                         hitu = thitu(hitvalu, dmgval(otmp, &gy.youmonst),
-                                     &otmp, (char *)0);
+                                     &otmp, (char *) 0);
                         if (hitu) {
                             pline_The("%s hits you as you try to snatch it!",
                                       the(onambuf));
@@ -3477,10 +3485,10 @@ use_royal_jelly(struct obj **optr)
 {
     int oldcorpsenm;
     unsigned was_timed;
-    struct obj *obj = *optr;
-    struct obj *eobj;
+    struct obj *eobj, *obj = *optr;
+    boolean splitit = (obj->quan > 1L);
 
-    if (obj->quan > 1L)
+    if (splitit)
         obj = splitobj(obj, 1L);
     /* remove from inventory so that it won't be offered as a choice
        to rub on itself */
@@ -3489,8 +3497,13 @@ use_royal_jelly(struct obj **optr)
     /* right now you can rub one royal jelly on an entire stack of eggs */
     eobj = getobj("rub the royal jelly on", jelly_ok, GETOBJ_PROMPT);
     if (!eobj) {
-        addinv(obj); /* put the unused lump back; if it came from
-                      * a split, it should merge back */
+        if (splitit) {
+            (void) unsplitobj(obj);
+            update_inventory(); /* freeinv() updated perminv w/ obj omitted */
+        } else {
+            /* this lump was already separate; pervent merge */
+            addinv_nomerge(obj); /* put unused lump back; updates perminv */
+        }
         return ECMD_CANCEL;
     }
 
@@ -3508,7 +3521,7 @@ use_royal_jelly(struct obj **optr)
         if (eobj->timed || eobj->corpsenm != oldcorpsenm)
             pline("The %s %s feebly.", xname(eobj), otense(eobj, "quiver"));
         else
-            pline("%s", Nothing_seems_to_happen);
+            pline("%s", nothing_seems_to_happen);
         kill_egg(eobj);
         goto useup_jelly;
     }
@@ -3527,7 +3540,7 @@ use_royal_jelly(struct obj **optr)
         || eobj->corpsenm != oldcorpsenm)
         pline("The %s %s briefly.", xname(eobj), otense(eobj, "quiver"));
     else
-        pline("%s", Nothing_seems_to_happen);
+        pline("%s", nothing_seems_to_happen);
 
  useup_jelly:
     /* not useup() because we've already done freeinv() */
@@ -3611,7 +3624,7 @@ use_grapple(struct obj *obj)
         anything any;
         char buf[BUFSZ];
         menu_item *selected;
-        int clr = 0;
+        int clr = NO_COLOR;
 
         any = cg.zeroany; /* set all bits to zero */
         any.a_int = 1; /* use index+1 (cant use 0) as identifier */
@@ -3703,6 +3716,26 @@ use_grapple(struct obj *obj)
     return ECMD_TIME;
 }
 
+static void
+discard_broken_wand(void)
+{
+    struct obj *obj;
+
+    obj = gc.current_wand; /* [see dozap() and destroy_item()] */
+    gc.current_wand = 0;
+    if (obj)
+        delobj(obj);
+    nomul(0);
+}
+
+static void
+broken_wand_explode(struct obj *obj, int dmg, int expltype)
+{
+    explode(u.ux, u.uy, -(obj->otyp), dmg, WAND_CLASS, expltype);
+    makeknown(obj->otyp); /* explode describes the effect */
+    discard_broken_wand();
+}
+
 /* return 1 if the wand is broken, hence some time elapsed */
 static int
 do_break_wand(struct obj *obj)
@@ -3716,7 +3749,6 @@ do_break_wand(struct obj *obj)
     boolean affects_objects;
     boolean shop_damage = FALSE;
     boolean fillmsg = FALSE;
-    int expltype = EXPL_MAGICAL;
     char confirm[QBUFSZ], buf[BUFSZ];
     boolean is_fragile = (objdescr_is(obj, "balsa")
                           || objdescr_is(obj, "glass"));
@@ -3753,7 +3785,8 @@ do_break_wand(struct obj *obj)
 
     if (!zappable(obj)) {
         pline(nothing_else_happens);
-        goto discard_broken_wand;
+        discard_broken_wand();
+        return ECMD_TIME;
     }
     /* successful call to zappable() consumes a charge; put it back */
     obj->spe++;
@@ -3776,7 +3809,8 @@ do_break_wand(struct obj *obj)
             release_hold();
             if (obj->dknown)
                 makeknown(WAN_OPENING);
-            goto discard_broken_wand;
+            discard_broken_wand();
+            return ECMD_TIME;
         }
         /*FALLTHRU*/
     case WAN_WISHING:
@@ -3786,24 +3820,21 @@ do_break_wand(struct obj *obj)
     case WAN_ENLIGHTENMENT:
     case WAN_SECRET_DOOR_DETECTION:
         pline(nothing_else_happens);
-        goto discard_broken_wand;
+        discard_broken_wand();
+        return ECMD_TIME;
     case WAN_DEATH:
     case WAN_LIGHTNING:
-        dmg *= 4;
-        goto wanexpl;
+        broken_wand_explode(obj, dmg * 4, EXPL_MAGICAL);
+        return ECMD_TIME;
     case WAN_FIRE:
-        expltype = EXPL_FIERY;
-        /*FALLTHRU*/
+        broken_wand_explode(obj, dmg * 2, EXPL_FIERY);
+        return ECMD_TIME;
     case WAN_COLD:
-        if (expltype == EXPL_MAGICAL)
-            expltype = EXPL_FROSTY;
-        dmg *= 2;
-        /*FALLTHRU*/
+        broken_wand_explode(obj, dmg * 2, EXPL_FROSTY);
+        return ECMD_TIME;
     case WAN_MAGIC_MISSILE:
- wanexpl:
-        explode(u.ux, u.uy, -(obj->otyp), dmg, WAND_CLASS, expltype);
-        makeknown(obj->otyp); /* explode describes the effect */
-        goto discard_broken_wand;
+        broken_wand_explode(obj, dmg, EXPL_MAGICAL);
+        return ECMD_TIME;
     case WAN_STRIKING:
         /* we want this before the explosion instead of at the very end */
         Soundeffect(se_wall_of_force, 65);
@@ -3886,11 +3917,11 @@ do_break_wand(struct obj *obj)
              */
             if ((mon = m_at(x, y)) != 0) {
                 (void) bhitm(mon, obj);
-                /* if (gc.context.botl) bot(); */
+                /* if (disp.botl) bot(); */
             }
             if (affects_objects && gl.level.objects[x][y]) {
                 (void) bhitpile(obj, bhito, x, y, 0);
-                if (gc.context.botl)
+                if (disp.botl)
                     bot(); /* potion effects */
             }
         } else {
@@ -3908,7 +3939,7 @@ do_break_wand(struct obj *obj)
              */
             if (affects_objects && gl.level.objects[x][y]) {
                 (void) bhitpile(obj, bhito, x, y, 0);
-                if (gc.context.botl)
+                if (disp.botl)
                     bot(); /* potion effects */
             }
             damage = zapyourself(obj, FALSE);
@@ -3916,7 +3947,7 @@ do_break_wand(struct obj *obj)
                 Sprintf(buf, "killed %sself by breaking a wand", uhim());
                 losehp(Maybe_Half_Phys(damage), buf, NO_KILLER_PREFIX);
             }
-            if (gc.context.botl)
+            if (disp.botl)
                 bot(); /* blindness */
         }
     }
@@ -3932,12 +3963,7 @@ do_break_wand(struct obj *obj)
     if (obj->otyp == WAN_LIGHT)
         litroom(TRUE, obj); /* only needs to be done once */
 
- discard_broken_wand:
-    obj = gc.current_wand; /* [see dozap() and destroy_item()] */
-    gc.current_wand = 0;
-    if (obj)
-        delobj(obj);
-    nomul(0);
+    discard_broken_wand();
     return ECMD_TIME;
 #undef BY_OBJECT
 }
@@ -3955,6 +3981,11 @@ apply_ok(struct obj *obj)
     if (obj->oclass == TOOL_CLASS || obj->oclass == WAND_CLASS
         || obj->oclass == SPBOOK_CLASS)
         return GETOBJ_SUGGEST;
+
+    /* applying coins to flip them is a minor easter egg, so do not suggest
+       coin application to the player */
+    if (obj->oclass == COIN_CLASS)
+        return GETOBJ_DOWNPLAY;
 
     /* certain weapons */
     if (obj->oclass == WEAPON_CLASS
@@ -4025,6 +4056,9 @@ doapply(void)
 
     if (obj->oclass == SPBOOK_CLASS)
         return flip_through_book(obj);
+
+    if (obj->oclass == COIN_CLASS)
+        return flip_coin(obj);
 
     switch (obj->otyp) {
     case BLINDFOLD:
@@ -4299,6 +4333,38 @@ flip_through_book(struct obj *obj)
               fadeness[findx]);
     }
 
+    return ECMD_TIME;
+}
+
+static int
+flip_coin(struct obj *obj)
+{
+    struct obj *otmp = obj;
+    boolean lose_coin = FALSE;
+
+    You("flip %s.", an(singular(obj, xname)));
+    if (Underwater) {
+        pline("It tumbles away.");
+        lose_coin = TRUE;
+    } else if (Glib || Fumbling
+               || (ACURR(A_DEX) < 10 && !rn2(ACURR(A_DEX)))) {
+        pline("It slips between your %s.", fingers_or_gloves(FALSE));
+        lose_coin = TRUE;
+    }
+
+    if (lose_coin) {
+        if (otmp->quan > 1L)
+            otmp = splitobj(otmp, 1L);
+        dropx(otmp);
+        return ECMD_TIME;
+    }
+    if (Hallucination) {
+        pline(rn2(100) ? "Wow, a double header!"
+                        /* edge case */
+                       : "The coin miraculously lands on its edge!");
+    } else {
+        pline("It comes up %s.", rn2(2) ? "heads" : "tails");
+    }
     return ECMD_TIME;
 }
 

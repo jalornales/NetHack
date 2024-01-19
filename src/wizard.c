@@ -1,4 +1,4 @@
-/* NetHack 3.7	wizard.c	$NHDT-Date: 1646688073 2022/03/07 21:21:13 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.85 $ */
+/* NetHack 3.7	wizard.c	$NHDT-Date: 1705357487 2024/01/15 22:24:47 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.105 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2016. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -11,12 +11,15 @@
 #include "hack.h"
 
 static short which_arti(int);
-static boolean mon_has_arti(struct monst *, short);
-static struct monst *other_mon_has_arti(struct monst *, short);
-static struct obj *on_ground(short);
+static boolean mon_has_arti(struct monst *, short) NONNULLARG1;
+/* other_mon_has_arti() won't blow up if passed a NULL monst,
+ * but its caller target_on() passes it a nonnull monst;
+ * it may return a NULL monst pointer */
+static struct monst *other_mon_has_arti(struct monst *, short) NONNULLARG1;
+static struct obj *on_ground(short);  /* might return NULL obj pointer */
 static boolean you_have(int);
-static unsigned long target_on(int, struct monst *);
-static unsigned long strategy(struct monst *);
+static unsigned long target_on(int, struct monst *) NONNULLARG2;
+static unsigned long strategy(struct monst *) NONNULLARG1;
 
 /* adding more neutral creatures will tend to reduce the number of monsters
    summoned by nasty(); adding more lawful creatures will reduce the number
@@ -176,6 +179,10 @@ mon_has_arti(struct monst *mtmp, short otyp)
     return 0;
 }
 
+/*
+ * Returns some monster other than mtmp that
+ * has artifact, or NULL monst pointer.
+ */
 static struct monst *
 other_mon_has_arti(struct monst *mtmp, short otyp)
 {
@@ -190,6 +197,10 @@ other_mon_has_arti(struct monst *mtmp, short otyp)
     return (struct monst *) 0;
 }
 
+/*
+ * Returns obj of type specified if there is one
+ * on the ground, otherwise returns NULL obj pointer.
+ */
 static struct obj *
 on_ground(short otyp)
 {
@@ -361,6 +372,10 @@ tactics(struct monst *mtmp)
     switch (strat) {
     case STRAT_HEAL: /* hide and recover */
         mx = mtmp->mx, my = mtmp->my;
+
+        if (u.uswallow && u.ustuck == mtmp)
+            expels(mtmp, mtmp->data, TRUE);
+
         /* if wounded, hole up on or near the stairs (to block them) */
         choose_stairs(&sx, &sy, (mtmp->m_id % 2));
         mtmp->mavenge = 1; /* covetous monsters attack while fleeing */
@@ -403,7 +418,9 @@ tactics(struct monst *mtmp)
         }
         if (u_at(tx, ty) || where == STRAT_PLAYER) {
             /* player is standing on it (or has it) */
-            mnexto(mtmp, RLOC_MSG);
+            mx = mtmp->mx, my = mtmp->my;
+            if (!mnearto(mtmp, tx, ty, FALSE, RLOC_MSG))
+                rloc_to(mtmp, mx, my); /* no room? stay put */
             return 0;
         }
         if (where == STRAT_GROUND) {
@@ -498,7 +515,7 @@ clonewiz(void)
         }
         if (!Protection_from_shape_changers) {
             mtmp2->m_ap_type = M_AP_MONSTER;
-            mtmp2->mappearance = wizapp[rn2(SIZE(wizapp))];
+            mtmp2->mappearance = ROLL_FROM(wizapp);
         }
         newsym(mtmp2->mx, mtmp2->my);
     }
@@ -509,7 +526,7 @@ int
 pick_nasty(
     int difcap) /* if non-zero, try to make difficulty be lower than this */
 {
-    int alt, res = nasties[rn2(SIZE(nasties))];
+    int alt, res = ROLL_FROM(nasties);
 
     /* To do?  Possibly should filter for appropriate forms when
      * in the elemental planes or surrounded by water or lava.
@@ -518,8 +535,8 @@ pick_nasty(
      * but we don't try very hard.
      */
     if (Is_rogue_level(&u.uz)
-        && !('A' <= mons[res].mlet && mons[res].mlet <= 'Z'))
-        res = nasties[rn2(SIZE(nasties))];
+        && !('A' <= monsym(&mons[res]) && monsym(&mons[res]) <= 'Z'))
+        res = ROLL_FROM(nasties);
 
     /* if genocided or too difficult or out of place, try a substitute
        when a suitable one exists
@@ -818,20 +835,20 @@ cuss(struct monst *mtmp)
         } else if (u.uhave.amulet && !rn2(SIZE(random_insult))) {
             SetVoice(mtmp, 0, 80, 0);
             verbalize("Relinquish the amulet, %s!",
-                      random_insult[rn2(SIZE(random_insult))]);
+                      ROLL_FROM(random_insult));
         } else if (u.uhp < 5 && !rn2(2)) { /* Panic */
             SetVoice(mtmp, 0, 80, 0);
             verbalize(rn2(2) ? "Even now thy life force ebbs, %s!"
                              : "Savor thy breath, %s, it be thy last!",
-                      random_insult[rn2(SIZE(random_insult))]);
+                      ROLL_FROM(random_insult));
         } else if (mtmp->mhp < 5 && !rn2(2)) { /* Parthian shot */
             SetVoice(mtmp, 0, 80, 0);
             verbalize(rn2(2) ? "I shall return." : "I'll be back.");
         } else {
             SetVoice(mtmp, 0, 80, 0);
             verbalize("%s %s!",
-                      random_malediction[rn2(SIZE(random_malediction))],
-                      random_insult[rn2(SIZE(random_insult))]);
+                      ROLL_FROM(random_malediction),
+                      ROLL_FROM(random_insult));
         }
     } else if (is_lminion(mtmp)
                && !(mtmp->isminion && EMIN(mtmp)->renegade)) {

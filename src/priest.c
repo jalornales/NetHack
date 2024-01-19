@@ -1,4 +1,4 @@
-/* NetHack 3.7	priest.c	$NHDT-Date: 1624322670 2021/06/22 00:44:30 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.70 $ */
+/* NetHack 3.7	priest.c	$NHDT-Date: 1693292537 2023/08/29 07:02:17 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.93 $ */
 /* Copyright (c) Izchak Miller, Steve Linhart, 1989.              */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -301,6 +301,7 @@ char *
 priestname(
     struct monst *mon,
     int article,
+    boolean reveal_high_priest,
     char *pname) /* caller-supplied output buffer */
 {
     boolean do_hallu = Hallucination,
@@ -346,7 +347,7 @@ priestname(
             ; /* polymorphed priest; use ``what'' as is */
         } else {
             if (high_priest)
-                Strcat(pname, "high ");
+                Strcat(pname, Hallucination ? "grand " : "high ");
             if (Hallucination)
                 what = "poohbah";
             else if (mon->female)
@@ -361,7 +362,8 @@ priestname(
 
     Strcat(pname, what);
     /* same as distant_monnam(), more or less... */
-    if (do_hallu || !high_priest || !Is_astralevel(&u.uz)
+    if (do_hallu || !high_priest || reveal_high_priest
+        || !Is_astralevel(&u.uz)
         || next2u(mon->mx, mon->my) || gp.program_state.gameover) {
         Strcat(pname, " of ");
         Strcat(pname, halu_gname(mon_aligntyp(mon)));
@@ -531,7 +533,7 @@ intemple(int roomno)
                 You("sense a presence close by!");
             mtmp->mpeaceful = 0;
             set_malign(mtmp);
-            if (Verbose(3, intemple))
+            if (flags.verbose)
                 You("are frightened to death, and unable to move.");
             nomul(-3);
             gm.multi_reason = "being terrified of a ghost";
@@ -860,6 +862,7 @@ angry_priest(void)
                 newemin(priest);
             priest->ispriest = 0; /* now a roaming minion */
             priest->isminion = 1;
+            assert(has_emin(priest));
             EMIN(priest)->min_align = eprip->shralign;
             EMIN(priest)->renegade = FALSE;
             /* discard priest's memory of his former shrine;

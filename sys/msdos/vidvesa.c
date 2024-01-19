@@ -24,6 +24,7 @@ extern int total_tiles_used, Tile_corr, Tile_unexplored;  /* from tile.c */
 struct VesaCharacter {
     uint32 colour, bgcolour;
     uint32 chr;
+    char inverse;
 };
 
 static unsigned long vesa_SetWindow(int window, unsigned long offset);
@@ -69,6 +70,7 @@ extern int clipx, clipxmax; /* current clipping column from wintty.c */
 extern int clipy, clipymax; /* current clipping row from wintty.c */
 extern int curcol, currow;  /* current column and row        */
 extern int g_attribute;
+extern int inversed;
 extern int attrib_text_normal;  /* text mode normal attribute */
 extern int attrib_gr_normal;    /* graphics mode normal attribute */
 extern int attrib_gr_intense;   /* graphics mode intense attribute */
@@ -87,6 +89,7 @@ static struct map_struct {
     unsigned special;
     short int tileidx;
     int framecolor;
+    int inverse;
 } map[ROWNO][COLNO]; /* track the glyphs */
 
 #define vesa_clearmap()                                         \
@@ -96,10 +99,11 @@ static struct map_struct {
             for (x = 0; x < COLNO; ++x) {                       \
                 map[y][x].glyph = GLYPH_UNEXPLORED;             \
                 map[y][x].ch = glyph2ttychar(GLYPH_UNEXPLORED); \
-		map[y][x].framecolor = NO_COLOR;                \
+                map[y][x].framecolor = NO_COLOR;                \
                 map[y][x].attr = 0;                             \
                 map[y][x].special = 0;                          \
                 map[y][x].tileidx = Tile_unexplored;            \
+                map[y][x].inverse = 0;                          \
             }                                                   \
     }
 #define TOP_MAP_ROW 1
@@ -703,6 +707,7 @@ vesa_xputg(const glyph_info *glyphinfo, const glyph_info *bkglyphinfo UNUSED)
     map[ry][col].special = special;
     map[ry][col].tileidx = glyphinfo->gm.tileidx;
     map[ry][col].attr = attr;
+    map[ry][col].inverse = inversed;
 
     if (bkglyphinfo->framecolor != NO_COLOR) {
         map[ry][col].framecolor = bkglyphinfo->framecolor;
@@ -718,6 +723,16 @@ vesa_xputg(const glyph_info *glyphinfo, const glyph_info *bkglyphinfo UNUSED)
                 decal_packed(packcell, special);
 #endif
             vesa_DisplayCell(glyphinfo->gm.tileidx, col - clipx, ry - clipy);
+            if (bkglyphinfo->framecolor != NO_COLOR) {
+                int curtypbak = cursor_type;
+                int cclr = cursor_color;
+
+                cursor_type = CURSOR_FRAME;
+                cursor_color = bkglyphinfo->framecolor;
+                vesa_DrawCursor();
+                cursor_type = curtypbak;
+                cursor_color = cclr;
+            }
         }
     }
     if (col < (CO - 1))
@@ -808,6 +823,8 @@ vesa_redrawmap(void)
             for (cx = clipx; cx <= (unsigned) clipxmax && cx < COLNO; ++cx) {
                 t_row[cx].chr = map[cy][cx].ch;
                 t_row[cx].colour = map[cy][cx].attr;
+                t_row[cx].bgcolour = BACKGROUND_VESA_COLOR;
+                t_row[cx].inverse = map[cy][cx].inverse;
             }
             vesa_WriteTextRow(0, y, t_row + clipx, cx - clipx);
             x = (cx - clipx) * vesa_char_width;
@@ -1603,7 +1620,9 @@ vesa_WriteCharXY(uint32 chr, int pixx, int pixy, uint32 colour)
     }
     chr_cache_lastx = pixx;
     chr_cache[chr_cache_size].chr = chr;
+    chr_cache[chr_cache_size].inverse = inversed;
     chr_cache[chr_cache_size].colour = colour;
+    chr_cache[chr_cache_size].bgcolour = BACKGROUND_VESA_COLOR;
     ++chr_cache_size;
 }
 
@@ -1693,6 +1712,15 @@ vesa_WriteTextRow(int pixx, int pixy, struct VesaCharacter const *t_row,
                 fg[2] = (pix >> 16) & 0xFF;
                 fg[3] = (pix >> 24) & 0xFF;
             }
+
+            if (t_row[i].inverse) {
+                unsigned char tmpx[4];
+                tmpx[0] = bg[0]; bg[0] = fg[0]; fg[0] = tmpx[0];
+                tmpx[1] = bg[1]; bg[1] = fg[1]; fg[1] = tmpx[1];
+                tmpx[2] = bg[2]; bg[2] = fg[2]; fg[2] = tmpx[2];
+                tmpx[3] = bg[3]; bg[3] = fg[3]; fg[3] = tmpx[3];
+            }
+
             /* Third loop: draw eight pixels */
             for (px = 0; px < (int) vesa_char_width; px += 8) {
                 /* Fourth loop: draw one pixel */
@@ -2214,14 +2242,14 @@ vesa_DrawCursor(void)
 
     default:
         for (x = left; x <= right; ++x) {
-            vesa_WritePixel(x, top, FIRST_TEXT_COLOR + 15);
+            vesa_WritePixel(x, top, FIRST_TEXT_COLOR + cursor_color);
         }
         for (y = top + 1; y <= bottom - 1; ++y) {
-            vesa_WritePixel(left , y, FIRST_TEXT_COLOR + 15);
-            vesa_WritePixel(right, y, FIRST_TEXT_COLOR + 15);
+            vesa_WritePixel(left , y, FIRST_TEXT_COLOR + cursor_color);
+            vesa_WritePixel(right, y, FIRST_TEXT_COLOR + cursor_color);
         }
         for (x = left; x <= right; ++x) {
-            vesa_WritePixel(x, bottom, FIRST_TEXT_COLOR + 15);
+            vesa_WritePixel(x, bottom, FIRST_TEXT_COLOR + cursor_color);
         }
         break;
     }

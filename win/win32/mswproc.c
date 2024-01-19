@@ -12,7 +12,7 @@
 #include "dlb.h"
 #include "func_tab.h" /* for extended commands */
 #include "winMS.h"
-#include <assert.h>
+
 #include <mmsystem.h>
 #include "mhmap.h"
 #include "mhstatus.h"
@@ -76,6 +76,7 @@ COLORREF message_bg_color = RGB(0, 0, 0);
 COLORREF message_fg_color = RGB(0xFF, 0xFF, 0xFF);
 
 strbuf_t raw_print_strbuf = { 0 };
+color_attr mswin_menu_promptstyle = { NO_COLOR, ATR_NONE };
 
 /* Interface definition, for windows.c */
 struct window_procs mswin_procs = {
@@ -337,7 +338,7 @@ prompt_for_player_selection(void)
     anything any;
     menu_item *selected = 0;
     DWORD box_result;
-    int clr = 0;
+    int clr = NO_COLOR;
 
     logDebug("prompt_for_player_selection()\n");
 
@@ -1030,11 +1031,17 @@ mswin_putstr_ex(winid wid, int attr, const char *text, int app)
         /* yield a bit so it gets done immediately */
         mswin_get_nh_event();
     } else {
+        char *was = GetNHApp()->saved_text;
+
         // build text to display later in message box
         GetNHApp()->saved_text =
             realloc(GetNHApp()->saved_text,
                     strlen(text) + strlen(GetNHApp()->saved_text) + 1);
-        strcat(GetNHApp()->saved_text, text);
+        if (!GetNHApp()->saved_text) {
+            free(was);
+        } else {
+            strcat(GetNHApp()->saved_text, text);
+        }
     }
 }
 
@@ -1156,6 +1163,7 @@ mswin_add_menu(winid wid, const glyph_info *glyphinfo,
         data.accelerator = accelerator;
         data.group_accel = group_accel;
         data.attr = attr;
+        data.color = clr;
         data.str = str;
         data.presel = presel;
         data.itemflags = itemflags;
@@ -1254,7 +1262,20 @@ mswin_ctrl_nhwindow(
     int request,
     win_request_info *wri)
 {
-    return (win_request_info *) 0;
+    if (!wri)
+        return (win_request_info *) 0;
+
+    switch(request) {
+    case set_mode:
+    case request_settings:
+        break;
+    case set_menu_promptstyle:
+        mswin_menu_promptstyle = wri->fromcore.menu_promptstyle;
+        break;
+    default:
+        break;
+    }
+    return wri;
 }
 
 /*
@@ -2094,15 +2115,17 @@ mswin_getmsghistory(boolean init)
     if (init) {
         text = (PMSNHMsgGetText) malloc(sizeof(MSNHMsgGetText)
                                         + TEXT_BUFFER_SIZE);
-        text->max_size =
-            TEXT_BUFFER_SIZE
-            - 1; /* make sure we always have 0 at the end of the buffer */
+        if (text) {
+            text->max_size =
+                TEXT_BUFFER_SIZE
+                - 1; /* make sure we always have 0 at the end of the buffer */
 
-        ZeroMemory(text->buffer, TEXT_BUFFER_SIZE);
-        SendMessage(mswin_hwnd_from_winid(WIN_MESSAGE), WM_MSNH_COMMAND,
-                    (WPARAM) MSNH_MSG_GETTEXT, (LPARAM) text);
+            ZeroMemory(text->buffer, TEXT_BUFFER_SIZE);
+            SendMessage(mswin_hwnd_from_winid(WIN_MESSAGE), WM_MSNH_COMMAND,
+                        (WPARAM) MSNH_MSG_GETTEXT, (LPARAM) text);
 
-        next_message = text->buffer;
+            next_message = text->buffer;
+        }
     }
 
     if (!(next_message && next_message[0])) {
@@ -2710,27 +2733,29 @@ mswin_color_from_string(char *colorstring, HBRUSH *brushptr,
                            - hexadecimals);
         ++colorstring;
         red_value *= 16;
-        red_value += (int) (strchr(hexadecimals, tolower((uchar) *colorstring))
-                            - hexadecimals);
+        red_value +=
+            (int) (strchr(hexadecimals, tolower((uchar) *colorstring))
+                   - hexadecimals);
         ++colorstring;
 
-        green_value = (int) (strchr(hexadecimals,
-                                   tolower((uchar) *colorstring))
-                             - hexadecimals);
+        green_value =
+            (int) (strchr(hexadecimals, tolower((uchar) *colorstring))
+                   - hexadecimals);
         ++colorstring;
         green_value *= 16;
-        green_value += (int) (strchr(hexadecimals,
-                                    tolower((uchar) *colorstring))
-                              - hexadecimals);
+        green_value +=
+            (int) (strchr(hexadecimals, tolower((uchar) *colorstring))
+                   - hexadecimals);
         ++colorstring;
 
-        blue_value = (int) (strchr(hexadecimals, tolower((uchar) *colorstring))
-                            - hexadecimals);
+        blue_value =
+            (int) (strchr(hexadecimals, tolower((uchar) *colorstring))
+                   - hexadecimals);
         ++colorstring;
         blue_value *= 16;
-        blue_value += (int) (strchr(hexadecimals,
-                                   tolower((uchar) *colorstring))
-                             - hexadecimals);
+        blue_value +=
+            (int) (strchr(hexadecimals, tolower((uchar) *colorstring))
+                   - hexadecimals);
         ++colorstring;
 
         *colorptr = RGB(red_value, green_value, blue_value);
@@ -2753,7 +2778,10 @@ mswin_color_from_string(char *colorstring, HBRUSH *brushptr,
     if (max_brush > TOTAL_BRUSHES)
         panic("Too many colors!");
     *brushptr = CreateSolidBrush(*colorptr);
-    brush_table[max_brush++] = *brushptr;
+    if (IndexOk(max_brush, brush_table)) {
+        brush_table[max_brush] = *brushptr;
+        max_brush++;
+    }
 }
 
 void

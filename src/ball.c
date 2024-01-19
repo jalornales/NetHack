@@ -44,7 +44,7 @@ ballfall(void)
 {
     boolean gets_hit;
 
-    if (uball && carried(uball) && welded(uball))
+    if (!uball || (uball && carried(uball) && welded(uball)))
         return;
 
     gets_hit = (((uball->ox != u.ux) || (uball->oy != u.uy))
@@ -58,7 +58,7 @@ ballfall(void)
             if (hard_helmet(uarmh)) {
                 pline("Fortunately, you are wearing a hard helmet.");
                 dmg = 3;
-            } else if (Verbose(0, ballfall))
+            } else if (flags.verbose)
                 pline("%s does not protect you.", Yname2(uarmh));
         }
         losehp(Maybe_Half_Phys(dmg), "crunched in the head by an iron ball",

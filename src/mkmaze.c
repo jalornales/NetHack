@@ -1,4 +1,4 @@
-/* NetHack 3.7	mkmaze.c	$NHDT-Date: 1648064596 2022/03/23 19:43:16 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.133 $ */
+/* NetHack 3.7	mkmaze.c	$NHDT-Date: 1704830842 2024/01/09 20:07:22 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.158 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Pasi Kallinen, 2018. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -297,6 +297,22 @@ maze0xy(coord *cc)
     return;
 }
 
+static boolean
+is_exclusion_zone(xint16 type, coordxy x, coordxy y)
+{
+    struct exclusion_zone *ez = ge.exclusion_zones;
+
+    while (ez) {
+        if (((type == LR_DOWNTELE && (ez->zonetype == LR_DOWNTELE || ez->zonetype == LR_TELE))
+             || (type == LR_UPTELE && (ez->zonetype == LR_UPTELE || ez->zonetype == LR_TELE))
+             || type == ez->zonetype)
+            && within_bounded_area(x, y, ez->lx, ez->ly, ez->hx, ez->hy))
+            return TRUE;
+        ez = ez->next;
+    }
+    return FALSE;
+}
+
 /*
  * Bad if:
  *      pos is occupied OR
@@ -375,7 +391,7 @@ put_lregion_here(
 {
     struct monst *mtmp;
 
-    if (bad_location(x, y, nlx, nly, nhx, nhy)) {
+    if (bad_location(x, y, nlx, nly, nhx, nhy) || is_exclusion_zone(rtype, x, y)) {
         if (!oneshot) {
             return FALSE; /* caller should try again */
         } else {
@@ -389,7 +405,7 @@ put_lregion_here(
                     mtmp->mtrapped = 0;
                 deltrap(t);
             }
-            if (bad_location(x, y, nlx, nly, nhx, nhy))
+            if (bad_location(x, y, nlx, nly, nhx, nhy) || is_exclusion_zone(rtype, x, y))
                 return FALSE;
         }
     }
@@ -740,7 +756,7 @@ migr_booty_item(int otyp, const char* gang)
         Strcpy(ONAME(otmp), gang);
         if (objects[otyp].oc_class == FOOD_CLASS) {
             if (otyp == SLIME_MOLD)
-                otmp->spe = fruitadd((char *) orcfruit[rn2(SIZE(orcfruit))],
+                otmp->spe = fruitadd((char *) ROLL_FROM(orcfruit),
                                      (struct fruit *) 0);
             otmp->quan += (long) rn2(3);
             otmp->owt = weight(otmp);
@@ -997,18 +1013,21 @@ pick_vibrasquare_location(void)
     coordxy x, y;
     stairway *stway;
     int trycnt = 0;
+    /* these are also defined in mklev.c and they may not be appropriate
+       for mazes with corridors wider than 1 or for cavernous levels */
 #define x_maze_min 2
 #define y_maze_min 2
-/*
- * Pick a position where the stairs down to Moloch's Sanctum
- * level will ultimately be created.  At that time, an area
- * will be altered:  walls removed, moat and traps generated,
- * boulders destroyed.  The position picked here must ensure
- * that that invocation area won't extend off the map.
- *
- * We actually allow up to 2 squares around the usual edge of
- * the area to get truncated; see mkinvokearea(mklev.c).
- */
+
+    /*
+     * Pick a position where the stairs down to Moloch's Sanctum
+     * level will ultimately be created.  At that time, an area
+     * will be altered:  walls removed, moat and traps generated,
+     * boulders destroyed.  The position picked here must ensure
+     * that that invocation area won't extend off the map.
+     *
+     * We actually allow up to 2 squares around the usual edge of
+     * the area to get truncated; see mkinvokearea(mklev.c).
+     */
 #define INVPOS_X_MARGIN (6 - 2)
 #define INVPOS_Y_MARGIN (5 - 2)
 #define INVPOS_DISTANCE 11

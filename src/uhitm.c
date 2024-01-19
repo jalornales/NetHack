@@ -1,4 +1,4 @@
-/* NetHack 3.7	uhitm.c	$NHDT-Date: 1685312552 2023/05/28 22:22:32 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.409 $ */
+/* NetHack 3.7	uhitm.c	$NHDT-Date: 1699813308 2023/11/12 18:21:48 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.419 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -8,56 +8,62 @@
 static const char brief_feeling[] =
     "have a %s feeling for a moment, then it passes.";
 
-static boolean mhitm_mgc_atk_negated(struct monst *, struct monst *, boolean);
+static boolean mhitm_mgc_atk_negated(struct monst *, struct monst *,
+                                     boolean) NONNULLPTRS;
 static boolean known_hitum(struct monst *, struct obj *, int *, int, int,
-                           struct attack *, int);
-static boolean theft_petrifies(struct obj *);
-static void steal_it(struct monst *, struct attack *);
-static boolean hitum_cleave(struct monst *, struct attack *);
+                           struct attack *, int) NONNULLARG13;
+static boolean theft_petrifies(struct obj *) NONNULLARG1;
+static void steal_it(struct monst *, struct attack *) NONNULLARG1;
+/* hitum_cleave() has contradictory information. There's a comment
+ * beside the 1st arg 'target' stating non-null, but later on there
+ * is a test for 'target' being null */
+static boolean hitum_cleave(struct monst *, struct attack *) NO_NNARGS;
 static boolean double_punch(void);
-static boolean hitum(struct monst *, struct attack *);
-static void hmon_hitmon_barehands(struct _hitmon_data *, struct monst *);
+static boolean hitum(struct monst *, struct attack *) NONNULLARG1;
+static void hmon_hitmon_barehands(struct _hitmon_data *,
+		                  struct monst *) NONNULLARG12;
 static void hmon_hitmon_weapon_ranged(struct _hitmon_data *, struct monst *,
-                                      struct obj *);
+                                      struct obj *) NONNULLARG123;
 static void hmon_hitmon_weapon_melee(struct _hitmon_data *, struct monst *,
-                                     struct obj *);
+                                     struct obj *) NONNULLARG123;
 static void hmon_hitmon_weapon(struct _hitmon_data *, struct monst *,
-                               struct obj *);
+                               struct obj *) NONNULLARG123;
 static void hmon_hitmon_potion(struct _hitmon_data *, struct monst *,
-                               struct obj *);
+                               struct obj *) NONNULLARG123;
 static void hmon_hitmon_misc_obj(struct _hitmon_data *, struct monst *,
-                                 struct obj *);
+                                 struct obj *) NONNULLARG123;
 static void hmon_hitmon_do_hit(struct _hitmon_data *, struct monst *,
-                               struct obj *);
+                               struct obj *) NONNULLARG12;
 static void hmon_hitmon_dmg_recalc(struct _hitmon_data *, struct obj *);
 static void hmon_hitmon_poison(struct _hitmon_data *, struct monst *,
-                               struct obj *);
+                               struct obj *) NONNULLARG123;
 static void hmon_hitmon_jousting(struct _hitmon_data *, struct monst *,
-                                 struct obj *);
+                                 struct obj *) NONNULLARG123;
 static void hmon_hitmon_stagger(struct _hitmon_data *, struct monst *,
-                                struct obj *);
+                                struct obj *) NONNULLARG12;
 static void hmon_hitmon_pet(struct _hitmon_data *, struct monst *,
-                            struct obj *);
+                            struct obj *) NONNULLARG12;
 static void hmon_hitmon_splitmon(struct _hitmon_data *, struct monst *,
-                                 struct obj *);
+                                 struct obj *) NONNULLARG12;
 static void hmon_hitmon_msg_hit(struct _hitmon_data *, struct monst *,
-                                struct obj *);
+                                struct obj *) NONNULLARG12;
 static void hmon_hitmon_msg_silver(struct _hitmon_data *, struct monst *,
-                                   struct obj *);
+                                   struct obj *) NONNULLARG12;
 static void hmon_hitmon_msg_lightobj(struct _hitmon_data *, struct monst *,
-                                     struct obj *);
-static boolean hmon_hitmon(struct monst *, struct obj *, int, int);
-static int joust(struct monst *, struct obj *);
+                                     struct obj *) NONNULLARG12;
+static boolean hmon_hitmon(struct monst *, struct obj *, int, int) NONNULLARG1;
+static int joust(struct monst *, struct obj *) NONNULLARG12;
 static void demonpet(void);
-static boolean m_slips_free(struct monst *, struct attack *);
-static void start_engulf(struct monst *);
+static boolean m_slips_free(struct monst *, struct attack *) NONNULLPTRS;
+static void start_engulf(struct monst *) NONNULLARG1;
 static void end_engulf(void);
-static int gulpum(struct monst *, struct attack *);
-static boolean hmonas(struct monst *);
-static void nohandglow(struct monst *);
-static boolean mhurtle_to_doom(struct monst *, int, struct permonst **);
-static void first_weapon_hit(struct obj *);
-static boolean shade_aware(struct obj *);
+static int gulpum(struct monst *, struct attack *) NONNULLPTRS;
+static boolean hmonas(struct monst *) NONNULLARG1;
+static void nohandglow(struct monst *) NONNULLARG1;
+static boolean mhurtle_to_doom(struct monst *, int,
+                               struct permonst **) NONNULLARG13;
+static void first_weapon_hit(struct obj *) NONNULLARG1;
+static boolean shade_aware(struct obj *) NO_NNARGS;
 
 #define PROJECTILE(obj) ((obj) && is_ammo(obj))
 
@@ -478,6 +484,10 @@ do_attack(struct monst *mtmp)
             if (inshop || foo) {
                 char buf[BUFSZ];
 
+                if (!gc.context.travel && !gc.context.run)
+                    if (canspotmon(mtmp) && mtmp->isshk)
+                        return ECMD_TIME | dopay();
+
                 if (mtmp->mtame) /* see 'additional considerations' above */
                     monflee(mtmp, rnd(6), FALSE, FALSE);
                 Strcpy(buf, y_monnam(mtmp));
@@ -523,7 +533,7 @@ do_attack(struct monst *mtmp)
 
     if (gu.unweapon) {
         gu.unweapon = FALSE;
-        if (Verbose(4, do_attack)) {
+        if (flags.verbose) {
             if (uwep)
                 You("begin bashing monsters with %s.", yname(uwep));
             else if (!cantwield(gy.youmonst.data))
@@ -587,7 +597,7 @@ known_hitum(
     if (go.override_confirmation) {
         /* this may need to be generalized if weapons other than
            Stormbringer acquire similar anti-social behavior... */
-        if (Verbose(4, known_hitum))
+        if (flags.verbose)
             Your("bloodthirsty blade attacks!");
     }
 
@@ -715,8 +725,8 @@ hitum_cleave(
     return (target && DEADMONSTER(target)) ? FALSE : TRUE;
 }
 
-/* returns True if hero is fighting without a weapon and has sufficient
-   skill in bare-handeded combat or martial arts to attack twice */
+/* returns True if hero is fighting without a weapon and without a shield and
+   has sufficient skill in bare-handed/martial arts to attack twice */
 static boolean
 double_punch(void)
 {
@@ -733,7 +743,7 @@ double_punch(void)
      *  master      (5) : 60%
      *  grandmaster (6) : 80%
      */
-    if (!uwep && skl_lvl > P_BASIC)
+    if (!uwep && !uarms && skl_lvl > P_BASIC)
         return (skl_lvl - P_BASIC) > rn2(5);
     return FALSE;
 }
@@ -870,7 +880,7 @@ static void
 hmon_hitmon_weapon_ranged(
     struct _hitmon_data *hmd,
     struct monst *mon,
-    struct obj *obj)
+    struct obj *obj)    /* obj is not NULL */
 {
     /* then do only 1-2 points of damage and don't use or
        train weapon's skill */
@@ -905,7 +915,7 @@ static void
 hmon_hitmon_weapon_melee(
     struct _hitmon_data *hmd,
     struct monst *mon,
-    struct obj *obj)
+    struct obj *obj)    /* obj is not NULL */
 {
     int wtype;
     struct obj *monwep;
@@ -1017,7 +1027,7 @@ static void
 hmon_hitmon_weapon(
     struct _hitmon_data *hmd,
     struct monst *mon,
-    struct obj *obj)
+    struct obj *obj)   /* obj is not NULL */
 {
     /* is it not a melee weapon? */
     if (/* if you strike with a bow... */
@@ -1041,7 +1051,7 @@ static void
 hmon_hitmon_potion(
     struct _hitmon_data *hmd,
     struct monst *mon,
-    struct obj *obj)
+    struct obj *obj)    /* obj is not NULL */
 {
     if (obj->quan > 1L)
         obj = splitobj(obj, 1L);
@@ -1065,7 +1075,7 @@ static void
 hmon_hitmon_misc_obj(
     struct _hitmon_data *hmd,
     struct monst *mon,
-    struct obj *obj)
+    struct obj *obj)    /* obj is not NULL */
 {
     switch (obj->otyp) {
     case BOULDER:         /* 1d20 */
@@ -1117,7 +1127,7 @@ hmon_hitmon_misc_obj(
             ; /* maybe turn the corpse into a statue? */
 #endif
         }
-        hmd->dmg = (obj->corpsenm >= LOW_PM ? mons[obj->corpsenm].msize
+        hmd->dmg = (ismnum(obj->corpsenm) ? mons[obj->corpsenm].msize
                     : 0) + 1;
         break;
 
@@ -1139,14 +1149,15 @@ hmon_hitmon_misc_obj(
            hand-to-hand attack should yield a "bashing" mesg */
         if (obj == uwep)
             gu.unweapon = TRUE;
-        if (obj->spe && obj->corpsenm >= LOW_PM) {
+        if (obj->spe && ismnum(obj->corpsenm)) {
             if (obj->quan < 5L)
                 change_luck((schar) - (obj->quan));
             else
                 change_luck(-5);
         }
 
-        if (touch_petrifies(&mons[obj->corpsenm])) {
+        if (ismnum(obj->corpsenm)
+            && touch_petrifies(&mons[obj->corpsenm])) {
             /*learn_egg_type(obj->corpsenm);*/
             pline("Splat!  You hit %s with %s %s egg%s!",
                   mon_nam(mon),
@@ -1165,10 +1176,11 @@ hmon_hitmon_misc_obj(
             return;
             /*return (boolean) (!DEADMONSTER(mon));*/
         } else { /* ordinary egg(s) */
-            const char *eggp = (obj->corpsenm != NON_PM
-                                && obj->known)
-                ? the(mons[obj->corpsenm].pmnames[NEUTRAL])
-                : (cnt > 1L) ? "some" : "an";
+            enum monnums mnum = obj->corpsenm;
+            const char *eggp =
+                (ismnum(mnum) && obj->known)
+                    ? the(mons[mnum].pmnames[NEUTRAL])
+                    : (cnt > 1L) ? "some" : "an";
 
             You("hit %s with %s egg%s.", mon_nam(mon), eggp,
                 plur(cnt));
@@ -1315,11 +1327,13 @@ static void
 hmon_hitmon_do_hit(
     struct _hitmon_data *hmd,
     struct monst *mon,
-    struct obj *obj)
+    struct obj *obj)    /* obj can be NULL */
 {
     if (!obj) { /* attack with bare hands */
         hmon_hitmon_barehands(hmd, mon);
     } else {
+        /* obj is not NULL here because of the !obj check in this if block,
+         , so no guard is needed ahead of stone_missile(obj) */
         /* stone missile does not hurt xorn or earth elemental, but doesn't
            pass all the way through and continue on to some further target */
         if ((hmd->thrown == HMON_THROWN
@@ -1436,7 +1450,7 @@ static void
 hmon_hitmon_poison(
     struct _hitmon_data *hmd,
     struct monst *mon,
-    struct obj *obj)
+    struct obj *obj)    /* obj is not NULL */
 {
     int nopoison = (10 - (obj->owt / 10));
 
@@ -1449,7 +1463,7 @@ hmon_hitmon_poison(
         You_feel("like an evil coward for using a poisoned weapon.");
         adjalign(-1);
     }
-    if (obj && !rn2(nopoison)) {
+    if (!rn2(nopoison)) {
         /* remove poison now in case obj ends up in a bones file */
         obj->opoisoned = FALSE;
         /* defer "obj is no longer poisoned" until after hit message */
@@ -1467,7 +1481,7 @@ static void
 hmon_hitmon_jousting(
     struct _hitmon_data *hmd,
     struct monst *mon, /* target */
-    struct obj *obj) /* lance */
+    struct obj *obj) /* lance; obj is not NULL */
 {
     hmd->dmg += d(2, (obj == uwep) ? 10 : 2); /* [was in dmgval()] */
     You("joust %s%s", mon_nam(mon), canseemon(mon) ? exclam(hmd->dmg) : ".");
@@ -1530,7 +1544,7 @@ static void
 hmon_hitmon_splitmon(
     struct _hitmon_data *hmd,
     struct monst *mon,
-    struct obj *obj)
+    struct obj *obj)    /* obj can be NULL but guards are in place below */
 {
     if ((hmd->mdat == &mons[PM_BLACK_PUDDING]
          || hmd->mdat == &mons[PM_BROWN_PUDDING])
@@ -1550,7 +1564,7 @@ hmon_hitmon_splitmon(
 
         if ((mclone = clone_mon(mon, 0, 0)) != 0) {
             withwhat[0] = '\0';
-            if (u.twoweap && Verbose(4, hmon_hitmon1))
+            if (u.twoweap && flags.verbose)
                 Sprintf(withwhat, " with %s", yname(obj));
             pline("%s divides as you hit it%s!", Monnam(mon), withwhat);
             hmd->hittxt = TRUE;
@@ -1563,7 +1577,7 @@ static void
 hmon_hitmon_msg_hit(
     struct _hitmon_data *hmd,
     struct monst *mon,
-    struct obj *obj)
+    struct obj *obj)   /* obj can be NULL for hand_to_hand; otherwise not */
 {
     if (!hmd->hittxt /*( thrown => obj exists )*/
         && (!hmd->destroyed
@@ -1571,7 +1585,7 @@ hmon_hitmon_msg_hit(
                 && gm.m_shot.o == obj->otyp))) {
         if (hmd->thrown)
             hit(mshot_xname(obj), mon, exclam(hmd->dmg));
-        else if (!Verbose(4, hmon_hitmon2))
+        else if (!flags.verbose)
             You("hit it.");
         else /* hand_to_hand */
             You("%s %s%s",
@@ -1654,6 +1668,26 @@ hmon_hitmon_msg_lightobj(
     pline(fmt, whom);
     RESTORE_WARNING_FORMAT_NONLITERAL
 }
+
+/*
+ * These will segfault if passed a NULL obj pointer:
+ *       hmon_hitmon_weapon_ranged,
+ *       hmon_hitmon_weapon_melee,
+ *       hmon_hitmon_weapon,
+ *       hmon_hitmon_potion,
+ *       hmon_hitmon_misc_obj,
+ *       hmon_hitmon_poison,
+ *       hmon_hitmon_jousting,
+ *
+ * These are equipped to handle a NULL obj pointer:
+ *       hmon_hitmon_stagger,       - obj arg is unused
+ *       hmon_hitmon_pet,           - obj arg is unused
+ *       hmon_hitmon_msg_silver,    - obj arg is unused
+ *       hmon_hitmon_msg_lightobj,  - obj arg is unused
+ *       hmon_hitmon_do_hit,        - has obj and !obj code paths
+ *       hmon_hitmon_splitmon,      - has !obj guards
+ *       hmon_hitmon_msg_hit,       - has !obj guards exc. thrown which is ok
+ */
 
 /* guts of hmon(); returns True if 'mon' survives */
 static boolean
@@ -2439,6 +2473,7 @@ mhitm_ad_fire(
             pline("You're %s!", on_fire(pd, mattk));
             if (completelyburns(pd)) { /* paper or straw golem */
                 You("go up in flames!");
+                monstunseesu(M_SEEN_FIRE);
                 /* KMH -- this is okay with unchanging */
                 rehumanize();
                 return;
@@ -2446,6 +2481,8 @@ mhitm_ad_fire(
                 pline_The("fire doesn't feel hot!");
                 monstseesu(M_SEEN_FIRE);
                 mhm->damage = 0;
+            } else {
+                monstunseesu(M_SEEN_FIRE);
             }
             if ((int) magr->m_lev > rn2(20))
                 destroy_item(SCROLL_CLASS, AD_FIRE);
@@ -2530,6 +2567,8 @@ mhitm_ad_cold(
                 pline_The("frost doesn't seem cold!");
                 monstseesu(M_SEEN_COLD);
                 mhm->damage = 0;
+            } else {
+                monstunseesu(M_SEEN_COLD);
             }
             if ((int) magr->m_lev > rn2(20))
                 destroy_item(POTION_CLASS, AD_COLD);
@@ -2586,6 +2625,8 @@ mhitm_ad_elec(
                 pline_The("zap doesn't shock you!");
                 monstseesu(M_SEEN_ELEC);
                 mhm->damage = 0;
+            } else {
+                monstunseesu(M_SEEN_ELEC);
             }
             if ((int) magr->m_lev > rn2(20))
                 destroy_item(WAND_CLASS, AD_ELEC);
@@ -2635,6 +2676,7 @@ mhitm_ad_acid(
             } else {
                 pline("You're covered in %s!  It burns!", hliquid("acid"));
                 exercise(A_STR, FALSE);
+                monstunseesu(M_SEEN_ACID);
             }
         else
             mhm->damage = 0;
@@ -2675,7 +2717,8 @@ mhitm_ad_sgld(
 
         if (mongold) {
             obj_extract_self(mongold);
-            if (merge_choice(gi.invent, mongold) || inv_cnt(FALSE) < 52) {
+            if (merge_choice(gi.invent, mongold)
+                    || inv_cnt(FALSE) < invlet_basic) {
                 addinv(mongold);
                 Your("purse feels heavier.");
             } else {
@@ -2719,6 +2762,7 @@ mhitm_ad_sgld(
         if (!tele_restrict(magr)) {
             boolean couldspot = canspotmon(magr);
 
+            mhm->hitflags = M_ATTK_AGR_DONE;
             (void) rloc(magr, RLOC_NOMSG);
             /* TODO: use RLOC_MSG instead? */
             if (gv.vis && couldspot && !canspotmon(magr))
@@ -2762,7 +2806,7 @@ mhitm_ad_tlpt(
         if (!mhitm_mgc_atk_negated(magr, mdef, FALSE)) {
             You("are not affected.");
         } else {
-            if (Verbose(4, mhitm_ad_tlpt))
+            if (flags.verbose)
                 Your("position suddenly seems %suncertain!",
                      (Teleport_control && !Stunned && !unconscious()) ? ""
                      : "very ");
@@ -3167,16 +3211,22 @@ mhitm_ad_stck(
 {
     boolean negated = mhitm_mgc_atk_negated(magr, mdef, FALSE);
     struct permonst *pd = mdef->data;
+    boolean barbs = (magr->data == &mons[PM_BARBED_DEVIL]);
 
     if (magr == &gy.youmonst) {
         /* uhitm */
-        if (!negated && !sticks(pd) && next2u(mdef->mx, mdef->my))
+        if (!negated && !sticks(pd) && next2u(mdef->mx, mdef->my)) {
             set_ustuck(mdef); /* it's now stuck to you */
+            if (barbs)
+                Your("barbs stick to %s!", y_monnam(mdef));
+        }
     } else if (mdef == &gy.youmonst) {
         /* mhitu */
         hitmsg(magr, mattk);
         if (!negated && !u.ustuck && !sticks(pd)) {
             set_ustuck(magr);
+            if (barbs)
+                pline("The barbs stick to you!");
         }
     } else {
         /* mhitm */
@@ -3215,7 +3265,7 @@ mhitm_ad_wrap(
                     pline("%s is being crushed.", Monnam(mdef));
             } else {
                 mhm->damage = 0;
-                if (Verbose(4, mhitm_ad_wrap1)) {
+                if (flags.verbose) {
                     if (coil && !tailmiss)
                         You("brush against %s.", mon_nam(mdef));
                     else
@@ -3256,7 +3306,7 @@ mhitm_ad_wrap(
                 }
             } else {
                 mhm->damage = 0;
-                if (Verbose(4, mhitm_ad_wrap2)) {
+                if (flags.verbose) {
                     if (coil)
                         pline("%s brushes against you.", Monnam(magr));
                     else
@@ -3349,6 +3399,7 @@ mhitm_ad_slee(
                 monstseesu(M_SEEN_SLEEP);
                 return;
             }
+            monstunseesu(M_SEEN_SLEEP);
             fall_asleep(-rnd(10), TRUE);
             if (Blind)
                 You("are put to sleep!");
@@ -3938,7 +3989,7 @@ mhitm_ad_phys(
                         exercise(A_STR, FALSE);
                     /* inflict damage now; we know it can't be fatal */
                     u.mh -= tmp;
-                    gc.context.botl = 1;
+                    disp.botl = TRUE;
                     mhm->damage = 0; /* don't inflict more damage below */
                     if (cloneu())
                         You("divide as %s hits you!", mon_nam(magr));
@@ -4168,7 +4219,7 @@ mhitm_ad_heal(
                 exercise(A_CON, TRUE);
             if (Sick)
                 make_sick(0L, (char *) 0, FALSE, SICK_ALL);
-            gc.context.botl = 1;
+            disp.botl = TRUE;
             if (goaway) {
                 mongone(magr);
                 mhm->done = TRUE;
@@ -4344,7 +4395,7 @@ mhitm_ad_dgst(
             mhm->done = TRUE;
             return;
         }
-        if (Verbose(4, mhitm_ad_dgst) && !Deaf) {
+        if (flags.verbose && !Deaf) {
             /* Soundeffect? */
             SetVoice(magr, 0, 80, 0);
             verbalize("Burrrrp!");
@@ -4552,6 +4603,7 @@ mhitm_ad_sedu(
             if (pa->mlet == S_NYMPH && !tele_restrict(magr)) {
                 boolean couldspot = canspotmon(magr);
 
+                mhm->hitflags = M_ATTK_AGR_DONE;
                 (void) rloc(magr, RLOC_NOMSG);
                 /* TODO: use RLOC_MSG instead? */
                 if (gv.vis && couldspot && !canspotmon(magr))
@@ -4685,7 +4737,7 @@ damageum(
             You_feel("embarrassed for a moment.");
             if (mhm.damage)
                 xkilled(mdef, XKILL_NOMSG);
-        } else if (!Verbose(4, damageum)) {
+        } else if (!flags.verbose) {
             You("destroy it!");
             if (mhm.damage)
                 xkilled(mdef, XKILL_NOMSG);
@@ -5018,7 +5070,7 @@ missum(
 
     if (could_seduce(&gy.youmonst, mdef, mattk))
         You("pretend to be friendly to %s.", mon_nam(mdef));
-    else if (canspotmon(mdef) && Verbose(4, missum))
+    else if (canspotmon(mdef) && flags.verbose)
         You("miss %s.", mon_nam(mdef));
     else
         You("miss it.");
@@ -5159,6 +5211,9 @@ mhitm_knockback(
         /* hero knocks unseen foe back; noticed by touch */
         You_feel("%s be knocked %s!", some_mon_nam(mdef), knockedhow);
     }
+
+    if (u.ustuck && (u_def || u_agr))
+        unstuck(u.ustuck);
 
     /* do the actual knockback effect */
     if (u_def) {
@@ -5363,12 +5418,12 @@ hmonas(struct monst *mon)
                     verb = (mattk->aatyp == AT_TUCH) ? "touch" : "claws";
                     /* decide if silver-hater will be hit by silver ring(s);
                        for 'multi_claw' where attacks alternate right/left,
-                       assume 'even' claw or touch attacks use right hand
-                       or paw, 'odd' ones use left for ring interaction;
-                       even vs odd is based on actual attacks rather
-                       than on index into mon->dat->mattk[] so that {bite,
-                       claw,claw} instead of {claw,claw,bite} doesn't
-                       make poly'd hero mysteriously become left-handed */
+                       assume 'even' claw or touch attacks use dominant hand
+                       or paw, 'odd' ones use non-dominant hand for ring
+                       interaction; even vs odd is based on actual attacks
+                       rather than on index into mon->dat->mattk[] so that
+                       {bite,claw,claw} instead of {claw,claw,bite} doesn't
+                       make poly'd hero mysteriously switch handedness */
                     odd_claw = !odd_claw;
                     specialdmg = special_dmgval(&gy.youmonst, mon,
                                                 W_ARMG
@@ -5424,7 +5479,7 @@ hmonas(struct monst *mon)
                         if (mattk->aatyp == AT_CLAW)
                             verb = "hit"; /* not "claws" */
                         You("%s %s.", verb, mon_nam(mon));
-                        if (silverhit && Verbose(4, hmonas1))
+                        if (silverhit && flags.verbose)
                             silver_sears(&gy.youmonst, mon, silverhit);
                     }
                     sum[i] = damageum(mon, mattk, specialdmg);
@@ -5488,7 +5543,7 @@ hmonas(struct monst *mon)
                    choking hug; deals damage but never grabs hold */
                 if (specialdmg) {
                     You("%s %s%s", verb, mon_nam(mon), exclam(specialdmg));
-                    if (silverhit && Verbose(4, hmonas2))
+                    if (silverhit && flags.verbose)
                         silver_sears(&gy.youmonst, mon, silverhit);
                     sum[i] = damageum(mon, mattk, specialdmg);
                 } else {
@@ -5506,7 +5561,7 @@ hmonas(struct monst *mon)
                       byhand ? "throttled" : "crushed",
                       /* extra feedback for non-breather being choked */
                       unconcerned ? " but doesn't seem concerned" : "");
-                if (silverhit && Verbose(4, hmonas3))
+                if (silverhit && flags.verbose)
                     silver_sears(&gy.youmonst, mon, silverhit);
                 sum[i] = damageum(mon, mattk, specialdmg);
             } else if (i >= 2 && (sum[i - 1] > M_ATTK_MISS)
@@ -5518,7 +5573,7 @@ hmonas(struct monst *mon)
                     uunstick();
                 You("grab %s!", mon_nam(mon));
                 set_ustuck(mon);
-                if (silverhit && Verbose(4, hmonas4))
+                if (silverhit && flags.verbose)
                     silver_sears(&gy.youmonst, mon, silverhit);
                 sum[i] = damageum(mon, mattk, specialdmg);
             }
@@ -5670,16 +5725,18 @@ passive(
         break;
     case AD_ACID:
         if (mhitb && rn2(2)) {
-            if (Blind || !Verbose(4, passive))
+            if (Blind || !flags.verbose)
                 You("are splashed!");
             else
                 You("are splashed by %s %s!", s_suffix(mon_nam(mon)),
                     hliquid("acid"));
 
-            if (!Acid_resistance)
+            if (!Acid_resistance) {
                 mdamageu(mon, tmp);
-            else
+                monstunseesu(M_SEEN_ACID);
+            } else {
                 monstseesu(M_SEEN_ACID);
+            }
             if (!rn2(30))
                 erode_armor(&gy.youmonst, ERODE_CORRODE);
         }
@@ -5749,6 +5806,7 @@ passive(
         } else {
             You("are hit by magic missiles appearing from thin air!");
             mdamageu(mon, tmp);
+            monstunseesu(M_SEEN_MAGR);
         }
         break;
     case AD_ENCH: /* KMH -- remove enchantment (disenchanter) */
@@ -5834,6 +5892,7 @@ passive(
                     ugolemeffects(AD_COLD, tmp);
                     break;
                 }
+                monstunseesu(M_SEEN_COLD);
                 You("are suddenly very cold!");
                 mdamageu(mon, tmp);
                 /* monster gets stronger with your heat! */
@@ -5858,6 +5917,7 @@ passive(
                     ugolemeffects(AD_FIRE, tmp);
                     break;
                 }
+                monstunseesu(M_SEEN_FIRE);
                 You("are suddenly very hot!");
                 mdamageu(mon, tmp); /* fire damage */
             }
@@ -5870,6 +5930,7 @@ passive(
                 ugolemeffects(AD_ELEC, tmp);
                 break;
             }
+            monstunseesu(M_SEEN_ELEC);
             You("are jolted with electricity!");
             mdamageu(mon, tmp);
             break;
@@ -6065,7 +6126,7 @@ flash_hits_mon(struct monst *mtmp,
                 mtmp->mcansee = 0;
                 mtmp->mblinded = (tmp < 3) ? 0 : rnd(1 + 50 / tmp);
             }
-        } else if (Verbose(4, flash_hits_mon) && useeit) {
+        } else if (flags.verbose && useeit) {
             if (lev->lit)
                 pline("The flash of light shines on %s.", mon_nam(mtmp));
             else

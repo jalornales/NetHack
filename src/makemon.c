@@ -1,4 +1,4 @@
-/* NetHack 3.7	makemon.c	$NHDT-Date: 1651886995 2022/05/07 01:29:55 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.204 $ */
+/* NetHack 3.7	makemon.c	$NHDT-Date: 1695327268 2023/09/21 20:14:28 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.227 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -16,6 +16,7 @@
 
 static boolean uncommon(int);
 static int align_shift(struct permonst *);
+static int temperature_shift(struct permonst *);
 static boolean mk_gen_ok(int, unsigned, unsigned);
 static boolean wrong_elem_type(struct permonst *);
 static void m_initgrp(struct monst *, coordxy, coordxy, int, mmflags_nht);
@@ -40,7 +41,9 @@ is_home_elemental(struct permonst *ptr)
             return Is_earthlevel(&u.uz);
         case PM_WATER_ELEMENTAL:
             return Is_waterlevel(&u.uz);
-        }
+        default:
+	    break;
+	}
     return FALSE;
 }
 
@@ -901,6 +904,7 @@ clone_mon(struct monst *mon,
         int atyp;
 
         newemin(m2);
+        assert(has_emin(m2) && has_emin(mon));
         *EMIN(m2) = *EMIN(mon);
         /* renegade when same alignment as hero but not peaceful or
            when peaceful while being different alignment from hero */
@@ -911,8 +915,10 @@ clone_mon(struct monst *mon,
            However, tamedog() will not re-tame a tame dog, so m2
            must be made non-tame to get initialized properly. */
         m2->mtame = 0;
-        if (tamedog(m2, (struct obj *) 0))
+        if (tamedog(m2, (struct obj *) 0)) {
+            assert(has_edog(m2) && has_edog(mon));
             *EDOG(m2) = *EDOG(mon);
+        }
         /* [TODO? some (most? all?) edog fields probably should be
            reinitialized rather that retain the 'parent's values] */
     }
@@ -1270,6 +1276,8 @@ makemon(
     mtmp->mcansee = mtmp->mcanmove = TRUE;
     mtmp->seen_resistance = M_SEEN_NOTHING;
     mtmp->mpeaceful = (mmflags & MM_ANGRY) ? FALSE : peace_minded(ptr);
+    if ((mmflags & MM_MINVIS) != 0) /* for ^G */
+        mon_set_minvis(mtmp); /* call after place_monster() */
 
     switch (ptr->mlet) {
     case S_MIMIC:
@@ -1319,7 +1327,7 @@ makemon(
     if ((ct = emits_light(mtmp->data)) > 0)
         new_light_source(mtmp->mx, mtmp->my, ct, LS_MONSTER,
                          monst_to_any(mtmp));
-    mitem = 0; /* extra inventory item for this monster */
+    mitem = STRANGE_OBJECT; /* extra inventory item for this monster */
 
     if (mndx == PM_VLAD_THE_IMPALER)
         mitem = CANDELABRUM_OF_INVOCATION;
@@ -1351,7 +1359,7 @@ makemon(
     } else if (mndx == PM_PESTILENCE) {
         mitem = POT_SICKNESS;
     }
-    if (mitem && allow_minvent)
+    if (mitem != STRANGE_OBJECT && allow_minvent)
         (void) mongets(mtmp, mitem);
 
     if (gi.in_mklev) {
@@ -1458,13 +1466,15 @@ makemon(
                 mhidden_description(mtmp, FALSE, mbuf);
                 what = upstart(strsubst(mbuf, ", mimicking ", ""));
             }
-            if (what)
+            if (what) {
+                set_msg_xy(mtmp->mx, mtmp->my);
                 Norep("%s%s appears%s%c", what,
                       exclaim ? " suddenly" : "",
                       next2u(x, y) ? " next to you"
                       : (distu(x, y) <= (BOLT_LIM * BOLT_LIM)) ? " close by"
                         : "",
                       exclaim ? '!' : '.');
+            }
         }
         /* if discernable and a threat, stop fiddling while Rome burns */
         if (go.occupation)
@@ -1602,6 +1612,17 @@ align_shift(register struct permonst *ptr)
     return alshift;
 }
 
+/* return larger value if monster prefers the level temperature */
+static int
+temperature_shift(struct permonst *ptr)
+{
+    if (gl.level.flags.temperature
+        && pm_resistance(ptr, (gl.level.flags.temperature > 0)
+                         ? MR_FIRE : MR_COLD))
+        return 3;
+    return 0;
+}
+
 /* select a random monster type */
 struct permonst *
 rndmonst(void)
@@ -1636,7 +1657,7 @@ rndmonst_adj(int minadj, int maxadj)
 
         if (montooweak(mndx, minmlev) || montoostrong(mndx, maxmlev))
             continue;
-        if (upper && !isupper((uchar) def_monsyms[(int) ptr->mlet].sym))
+        if (upper && !isupper(monsym(ptr)))
             continue;
         if (elemlevel && wrong_elem_type(ptr))
             continue;
@@ -1659,6 +1680,7 @@ rndmonst_adj(int minadj, int maxadj)
          * potentially steal its spot.
          */
         weight = (int) (ptr->geno & G_FREQ) + align_shift(ptr);
+        weight += temperature_shift(ptr);
         if (weight < 0 || weight > 127) {
             impossible("bad weight in rndmonst for mndx %d", mndx);
             weight = 0;
@@ -2107,6 +2129,8 @@ peace_minded(register struct permonst *ptr)
         return TRUE;
     if (ptr->msound == MS_NEMESIS)
         return FALSE;
+    if (ptr == &mons[PM_ERINYS])
+        return !u.ualign.abuse;
 
     if (race_peaceful(ptr))
         return TRUE;
@@ -2313,7 +2337,7 @@ set_mimic_sym(register struct monst *mtmp)
             goto assign_sym;
         }
     } else {
-        s_sym = syms[rn2(SIZE(syms))];
+        s_sym = ROLL_FROM(syms);
  assign_sym:
         if (s_sym == MAXOCLASSES) {
             static const int furnsyms[] = {
@@ -2322,7 +2346,7 @@ set_mimic_sym(register struct monst *mtmp)
             };
 
             ap_type = M_AP_FURNITURE;
-            appear = furnsyms[rn2(SIZE(furnsyms))];
+            appear = ROLL_FROM(furnsyms);
         } else {
             ap_type = M_AP_OBJECT;
             if (s_sym == S_MIMIC_DEF) {
@@ -2422,10 +2446,21 @@ bagotricks(
                 update_inventory(); /* for perm_invent */
             }
         } else if (!tipping) {
-            pline1(!moncount ? nothing_happens : "Nothing seems to happen.");
+            pline1(!moncount ? nothing_happens : nothing_seems_to_happen);
         }
     }
     return moncount;
+}
+
+/* create some or all remaining erinyes around the player */
+void
+summon_furies(int limit) /* number to create, or 0 to create until extinct */
+{
+    int i = 0;
+    while (mk_gen_ok(PM_ERINYS, G_GONE, 0U) && (i < limit || !limit)) {
+        makemon(&mons[PM_ERINYS], u.ux, u.uy, MM_ADJACENTOK | MM_NOWAIT);
+        i++;
+    }
 }
 
 /*makemon.c*/

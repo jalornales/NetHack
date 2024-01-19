@@ -4,7 +4,7 @@
 
 #include "hack.h"
 
-static int explosionmask(struct monst *, uchar, char);
+static int explosionmask(struct monst *, uchar, char) NONNULLARG1;
 static void engulfer_explosion_msg(uchar, char);
 
 /* Note: Arrays are column first, while the screen is row first */
@@ -588,7 +588,7 @@ explode(
     if (uhurt) {
         /* give message for any monster-induced explosion
            or player-induced one other than scroll of fire */
-        if (Verbose(1, explode) && (type < 0 || olet != SCROLL_CLASS)) {
+        if (flags.verbose && (type < 0 || olet != SCROLL_CLASS)) {
             if (do_hallu) { /* (see explanation above) */
                 do {
                     Sprintf(hallu_buf, "%s explosion",
@@ -630,12 +630,14 @@ explode(
                 u.mh -= damu;
             else
                 u.uhp -= damu;
-            gc.context.botl = 1;
+            disp.botl = TRUE;
         }
 
         /* You resisted the damage, lets not keep that to ourselves */
         if (uhurt == 1)
             monstseesu_ad(adtyp);
+        else
+            monstunseesu_ad(adtyp);
 
         if (u.uhp <= 0 || (Upolyd && u.mh <= 0)) {
             if (Upolyd) {
@@ -647,6 +649,11 @@ explode(
                     else if (str != gk.killer.name && str != hallu_buf)
                         Strcpy(gk.killer.name, str);
                     gk.killer.format = KILLED_BY_AN;
+                } else if (olet == TRAP_EXPLODE) {
+                    gk.killer.format = NO_KILLER_PREFIX;
+                    Snprintf(gk.killer.name, sizeof gk.killer.name,
+                             "caught %sself in a %s", uhim(),
+                             str);
                 } else if (type >= 0 && olet != SCROLL_CLASS) {
                     gk.killer.format = NO_KILLER_PREFIX;
                     Snprintf(gk.killer.name, sizeof gk.killer.name,

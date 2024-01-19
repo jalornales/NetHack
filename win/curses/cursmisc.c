@@ -78,7 +78,9 @@ curses_read_char(void)
 void
 curses_toggle_color_attr(WINDOW *win, int color, int attr, int onoff)
 {
-#ifdef TEXTCOLOR
+    if (color == NO_COLOR)
+        color = NONE;
+
     int curses_color;
 
     /* if color is disabled, just show attribute */
@@ -86,7 +88,6 @@ curses_toggle_color_attr(WINDOW *win, int color, int attr, int onoff)
                         /* statuswin is for #if STATUS_HILITES
                            but doesn't need to be conditional */
                         : !(iflags.wc2_guicolor || win == statuswin)) {
-#endif
         if (attr != NONE) {
             if (onoff == ON)
                 wattron(win, attr);
@@ -94,7 +95,6 @@ curses_toggle_color_attr(WINDOW *win, int color, int attr, int onoff)
                 wattroff(win, attr);
         }
         return;
-#ifdef TEXTCOLOR
     }
 
     if (color == 0) {           /* make black fg visible */
@@ -150,9 +150,6 @@ curses_toggle_color_attr(WINDOW *win, int color, int attr, int onoff)
             wattroff(win, attr);
         }
     }
-#else
-    nhUse(color);
-#endif /* TEXTCOLOR */
 }
 
 /* call curses_toggle_color_attr() with 'menucolors' instead of 'guicolor'
@@ -166,7 +163,8 @@ curses_menu_color_attr(WINDOW *win, int color, int attr, int onoff)
     /* curses_toggle_color_attr() uses 'guicolor' to decide whether to
        honor specified color, but menu windows have their own
        more-specific control, 'menucolors', so override with that here */
-    iflags.wc2_guicolor = iflags.use_menu_color;
+/*    iflags.wc2_guicolor = iflags.use_menu_color; */
+    iflags.wc2_guicolor = (color != NONE);
     curses_toggle_color_attr(win, color, attr, onoff);
     iflags.wc2_guicolor = save_guicolor;
 }
@@ -399,6 +397,7 @@ curses_str_remainder(const char *str, int width, int line_num)
         if (last_space == 0) {  /* No spaces found */
             last_space = count - 1;
         }
+        assert(IndexOk(last_space, substr));
         if (substr[last_space] == '\0') {
             break;
         }
@@ -661,7 +660,7 @@ curses_view_file(const char *filename, boolean must_exist)
     char buf[BUFSZ];
     menu_item *selected = NULL;
     dlb *fp = dlb_fopen(filename, "r");
-    int clr = 0;
+    int clr = NO_COLOR;
 
     if (fp == NULL) {
         if (must_exist)

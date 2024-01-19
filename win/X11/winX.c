@@ -98,6 +98,7 @@ void (*input_func)(Widget, XEvent *, String *, Cardinal *);
 int click_x, click_y, click_button; /* Click position on a map window
                                      * (filled by set_button_values()). */
 int updated_inventory; /* used to indicate perm_invent updating */
+color_attr X11_menu_promptstyle = { NO_COLOR, ATR_NONE };
 
 static void X11_error_handler(String) NORETURN;
 static int X11_io_error_handler(Display *);
@@ -164,10 +165,8 @@ struct window_procs X11_procs = {
  * Local functions.
  */
 static winid find_free_window(void);
-#ifdef TEXTCOLOR
 static void nhFreePixel(XtAppContext, XrmValuePtr, XtPointer, XrmValuePtr,
                         Cardinal *);
-#endif
 static boolean new_resource_macro(String, unsigned);
 static void load_default_resources(void);
 static void release_default_resources(void);
@@ -707,7 +706,6 @@ load_boldfont(struct xwindow *wp, Widget w)
     wp->boldfs = XLoadQueryFont(dpy, fontname);
 }
 
-#ifdef TEXTCOLOR
 /* ARGSUSED */
 static void
 nhFreePixel(
@@ -735,7 +733,6 @@ nhFreePixel(
                     (unsigned long *) toVal->addr, 1, (unsigned long) 0);
     }
 }
-#endif /*TEXTCOLOR*/
 
 /* [ALI] Utility function to ask Xaw for font height, since the previous
  * assumption of ascent + descent is not always valid.
@@ -1308,7 +1305,20 @@ X11_ctrl_nhwindow(
     int request UNUSED,
     win_request_info *wri UNUSED)
 {
-    return (win_request_info *) 0;
+    if (!wri)
+        return (win_request_info *) 0;
+
+    switch(request) {
+    case set_mode:
+    case request_settings:
+        break;
+    case set_menu_promptstyle:
+        X11_menu_promptstyle = wri->fromcore.menu_promptstyle;
+        break;
+    default:
+        break;
+    }
+    return wri;
 }
 
 /* The current implementation has all of the saved lines on the screen. */
@@ -1608,13 +1618,11 @@ X11_init_nhwindows(int *argcp, char **argv)
 
     old_error_handler = XSetErrorHandler(panic_on_error);
 
-#ifdef TEXTCOLOR
     /* add new color converter to deal with overused colormaps */
     XtSetTypeConverter(XtRString, XtRPixel, nhCvtStringToPixel,
                        (XtConvertArgList) nhcolorConvertArgs,
                        XtNumber(nhcolorConvertArgs), XtCacheByDisplay,
                        nhFreePixel);
-#endif /* TEXTCOLOR */
 
     /* Register the actions mentioned in "actions". */
     XtAppAddActions(app_context, actions, XtNumber(actions));

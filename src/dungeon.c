@@ -1,4 +1,4 @@
-/* NetHack 3.7	dungeon.c	$NHDT-Date: 1689629244 2023/07/17 21:27:24 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.188 $ */
+/* NetHack 3.7	dungeon.c	$NHDT-Date: 1704043695 2023/12/31 17:28:15 $  $NHDT-Branch: keni-luabits2 $:$NHDT-Revision: 1.207 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -38,8 +38,7 @@ static void Fread(genericptr_t, int, int, dlb *);
 static xint16 dname_to_dnum(const char *);
 static int find_branch(const char *, struct proto_dungeon *);
 static xint16 parent_dnum(const char *, struct proto_dungeon *);
-static int level_range(xint16, int, int, int, struct proto_dungeon *,
-                       int *);
+static int level_range(xint16, int, int, int, struct proto_dungeon *, int *);
 static xint16 parent_dlevel(const char *, struct proto_dungeon *);
 static int correct_branch_type(struct tmpbranch *);
 static branch *add_branch(int, int, struct proto_dungeon *);
@@ -53,11 +52,11 @@ static int get_dgn_align(lua_State *);
 static void init_dungeon_levels(lua_State *, struct proto_dungeon *, int);
 static boolean unplaced_floater(struct dungeon *);
 static boolean unreachable_level(d_level *, boolean);
-static void tport_menu(winid, char *, struct lchoice *, d_level *,
-                       boolean);
+static void tport_menu(winid, char *, struct lchoice *, d_level *, boolean);
 static const char *br_string(int);
 static char chr_u_on_lvl(d_level *);
 static void print_branch(winid, int, int, int, boolean, struct lchoice *);
+static char *get_annotation(d_level *);
 static void query_annotation(d_level *);
 static mapseen *load_mapseen(NHFILE *);
 static void save_mapseen(NHFILE *, mapseen *);
@@ -65,6 +64,7 @@ static mapseen *find_mapseen(d_level *);
 static mapseen *find_mapseen_by_str(const char *);
 static void print_mapseen(winid, mapseen *, int, int, boolean);
 static boolean interest_mapseen(mapseen *);
+static void count_feat_lastseentyp(mapseen *, coordxy, coordxy);
 static void traverse_mapseenchn(int, winid, int, int, int *);
 static const char *seen_string(xint16, const char *);
 static const char *br_string2(branch *);
@@ -515,7 +515,7 @@ add_branch(
 
     branch_num = find_branch(gd.dungeons[dgn].dname, pd);
     new_branch = (branch *) alloc(sizeof(branch));
-    (void) memset((genericptr_t)new_branch, 0, sizeof(branch));
+    (void) memset((genericptr_t) new_branch, 0, sizeof(branch));
     new_branch->next = (branch *) 0;
     new_branch->id = branch_id++;
     new_branch->type = correct_branch_type(&pd->tmpbranch[branch_num]);
@@ -568,7 +568,7 @@ init_level(int dgn, int proto_index, struct proto_dungeon *pd)
 
     pd->final_lev[proto_index] = new_level =
         (s_level *) alloc(sizeof(s_level));
-    (void) memset((genericptr_t)new_level, 0, sizeof(s_level));
+    (void) memset((genericptr_t) new_level, 0, sizeof(s_level));
     /* load new level with data */
     Strcpy(new_level->proto, tlevel->name);
     new_level->boneid = tlevel->boneschar;
@@ -867,7 +867,7 @@ init_dungeons(void)
     struct proto_dungeon pd;
     struct level_map *lev_map;
     int tidx;
-    nhl_sandbox_info sbi = {NHL_SB_SAFE, 0, 0, 0};
+    nhl_sandbox_info sbi = {NHL_SB_SAFE, 1*1024*1024, 0, 1*1024*1024};
 
     (void) memset(&pd, 0, sizeof (struct proto_dungeon));
     pd.n_levs = pd.n_brs = 0;
@@ -1501,7 +1501,7 @@ u_on_newpos(coordxy x, coordxy y)
        stale values from previous level */
     if (!on_level(&u.uz, &u.uz0))
         u.ux0 = u.ux, u.uy0 = u.uy;
-    else if (!Blind && !Hallucination)
+    else if (!Blind && !Hallucination && !u.uswallow)
         /* still on same level; might have come close enough to
            generic object(s) to redisplay them as specific objects */
         see_nearby_objects();
@@ -1687,13 +1687,13 @@ u_on_dnstairs(void)
 boolean
 On_stairs(coordxy x, coordxy y)
 {
-    return (stairway_at(x,y) != NULL);
+    return (stairway_at(x, y) != NULL);
 }
 
 boolean
 On_ladder(coordxy x, coordxy y)
 {
-    stairway *stway = stairway_at(x,y);
+    stairway *stway = stairway_at(x, y);
 
     return (boolean) (stway && stway->isladder);
 }
@@ -1701,7 +1701,7 @@ On_ladder(coordxy x, coordxy y)
 boolean
 On_stairs_up(coordxy x, coordxy y)
 {
-    stairway *stway = stairway_at(x,y);
+    stairway *stway = stairway_at(x, y);
 
     return (boolean) (stway && stway->up);
 }
@@ -1709,7 +1709,7 @@ On_stairs_up(coordxy x, coordxy y)
 boolean
 On_stairs_dn(coordxy x, coordxy y)
 {
-    stairway *stway = stairway_at(x,y);
+    stairway *stway = stairway_at(x, y);
 
     return (boolean) (stway && !stway->up);
 }
@@ -2281,7 +2281,7 @@ tport_menu(
 {
     char tmpbuf[BUFSZ];
     anything any;
-    int clr = 0;
+    int clr = NO_COLOR;
 
     lchoices->lev[lchoices->idx] = lvl_p->dlevel;
     lchoices->dgn[lchoices->idx] = lvl_p->dnum;
@@ -2427,10 +2427,8 @@ print_dungeon(boolean bymenu, schar *rlev, xint16 *rdgn)
     s_level *slev;
     dungeon *dptr;
     branch *br;
-    anything any;
     struct lchoice lchoices;
     winid win = create_nhwindow(NHW_MENU);
-    int clr = 0;
 
     if (bymenu) {
         start_menu(win, MENU_BEHAVE_STANDARD);
@@ -2461,9 +2459,7 @@ print_dungeon(boolean bymenu, schar *rlev, xint16 *rdgn)
                         dptr->depth_start + dptr->entry_lev - 1);
         }
         if (bymenu) {
-            any = cg.zeroany;
-            add_menu(win, &nul_glyphinfo, &any, 0, 0,
-                     iflags.menu_headings, clr, buf, MENU_ITEMFLAGS_NONE);
+            add_menu_heading(win, buf);
         } else
             putstr(win, 0, buf);
 
@@ -2609,7 +2605,7 @@ recbranch_mapseen(d_level *source, d_level *dest)
     }
 }
 
-char *
+static char *
 get_annotation(d_level *lev)
 {
     mapseen *mptr;
@@ -2617,6 +2613,16 @@ get_annotation(d_level *lev)
     if ((mptr = find_mapseen(lev)))
         return mptr->custom;
     return NULL;
+}
+
+/* print the annotation for the current level, if it exists */
+void
+print_level_annotation(void)
+{
+    const char *annotation;
+
+    if ((annotation = get_annotation(&u.uz)) != 0)
+        You("remember this level as %s.", annotation);
 }
 
 /* ask user to annotate level lev.
@@ -2645,7 +2651,29 @@ query_annotation(d_level *lev)
         getlin(tmpbuf, nbuf);
     } else
 #endif
-        getlin("What do you want to call this dungeon level?", nbuf);
+    {
+        char qbuf[QBUFSZ], lbuf[QBUFSZ]; /* level description */
+
+        if (!lev || on_level(&u.uz, lev)) {
+            Strcpy(lbuf, "this dungeon level");
+        } else {
+            int dflgs = (lev->dnum == u.uz.dnum) ? 0 : 2;
+            d_level save_uz = u.uz;
+
+            u.uz = *lev;
+            (void) describe_level(lbuf, dflgs);
+            u.uz = save_uz;
+
+            (void) strsubst(lbuf, "Dlvl:", "level ");
+            /* even though we've told describe_level() not to append
+               a trailing space (by not including '1' in dflgs), the
+               level number is formatted with %-2d so single digit
+               values will end up with one anyway; remove it */
+            (void) trimspaces(lbuf);
+        }
+        Snprintf(qbuf, sizeof qbuf, "What do you want to call %s?", lbuf);
+        getlin(qbuf, nbuf);
+    }
 
     /* empty input or ESC means don't add or change annotation;
        space-only means discard current annotation without adding new one */
@@ -2671,8 +2699,68 @@ query_annotation(d_level *lev)
 int
 donamelevel(void)
 {
-    query_annotation((d_level *)0);
+    query_annotation((d_level *) 0);
     return ECMD_OK;
+}
+
+/* exclusion zones */
+void
+free_exclusions(void)
+{
+    struct exclusion_zone *ez = ge.exclusion_zones;
+
+    while (ez) {
+        struct exclusion_zone *nxtez = ez->next;
+
+        free(ez);
+        ez = nxtez;
+    }
+    ge.exclusion_zones = (struct exclusion_zone *) 0;
+}
+
+void
+save_exclusions(NHFILE *nhfp)
+{
+    struct exclusion_zone *ez;
+    int nez;
+
+    for (nez = 0, ez = ge.exclusion_zones; ez; ez = ez->next, ++nez) ;
+
+    if (nhfp->structlevel)
+        bwrite(nhfp->fd, (genericptr_t) &nez, sizeof nez);
+
+    for (ez = ge.exclusion_zones; ez; ez = ez->next) {
+        if (nhfp->structlevel) {
+            bwrite(nhfp->fd, (genericptr_t) &ez->zonetype, sizeof ez->zonetype);
+            bwrite(nhfp->fd, (genericptr_t) &ez->lx, sizeof ez->lx);
+            bwrite(nhfp->fd, (genericptr_t) &ez->ly, sizeof ez->ly);
+            bwrite(nhfp->fd, (genericptr_t) &ez->hx, sizeof ez->hx);
+            bwrite(nhfp->fd, (genericptr_t) &ez->hy, sizeof ez->hy);
+        }
+    }
+}
+
+void
+load_exclusions(NHFILE *nhfp)
+{
+    struct exclusion_zone *ez;
+    int nez = 0;
+
+    if (nhfp->structlevel)
+        mread(nhfp->fd, (genericptr_t) &nez, sizeof nez);
+
+    while (nez-- > 0) {
+        ez = (struct exclusion_zone *) alloc(sizeof *ez);
+        if (nhfp->structlevel) {
+            mread(nhfp->fd, (genericptr_t) &ez->zonetype, sizeof ez->zonetype);
+            mread(nhfp->fd, (genericptr_t) &ez->lx, sizeof ez->lx);
+            mread(nhfp->fd, (genericptr_t) &ez->ly, sizeof ez->ly);
+            mread(nhfp->fd, (genericptr_t) &ez->hx, sizeof ez->hx);
+            mread(nhfp->fd, (genericptr_t) &ez->hy, sizeof ez->hy);
+        }
+        ez->next = ge.exclusion_zones;
+        ge.exclusion_zones = ez;
+    }
 }
 
 /* find the particular mapseen object in the chain; may return null */
@@ -2704,7 +2792,7 @@ find_mapseen_by_str(const char *s)
 void
 rm_mapseen(int ledger_num)
 {
-    mapseen *mptr, *mprev = (mapseen *)0;
+    mapseen *mptr, *mprev = (mapseen *) 0;
     struct cemetery *bp, *bpnext;
 
     for (mptr = gm.mapseenchn; mptr; mprev = mptr, mptr = mptr->next)
@@ -2972,6 +3060,153 @@ interest_mapseen(mapseen *mptr)
                           == gd.dungeons[mptr->lev.dnum].dunlev_ureached));
 }
 
+/* update the lastseentyp at x,y */
+void
+update_lastseentyp(coordxy x, coordxy y)
+{
+    struct monst *mtmp;
+    int ltyp = levl[x][y].typ;
+
+    if (ltyp == DRAWBRIDGE_UP)
+        ltyp = db_under_typ(levl[x][y].drawbridgemask);
+    if ((mtmp = m_at(x, y)) != 0
+        && M_AP_TYPE(mtmp) == M_AP_FURNITURE && canseemon(mtmp))
+        ltyp = cmap_to_type(mtmp->mappearance);
+    gl.lastseentyp[x][y] = ltyp;
+}
+
+/* for some cases where deferred update needs to be done immediately;
+   hide details from caller */
+int
+update_mapseen_for(coordxy x, coordxy y)
+{
+    recalc_mapseen(); /* whole level */
+    return gl.lastseentyp[x][y];
+}
+
+/* count mapseen feature from lastseentyp at x,y */
+static void
+count_feat_lastseentyp(
+    mapseen *mptr, /* remembered data for a level; update feat.X counts */
+    coordxy x, coordxy y)
+{
+    int count;
+    unsigned atmp;
+
+    switch (gl.lastseentyp[x][y]) {
+#if 0   /* levels that have these tend of have a lot of them */
+    /*
+     * FIXME?  due to theme rooms, lots of levels have an incresed
+     * chance of having these so automatic annotations for them may
+     * have become more worthwhile now.
+     */
+    case ICE:
+        count = mptr->feat.ice + 1;
+        if (count <= 3)
+            mptr->feat.ice = count;
+        break;
+    case POOL:
+    case MOAT:
+    case WATER:
+        count = mptr->feat.water + 1;
+        if (count <= 3)
+            mptr->feat.water = count;
+        break;
+    case LAVAPOOL:
+    case LAVAWALL:
+        count = mptr->feat.lava + 1;
+        if (count <= 3)
+            mptr->feat.lava = count;
+        break;
+#endif
+    case TREE:
+        count = mptr->feat.ntree + 1;
+        if (count <= 3)
+            mptr->feat.ntree = count;
+        break;
+    case FOUNTAIN:
+        count = mptr->feat.nfount + 1;
+        if (count <= 3)
+            mptr->feat.nfount = count;
+        break;
+    case THRONE:
+        count = mptr->feat.nthrone + 1;
+        if (count <= 3)
+            mptr->feat.nthrone = count;
+        break;
+    case SINK:
+        count = mptr->feat.nsink + 1;
+        if (count <= 3)
+            mptr->feat.nsink = count;
+        break;
+    case GRAVE:
+        count = mptr->feat.ngrave + 1;
+        if (count <= 3)
+            mptr->feat.ngrave = count;
+        break;
+    case ALTAR:
+        /* get the altarmask for this location; might be a mimic */
+        atmp = altarmask_at(x, y);
+        /* convert to index: 0..3 */
+        atmp = (Is_astralevel(&u.uz) && (levl[x][y].seenv & SVALL) != SVALL)
+               ? MSA_NONE
+               : Amask2msa(atmp);
+        if (!mptr->feat.naltar)
+            mptr->feat.msalign = atmp;
+        else if (mptr->feat.msalign != atmp)
+            mptr->feat.msalign = MSA_NONE;
+        count = mptr->feat.naltar + 1;
+        if (count <= 3)
+            mptr->feat.naltar = count;
+        break;
+        /*  An automatic annotation is added to the Castle and
+         *  to Fort Ludios once their structure's main entrance
+         *  has been seen (in person or via magic mapping).
+         *  For the Fort, that entrance is just a secret door
+         *  which will be converted into a regular one when
+         *  located (or destroyed).
+         * DOOR: possibly a lowered drawbridge's open portcullis;
+         * DBWALL: a raised drawbridge's "closed door";
+         * DRAWBRIDGE_DOWN: the span provided by lowered bridge,
+         *  with moat or other terrain hidden underneath;
+         * DRAWBRIDGE_UP: moat in front of a raised drawbridge,
+         *  not recognizable as a bridge location unless/until
+         *  the adjacent DBWALL has been seen.
+         */
+    case DOOR:
+        if (Is_knox(&u.uz)) {
+            int ty, tx = x - 4;
+
+            /* Throne is four columns to left, either directly in
+             * line or one row higher or lower, and doesn't have
+             * to have been seen yet.
+             *   ......|}}}.
+             *   ..\...S}...
+             *   ..\...S}...
+             *   ......|}}}.
+             * For 3.6.0 and earlier, it was always in direct line:
+             * both throne and door on the lower of the two rows.
+             */
+            for (ty = y - 1; ty <= y + 1; ++ty)
+                if (isok(tx, ty) && IS_THRONE(levl[tx][ty].typ)) {
+                    mptr->flags.ludios = 1;
+                    break;
+                }
+            break;
+        }
+        if (is_drawbridge_wall(x, y) < 0)
+            break;
+        /*FALLTHRU*/
+    case DBWALL:
+    case DRAWBRIDGE_DOWN:
+        if (Is_stronghold(&u.uz))
+            mptr->flags.castle = 1, mptr->flags.castletune = 1;
+        break;
+    default:
+        break;
+    }
+}
+
 /* recalculate mapseen for the current level */
 void
 recalc_mapseen(void)
@@ -2980,8 +3215,8 @@ recalc_mapseen(void)
     struct monst *mtmp;
     struct cemetery *bp, **bonesaddr;
     struct trap *t;
-    unsigned i, ridx, atmp;
-    int ltyp, count;
+    unsigned i, ridx;
+    int count;
     coordxy x, y;
     char uroom;
 
@@ -3090,126 +3325,12 @@ recalc_mapseen(void)
      * the ability to have non-dungeon glyphs float above the last known
      * dungeon glyph (i.e. items on fountains).
      */
+    if (!Levitation)
+        update_lastseentyp(u.ux, u.uy);
+
     for (x = 1; x < COLNO; x++) {
         for (y = 0; y < ROWNO; y++) {
-            if (cansee(x, y) || (u_at(x, y) && !Levitation)) {
-                ltyp = levl[x][y].typ;
-                if (ltyp == DRAWBRIDGE_UP)
-                    ltyp = db_under_typ(levl[x][y].drawbridgemask);
-                if ((mtmp = m_at(x, y)) != 0
-                    && M_AP_TYPE(mtmp) == M_AP_FURNITURE && canseemon(mtmp))
-                    ltyp = cmap_to_type(mtmp->mappearance);
-                gl.lastseentyp[x][y] = ltyp;
-            }
-
-            switch (gl.lastseentyp[x][y]) {
-#if 0
-            case ICE:
-                count = mptr->feat.ice + 1;
-                if (count <= 3)
-                    mptr->feat.ice = count;
-                break;
-            case POOL:
-            case MOAT:
-            case WATER:
-                count = mptr->feat.water + 1;
-                if (count <= 3)
-                    mptr->feat.water = count;
-                break;
-            case LAVAPOOL:
-            case LAVAWALL:
-                count = mptr->feat.lava + 1;
-                if (count <= 3)
-                    mptr->feat.lava = count;
-                break;
-#endif
-            case TREE:
-                count = mptr->feat.ntree + 1;
-                if (count <= 3)
-                    mptr->feat.ntree = count;
-                break;
-            case FOUNTAIN:
-                count = mptr->feat.nfount + 1;
-                if (count <= 3)
-                    mptr->feat.nfount = count;
-                break;
-            case THRONE:
-                count = mptr->feat.nthrone + 1;
-                if (count <= 3)
-                    mptr->feat.nthrone = count;
-                break;
-            case SINK:
-                count = mptr->feat.nsink + 1;
-                if (count <= 3)
-                    mptr->feat.nsink = count;
-                break;
-            case GRAVE:
-                count = mptr->feat.ngrave + 1;
-                if (count <= 3)
-                    mptr->feat.ngrave = count;
-                break;
-            case ALTAR:
-                /* get the altarmask for this location; might be a mimic */
-                atmp = altarmask_at(x, y);
-                /* convert to index: 0..3 */
-                atmp = (Is_astralevel(&u.uz)
-                        && (levl[x][y].seenv & SVALL) != SVALL)
-                         ? MSA_NONE
-                         : Amask2msa(atmp);
-                if (!mptr->feat.naltar)
-                    mptr->feat.msalign = atmp;
-                else if (mptr->feat.msalign != atmp)
-                    mptr->feat.msalign = MSA_NONE;
-                count = mptr->feat.naltar + 1;
-                if (count <= 3)
-                    mptr->feat.naltar = count;
-                break;
-            /*  An automatic annotation is added to the Castle and
-             *  to Fort Ludios once their structure's main entrance
-             *  has been seen (in person or via magic mapping).
-             *  For the Fort, that entrance is just a secret door
-             *  which will be converted into a regular one when
-             *  located (or destroyed).
-             * DOOR: possibly a lowered drawbridge's open portcullis;
-             * DBWALL: a raised drawbridge's "closed door";
-             * DRAWBRIDGE_DOWN: the span provided by lowered bridge,
-             *  with moat or other terrain hidden underneath;
-             * DRAWBRIDGE_UP: moat in front of a raised drawbridge,
-             *  not recognizable as a bridge location unless/until
-             *  the adjacent DBWALL has been seen.
-             */
-            case DOOR:
-                if (Is_knox(&u.uz)) {
-                    int ty, tx = x - 4;
-
-                    /* Throne is four columns left, either directly in
-                     * line or one row higher or lower, and doesn't have
-                     * to have been seen yet.
-                     *   ......|}}}.
-                     *   ..\...S}...
-                     *   ..\...S}...
-                     *   ......|}}}.
-                     * For 3.6.0 and earlier, it was always in direct line:
-                     * both throne and door on the lower of the two rows.
-                     */
-                    for (ty = y - 1; ty <= y + 1; ++ty)
-                        if (isok(tx, ty) && IS_THRONE(levl[tx][ty].typ)) {
-                            mptr->flags.ludios = 1;
-                            break;
-                        }
-                    break;
-                }
-                if (is_drawbridge_wall(x, y) < 0)
-                    break;
-                /*FALLTHRU*/
-            case DBWALL:
-            case DRAWBRIDGE_DOWN:
-                if (Is_stronghold(&u.uz))
-                    mptr->flags.castle = 1, mptr->flags.castletune = 1;
-                break;
-            default:
-                break;
-            }
+            count_feat_lastseentyp(mptr, x, y);
         }
     }
 
@@ -3298,8 +3419,10 @@ room_discovered(int roomno)
 {
     mapseen *mptr = find_mapseen(&u.uz);
 
-    if (mptr)
+    if (mptr && !mptr->msrooms[roomno].seen) {
         mptr->msrooms[roomno].seen = 1;
+        recalc_mapseen();
+    }
 }
 
 /* #overview command */
@@ -3335,9 +3458,9 @@ show_overview(
     if (In_endgame(&u.uz))
         traverse_mapseenchn(1, win, why, reason, &lastdun);
     /* if game is over or we're not in the endgame yet, show the dungeon */
-    if (why != 0 || !In_endgame(&u.uz))
+    if (why > 0 || !In_endgame(&u.uz))
         traverse_mapseenchn(0, win, why, reason, &lastdun);
-    end_menu(win, (char *)0);
+    end_menu(win, (char *) 0);
     n = select_menu(win, (why != -1) ? PICK_NONE : PICK_ONE, &selected);
     if (n > 0) {
         int ledger;
@@ -3530,16 +3653,30 @@ tunesuffix(
 #endif
 #define COMMA (i++ > 0 ? ", " : PREFIX)
 /* "iterate" once; safe to use as ``if (cond) ADDTOBUF(); else whatever;'' */
-#define ADDNTOBUF(nam, var)                                                  \
+#define ADDTOBUF(nam, var) \
+    do {                                             \
+        if (var)                                     \
+            Sprintf(eos(buf), "%s%s", COMMA, (nam)); \
+    } while (0)
+#define ADDNTOBUF(nam, var) \
     do {                                                                     \
         if (var)                                                             \
             Sprintf(eos(buf), "%s%s %s%s", COMMA, seen_string((var), (nam)), \
                     (nam), plur(var));                                       \
     } while (0)
-#define ADDTOBUF(nam, var)                           \
-    do {                                             \
-        if (var)                                     \
-            Sprintf(eos(buf), "%s%s", COMMA, (nam)); \
+/* ADD2NTOBUF: for "M temples and N altars"; seen_string() is safe to use
+   multiple times within one expression; so is plur() */
+#define ADD2NTOBUF(nam, var, nam2, var2) \
+    do {                                                                \
+        if (var && var2) {                                              \
+            Sprintf(eos(buf), "%s%s %s%s and %s %s%s", COMMA,           \
+                    seen_string((var), (nam)), (nam), plur(var),        \
+                    seen_string((var2), (nam2)), (nam2), plur(var2));   \
+        } else if (var) {                                               \
+            ADDNTOBUF(nam, var);                                        \
+        } else if (var2) {                                              \
+            ADDNTOBUF(nam2, var2);                                      \
+        }                                                               \
     } while (0)
 
 static void
@@ -3579,10 +3716,8 @@ print_mapseen(
             Sprintf(buf, "%s: levels %d to %d",
                     gd.dungeons[dnum].dname, depthstart,
                     depthstart + gd.dungeons[dnum].dunlev_ureached - 1);
-        any = cg.zeroany;
-        add_menu(win, &nul_glyphinfo, &any, 0, 0,
-                 !final ? iflags.menu_headings : ATR_NONE, NO_COLOR,
-                 buf, MENU_ITEMFLAGS_NONE);
+
+        add_menu_heading(win, buf);
     }
 
     /* calculate level number */
@@ -3632,14 +3767,16 @@ print_mapseen(
                 Sprintf(eos(buf), "%s%s", COMMA,
                         an(shop_string(mptr->feat.shoptype)));
         }
-        if (mptr->feat.naltar > 0) {
+        if (mptr->feat.naltar > 0 || mptr->feat.ntemple > 0) {
             unsigned atmp;
 
-            /* Temples + non-temple altars get munged into just "altars" */
-            if (mptr->feat.ntemple != mptr->feat.naltar)
-                ADDNTOBUF("altar", mptr->feat.naltar);
-            else
-                ADDNTOBUF("temple", mptr->feat.ntemple);
+            /* being aware of a temple doesn't guarantee being aware of its
+               altar (via entrance message when entering while blinded, or
+               possibly it being out of view in an irregularly shaped room);
+               FIXME: if all temples present have been desecrated, we ought
+               to say so */
+            ADD2NTOBUF("temple", mptr->feat.ntemple,
+                       "altar", mptr->feat.naltar);
 
             /* only print out altar's god if they are all to your god */
             atmp = mptr->feat.msalign;              /*    0,  1,  2,  3 */
@@ -3662,9 +3799,7 @@ print_mapseen(
         buf[i] = highc(buf[i]);
         /* capitalizing it makes it a sentence; terminate with '.' */
         Strcat(buf, ".");
-        any = cg.zeroany;
-        add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, NO_COLOR,
-                 buf, MENU_ITEMFLAGS_NONE);
+        add_menu_str(win, buf);
     }
 
     /* we assume that these are mutually exclusive */
@@ -3701,16 +3836,12 @@ print_mapseen(
         Sprintf(buf, "%sMoloch's Sanctum.", PREFIX);
     }
     if (*buf) {
-        any = cg.zeroany;
-        add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, NO_COLOR,
-                 buf, MENU_ITEMFLAGS_NONE);
+        add_menu_str(win, buf);
     }
     /* quest entrance is not mutually-exclusive with bigroom or rogue level */
     if (mptr->flags.quest_summons) {
         Sprintf(buf, "%sSummoned by %s.", PREFIX, ldrname());
-        any = cg.zeroany;
-        add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, NO_COLOR,
-                 buf, MENU_ITEMFLAGS_NONE);
+        add_menu_str(win, buf);
     }
 
     /* print out branches */
@@ -3725,9 +3856,7 @@ print_mapseen(
         if (mptr->br->end1_up && !In_endgame(&(mptr->br->end2)))
             Sprintf(eos(buf), ", level %d", depth(&(mptr->br->end2)));
         Strcat(buf, ".");
-        any = cg.zeroany;
-        add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, NO_COLOR,
-                 buf, MENU_ITEMFLAGS_NONE);
+        add_menu_str(win, buf);
     }
 
     /* maybe print out bones details */
@@ -3740,9 +3869,7 @@ print_mapseen(
                 ++kncnt;
         if (kncnt) {
             Sprintf(buf, "%s%s", PREFIX, "Final resting place for");
-            any = cg.zeroany;
-            add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, NO_COLOR,
-                     buf, MENU_ITEMFLAGS_NONE);
+            add_menu_str(win, buf);
             if (died_here) {
                 /* disclosure occurs before bones creation, so listing dead
                    hero here doesn't give away whether bones are produced */
@@ -3754,18 +3881,13 @@ print_mapseen(
                 (void) strsubst(tmpbuf, " her ", " your ");
                 Snprintf(buf, sizeof(buf), "%s%syou, %s%c", PREFIX, TAB,
                          tmpbuf, --kncnt ? ',' : '.');
-                any = cg.zeroany;
-                add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, NO_COLOR,
-                         buf, MENU_ITEMFLAGS_NONE);
+                add_menu_str(win, buf);
             }
             for (bp = mptr->final_resting_place; bp; bp = bp->next) {
                 if (bp->bonesknown || wizard || final > 0) {
                     Sprintf(buf, "%s%s%s, %s%c", PREFIX, TAB, bp->who,
                             bp->how, --kncnt ? ',' : '.');
-                    any = cg.zeroany;
-                    add_menu(win, &nul_glyphinfo, &any, 0, 0,
-                             ATR_NONE, NO_COLOR,
-                             buf, MENU_ITEMFLAGS_NONE);
+                    add_menu_str(win, buf);
                 }
             }
         }

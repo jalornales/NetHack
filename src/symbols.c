@@ -529,7 +529,8 @@ parse_sym_line(char *buf, int which_set)
                     tmpsp = lastsp; /* most recent symset */
                     for (i = 0; known_handling[i]; ++i)
                         if (!strcmpi(known_handling[i], bufp)) {
-                            tmpsp->handling = i;
+                            if (tmpsp)
+                                tmpsp->handling = i;
                             break; /* for loop */
                         }
                     break;
@@ -544,13 +545,15 @@ parse_sym_line(char *buf, int which_set)
                     tmpsp = lastsp; /* most recent symset */
                     for (i = 0; known_restrictions[i]; ++i) {
                         if (!strcmpi(known_restrictions[i], bufp)) {
-                            switch (i) {
-                            case 0:
-                                tmpsp->primary = 1;
-                                break;
-                            case 1:
-                                tmpsp->rogue = 1;
-                                break;
+                            if (tmpsp) {
+                                switch (i) {
+                                case 0:
+                                    tmpsp->primary = 1;
+                                    break;
+                                case 1:
+                                    tmpsp->rogue = 1;
+                                    break;
+                                }
                             }
                             break; /* while loop */
                         }
@@ -764,25 +767,43 @@ boolean
 parsesymbols(register char *opts, int which_set)
 {
     int val;
-    char *op, *symname, *strval;
+    char *symname, *strval, *ch,
+         *first_unquoted_comma = 0, *first_unquoted_colon = 0;
     const struct symparse *symp;
     boolean is_glyph = FALSE;
 
-    /*
-     * FIXME:
-     *  The parsing here (and next) yields incorrect results for
-     *  "S_sample=','" or "S_sample=':'".
-     */
+    /* are there any commas or colons that aren't quoted? */
+    for (ch = opts + 1; *ch; ++ch) {
+        char *prech, *postch;
 
-    if ((op = strchr(opts, ',')) != 0) {
-        *op++ = '\0';
-        if (!parsesymbols(op, which_set))
+        prech = ch - 1;
+        postch = ch + 1;
+        if (!*postch)
+            break;
+        if (*ch == ',') {
+            if (*prech == '\'' && *postch == '\'')
+                continue;
+            if (*prech == '\\')
+                continue;
+        }
+        if (*ch == ':') {
+            if (*prech == '\'' && *postch == '\'')
+                continue;
+        }
+        if (*ch == ',' && !first_unquoted_comma)
+            first_unquoted_comma = ch;
+        if (*ch == ':' && !first_unquoted_colon)
+            first_unquoted_colon = ch;
+    }
+    if (first_unquoted_comma != 0) {
+        *first_unquoted_comma++ = '\0';
+        if (!parsesymbols(first_unquoted_comma, which_set))
             return FALSE;
     }
 
     /* S_sample:string */
     symname = opts;
-    strval = strchr(opts, ':');
+    strval = first_unquoted_colon;
     if (!strval)
         strval = strchr(opts, '=');
     if (!strval)
@@ -893,7 +914,7 @@ do_symset(boolean rogueflag)
     char *symset_name, fmtstr[20];
     struct symsetentry *sl;
     int res, which_set, setcount = 0, chosen = -2, defindx = 0;
-    int clr = 0;
+    int clr = NO_COLOR;
 
     which_set = rogueflag ? ROGUESET : PRIMARYSET;
     gs.symset_list = (struct symsetentry *) 0;

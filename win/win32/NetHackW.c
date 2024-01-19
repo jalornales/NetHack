@@ -1,4 +1,4 @@
-/* NetHack 3.7    NetHackW.c    $NHDT-Date: 1596498365 2020/08/03 23:46:05 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.72 $ */
+/* NetHack 3.7    NetHackW.c    $NHDT-Date: 1693359674 2023/08/30 01:41:14 $  $NHDT-Branch: keni-crashweb2 $:$NHDT-Revision: 1.79 $ */
 /* Copyright (C) 2001 by Alex Kompel      */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -77,6 +77,11 @@ static void __cdecl mswin_moveloop(void *);
 
 #define MAX_CMDLINE_PARAM 255
 
+#ifdef _MSC_VER
+#pragma warning( push )
+#pragma warning( disable : 28251)
+#endif
+
 int APIENTRY
 WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine,
         int nCmdShow)
@@ -123,7 +128,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine,
     windowprocs.win_wait_synch = mswin_wait_synch;
 
     win10_init();
-    early_init();
+    early_init(0, NULL);	/* Change as needed to support CRASHREPORT */
 
     /* init application structure */
     _nethack_app.hApp = hInstance;
@@ -245,6 +250,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine,
 #endif
     return 0;
 }
+
+#ifdef _MSC_VER
+#pragma warning( pop )
+#endif
 
 PNHWinApp
 GetNHApp(void)

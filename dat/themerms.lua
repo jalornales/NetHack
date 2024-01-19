@@ -40,6 +40,15 @@ themeroom_fills = {
       end
    end,
 
+   -- Cloud room
+   function(rm)
+      local fog = selection.room();
+      des.terrain(fog, "C");
+      for i = 1, (fog:numpoints() / 4) do
+         des.monster({ id = "fog cloud", asleep = true });
+      end
+   end,
+
    -- Boulder room
    {
       mindiff = 4,
@@ -662,6 +671,7 @@ xx|.....|xx
 
      shuffle(nasty_undead);
      des.monster(nasty_undead[1], 2, 2);
+     des.exclusion({ type = "teleport", region = { 2,2, 3,3 } });
 end });
    end,
 

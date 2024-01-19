@@ -1,4 +1,4 @@
-/* NetHack 3.7	files.c	$NHDT-Date: 1680625799 2023/04/04 16:29:59 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.373 $ */
+/* NetHack 3.7	files.c	$NHDT-Date: 1693083234 2023/08/26 20:53:54 $  $NHDT-Branch: keni-crashweb2 $:$NHDT-Revision: 1.378 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Derek S. Ray, 2015. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -194,6 +194,7 @@ static boolean cnf_line_PANICTRACE_LIBC(char *);
 static boolean cnf_line_PANICTRACE_GDB(char *);
 static boolean cnf_line_GDBPATH(char *);
 static boolean cnf_line_GREPPATH(char *);
+static boolean cnf_line_CRASHREPORTURL(char *);
 static boolean cnf_line_SAVEFORMAT(char *);
 static boolean cnf_line_BONESFORMAT(char *);
 static boolean cnf_line_ACCESSIBILITY(char *);
@@ -218,13 +219,14 @@ static void cnf_parser_init(struct _cnf_parser_state *parser);
 static void cnf_parser_done(struct _cnf_parser_state *parser);
 static void parse_conf_buf(struct _cnf_parser_state *parser,
                            boolean (*proc)(char *arg));
+/* next one is in extern.h; why here too? */
 boolean parse_conf_str(const char *str, boolean (*proc)(char *arg));
 static boolean parse_conf_file(FILE *fp, boolean (*proc)(char *arg));
 static void parseformat(int *, char *);
 static FILE *fopen_wizkit_file(void);
 static void wizkit_addinv(struct obj *);
 boolean proc_wizkit_line(char *buf);
-void read_wizkit(void);
+void read_wizkit(void);  /* in extern.h; why here too? */
 static FILE *fopen_sym_file(void);
 
 #ifdef SELF_RECOVER
@@ -284,7 +286,7 @@ nh_basename(const char *fname, boolean keep_suffix)
  *
  *   Sample:
  *      The following call:
- *  (void)fname_encode("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+ * (void) fname_encode("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
  *                     '%', "This is a % test!", buf, 512);
  *      results in this encoding:
  *          "This%20is%20a%20%25%20test%21"
@@ -496,26 +498,24 @@ const int bei = 1;
 void
 zero_nhfile(NHFILE *nhfp)
 {
-    if (nhfp) {
-        nhfp->fd = -1;
-        nhfp->mode = COUNTING;
-        nhfp->structlevel = FALSE;
-        nhfp->fieldlevel = FALSE;
-        nhfp->addinfo = FALSE;
-        nhfp->bendian = IS_BIGENDIAN();
-        nhfp->fpdef = (FILE *)0;
-        nhfp->fplog = (FILE *)0;
-        nhfp->fpdebug = (FILE *)0;
-        nhfp->count = 0;
-        nhfp->eof = FALSE;
-        nhfp->fnidx = 0;
-    }
+    nhfp->fd = -1;
+    nhfp->mode = COUNTING;
+    nhfp->structlevel = FALSE;
+    nhfp->fieldlevel = FALSE;
+    nhfp->addinfo = FALSE;
+    nhfp->bendian = IS_BIGENDIAN();
+    nhfp->fpdef = (FILE *) 0;
+    nhfp->fplog = (FILE *) 0;
+    nhfp->fpdebug = (FILE *) 0;
+    nhfp->count = 0;
+    nhfp->eof = FALSE;
+    nhfp->fnidx = 0;
 }
 
 static NHFILE *
 new_nhfile(void)
 {
-    NHFILE *nhfp = (NHFILE *)alloc(sizeof(NHFILE));
+    NHFILE *nhfp = (NHFILE *) alloc(sizeof(NHFILE));
 
     zero_nhfile(nhfp);
     return nhfp;
@@ -533,12 +533,10 @@ free_nhfile(NHFILE *nhfp)
 void
 close_nhfile(NHFILE *nhfp)
 {
-    if (nhfp) {
-        if (nhfp->structlevel && nhfp->fd != -1)
-            (void) nhclose(nhfp->fd), nhfp->fd = -1;
-        zero_nhfile(nhfp);
-        free_nhfile(nhfp);
-    }
+    if (nhfp->structlevel && nhfp->fd != -1)
+        (void) nhclose(nhfp->fd), nhfp->fd = -1;
+    zero_nhfile(nhfp);
+    free_nhfile(nhfp);
 }
 
 void
@@ -1199,9 +1197,9 @@ restore_saved_game(void)
 
     nh_uncompress(fq_save);
     if ((nhfp = open_savefile()) != 0) {
-        if (validate(nhfp, fq_save) != 0) {
+        if (validate(nhfp, fq_save, FALSE) != 0) {
             close_nhfile(nhfp);
-            nhfp = (NHFILE *)0;
+            nhfp = (NHFILE *) 0;
             (void) delete_savefile();
         }
     }
@@ -1209,8 +1207,9 @@ restore_saved_game(void)
 }
 
 #if defined(SELECTSAVED)
+
 char *
-plname_from_file(const char *filename)
+plname_from_file(const char *filename, boolean without_wait_synch_per_file)
 {
     NHFILE *nhfp = (NHFILE *) 0;
     char *result = 0;
@@ -1228,7 +1227,7 @@ plname_from_file(const char *filename)
 #endif
     nh_uncompress(gs.SAVEF);
     if ((nhfp = open_savefile()) != 0) {
-        if (validate(nhfp, filename) == 0) {
+        if (validate(nhfp, filename, without_wait_synch_per_file) == 0) {
             char tplname[PL_NSIZ];
 
             get_plname_from_file(nhfp, tplname);
@@ -1271,6 +1270,9 @@ plname_from_file(const char *filename)
 }
 #endif /* defined(SELECTSAVED) */
 
+#define SUPPRESS_WAITSYNCH_PERFILE TRUE
+#define ALLOW_WAITSYNCH_PERFILE FALSE
+
 char **
 get_saved_games(void)
 {
@@ -1280,6 +1282,7 @@ get_saved_games(void)
 #endif
     int j = 0;
     char **result = 0;
+
 #ifdef WIN32
     {
         char *foundfile;
@@ -1287,7 +1290,7 @@ get_saved_games(void)
         const char *fq_new_save;
         const char *fq_old_save;
         char **files = 0;
-        int i;
+        int i, count_failures = 0;
 
         Strcpy(gp.plname, "*");
         set_savefile_name(FALSE);
@@ -1320,10 +1323,9 @@ get_saved_games(void)
             (void) memset((genericptr_t) result, 0, (n + 1) * sizeof(char *));
             for(i = 0; i < n; i++) {
                 char *r;
-                r = plname_from_file(files[i]);
+                r = plname_from_file(files[i], SUPPRESS_WAITSYNCH_PERFILE);
 
                 if (r) {
-
                     /* rename file if it is not named as expected */
                     Strcpy(gp.plname, r);
                     set_savefile_name(TRUE);
@@ -1335,12 +1337,15 @@ get_saved_games(void)
                         (void) rename(fq_old_save, fq_new_save);
 
                     result[j++] = r;
+                } else {
+                    count_failures++;
                 }
             }
         }
 
         free_saved_games(files);
-
+        if (count_failures)
+            wait_synch();
     }
 #endif
 #ifdef UNIX
@@ -1372,7 +1377,7 @@ get_saved_games(void)
                         char *r;
 
                         Sprintf(filename, "save/%d%s", uid, name);
-                        r = plname_from_file(filename);
+                        r = plname_from_file(filename, ALLOW_WAITSYNCH_PERFILE);
                         if (r)
                             result[j++] = r;
                     }
@@ -1397,8 +1402,11 @@ get_saved_games(void)
         free_saved_games(result);
     }
 #endif /* SELECTSAVED */
+
     return 0;
 }
+#undef SUPPRESS_WAITSYNCH_PERFILE
+#undef ALLOW_WAITSYNCH_PERFILE
 
 void
 free_saved_games(char **saved)
@@ -1636,11 +1644,7 @@ docompress_file(const char *filename, boolean uncomp)
 void
 nh_compress(const char *filename UNUSED_if_not_COMPRESS)
 {
-#if !defined(COMPRESS) && !defined(ZLIB_COMP)
-#ifdef PRAGMA_UNUSED
-#pragma unused(filename)
-#endif
-#else
+#if defined(COMPRESS) || defined(ZLIB_COMP)
     docompress_file(filename, FALSE);
 #endif
 }
@@ -1649,11 +1653,7 @@ nh_compress(const char *filename UNUSED_if_not_COMPRESS)
 void
 nh_uncompress(const char *filename UNUSED_if_not_COMPRESS)
 {
-#if !defined(COMPRESS) && !defined(ZLIB_COMP)
-#ifdef PRAGMA_UNUSED
-#pragma unused(filename)
-#endif
-#else
+#if defined(COMPRESS) || defined(ZLIB_COMP)
     docompress_file(filename, TRUE);
 #endif
 }
@@ -1814,6 +1814,8 @@ docompress_file(const char *filename, boolean uncomp)
 }
 #endif /* RLC 09 Mar 1999: End ZLIB patch */
 
+#undef UNUSED_if_not_COMPRESS
+
 /* ----------  END FILE COMPRESSION HANDLING ----------- */
 
 /* ----------  BEGIN FILE LOCKING HANDLING ----------- */
@@ -1831,9 +1833,18 @@ struct flock sflock; /* for unlocking, same as above */
 #define HUP
 #endif
 
+
+#if defined(UNIX) || defined(VMS) || defined(AMIGA) || defined(WIN32) \
+    || defined(MSDOS)
+#define UNUSED_conditional /*empty*/
+#else
+#define UNUSED_conditional UNUSED
+#endif
+
+
 #ifndef USE_FCNTL
 static char *
-make_lockname(const char *filename, char *lockname)
+make_lockname(const char *filename UNUSED_conditional, char *lockname)
 {
 #if defined(UNIX) || defined(VMS) || defined(AMIGA) || defined(WIN32) \
     || defined(MSDOS)
@@ -1856,9 +1867,6 @@ make_lockname(const char *filename, char *lockname)
 #endif
     return lockname;
 #else /* !(UNIX || VMS || AMIGA || WIN32 || MSDOS) */
-#ifdef PRAGMA_UNUSED
-#pragma unused(filename)
-#endif
     lockname[0] = '\0';
     return (char *) 0;
 #endif
@@ -1867,12 +1875,9 @@ make_lockname(const char *filename, char *lockname)
 
 /* lock a file */
 boolean
-lock_file(const char *filename, int whichprefix, int retryct)
+lock_file(const char *filename, int whichprefix,
+	  int retryct UNUSED_conditional)
 {
-#if defined(PRAGMA_UNUSED) && !(defined(UNIX) || defined(VMS)) \
-    && !(defined(AMIGA) || defined(WIN32) || defined(MSDOS))
-#pragma unused(retryct)
-#endif
 #ifndef USE_FCNTL
     char locknambuf[BUFSZ];
     const char *lockname;
@@ -2070,6 +2075,8 @@ unlock_file(const char *filename)
 
     gn.nesting--;
 }
+
+#undef UNUSED_conditional
 
 /* ----------  END FILE LOCKING HANDLING ----------- */
 
@@ -3012,6 +3019,15 @@ cnf_line_GREPPATH(char *bufp)
 }
 
 static boolean
+cnf_line_CRASHREPORTURL(char *bufp)
+{
+    if (sysopt.crashreporturl)
+        free((genericptr_t) sysopt.crashreporturl);
+    sysopt.crashreporturl = dupstr(bufp);
+    return TRUE;
+}
+
+static boolean
 cnf_line_SAVEFORMAT(char *bufp)
 {
     parseformat(sysopt.saveformat, bufp);
@@ -3077,6 +3093,7 @@ cnf_line_HILITE_STATUS(char *bufp)
 #ifdef STATUS_HILITES
     return parse_status_hl1(bufp, TRUE);
 #else
+    nhUse(bufp);
     return TRUE;
 #endif
 }
@@ -3253,6 +3270,7 @@ static const struct match_config_line_stmt {
     CNFL_S(LIVELOG, 7),
     CNFL_S(PANICTRACE_LIBC, 15),
     CNFL_S(PANICTRACE_GDB, 14),
+    CNFL_S(CRASHREPORTURL, 13),
     CNFL_S(GDBPATH, 7),
     CNFL_S(GREPPATH, 7),
     CNFL_S(SAVEFORMAT, 10),
@@ -3858,7 +3876,7 @@ fopen_wizkit_file(void)
 static void
 wizkit_addinv(struct obj *obj)
 {
-    if (!obj || obj == &cg.zeroobj)
+    if (!obj || obj == &hands_obj)
         return;
 
     /* subset of starting inventory pre-ID */
@@ -3866,7 +3884,7 @@ wizkit_addinv(struct obj *obj)
     if (Role_if(PM_CLERIC))
         obj->bknown = 1; /* ok to bypass set_bknown() */
     /* same criteria as lift_object()'s check for available inventory slot */
-    if (obj->oclass != COIN_CLASS && inv_cnt(FALSE) >= 52
+    if (obj->oclass != COIN_CLASS && inv_cnt(FALSE) >= invlet_basic
         && !merge_choice(gi.invent, obj)) {
         /* inventory overflow; can't just place & stack object since
            hero isn't in position yet, so schedule for arrival later */
@@ -3890,7 +3908,7 @@ proc_wizkit_line(char *buf)
     otmp = readobjnam(buf, (struct obj *) 0);
 
     if (otmp) {
-        if (otmp != &cg.zeroobj)
+        if (otmp != &hands_obj)
             wizkit_addinv(otmp);
     } else {
         /* .60 limits output line width to 79 chars */
@@ -4009,9 +4027,6 @@ read_sym_file(int which_set)
 void
 check_recordfile(const char *dir UNUSED_if_not_OS2_CODEVIEW)
 {
-#if defined(PRAGMA_UNUSED) && !defined(OS2_CODEVIEW)
-#pragma unused(dir)
-#endif
     const char *fq_record;
     int fd;
 
@@ -4113,6 +4128,8 @@ check_recordfile(const char *dir UNUSED_if_not_OS2_CODEVIEW)
 
 #endif /* MICRO || WIN32*/
 }
+
+#undef UNUSED_if_not_OS2_CODEVIEW
 
 /* ----------  END SCOREBOARD CREATION ----------- */
 
@@ -4379,12 +4396,14 @@ boolean
 copy_bytes(int ifd, int ofd)
 {
     char buf[BUFSIZ];
-    int nfrom, nto;
+    int nfrom, nto = 0;
 
     do {
         nfrom = read(ifd, buf, BUFSIZ);
-        nto = write(ofd, buf, nfrom);
-        if (nto != nfrom)
+        /* read can return -1 */
+        if (nfrom >= 0 && nfrom <= BUFSIZ)
+            nto = write(ofd, buf, nfrom);
+        if (nto != nfrom || nfrom < 0)
             return FALSE;
     } while (nfrom == BUFSIZ);
     return TRUE;

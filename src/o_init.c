@@ -1,4 +1,4 @@
-/* NetHack 3.7	o_init.c	$NHDT-Date: 1672829455 2023/01/04 10:50:55 $  $NHDT-Branch: naming-overflow-fix $:$NHDT-Revision: 1.68 $ */
+/* NetHack 3.7	o_init.c	$NHDT-Date: 1701720461 2023/12/04 20:07:41 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.79 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2011. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -120,12 +120,8 @@ init_objects(void)
 {
     int i, first, last, prevoclass;
     char oclass;
-#ifdef TEXTCOLOR
 #define COPY_OBJ_DESCR(o_dst, o_src) \
     o_dst.oc_descr_idx = o_src.oc_descr_idx, o_dst.oc_color = o_src.oc_color
-#else
-#define COPY_OBJ_DESCR(o_dst, o_src) o_dst.oc_descr_idx = o_src.oc_descr_idx
-#endif
 
     for (i = 0; i <= MAXOCLASSES; i++) {
         gb.bases[i] = 0;
@@ -367,9 +363,9 @@ savenames(NHFILE* nhfp)
 
     if (perform_bwrite(nhfp)) {
         if (nhfp->structlevel) {
-            bwrite(nhfp->fd, (genericptr_t)gb.bases, sizeof gb.bases);
-            bwrite(nhfp->fd, (genericptr_t)gd.disco, sizeof gd.disco);
-            bwrite(nhfp->fd, (genericptr_t)objects,
+            bwrite(nhfp->fd, (genericptr_t) gb.bases, sizeof gb.bases);
+            bwrite(nhfp->fd, (genericptr_t) gd.disco, sizeof gd.disco);
+            bwrite(nhfp->fd, (genericptr_t) objects,
                    sizeof(struct objclass) * NUM_OBJECTS);
         }
     }
@@ -381,8 +377,8 @@ savenames(NHFILE* nhfp)
             if (perform_bwrite(nhfp)) {
                 len = Strlen(objects[i].oc_uname) + 1;
                 if (nhfp->structlevel) {
-                    bwrite(nhfp->fd, (genericptr_t)&len, sizeof len);
-                    bwrite(nhfp->fd, (genericptr_t)objects[i].oc_uname, len);
+                    bwrite(nhfp->fd, (genericptr_t) &len, sizeof len);
+                    bwrite(nhfp->fd, (genericptr_t) objects[i].oc_uname, len);
                 }
             }
             if (release_data(nhfp)) {
@@ -402,7 +398,7 @@ restnames(NHFILE* nhfp)
         mread(nhfp->fd, (genericptr_t) gb.bases, sizeof gb.bases);
         mread(nhfp->fd, (genericptr_t) gd.disco, sizeof gd.disco);
         mread(nhfp->fd, (genericptr_t) objects,
-                sizeof(struct objclass) * NUM_OBJECTS);
+              NUM_OBJECTS * sizeof (struct objclass));
     }
     for (i = 0; i < NUM_OBJECTS; i++) {
         if (objects[i].oc_uname) {
@@ -411,7 +407,7 @@ restnames(NHFILE* nhfp)
             }
             objects[i].oc_uname = (char *) alloc(len);
             if (nhfp->structlevel) {
-                mread(nhfp->fd, (genericptr_t)objects[i].oc_uname, len);
+                mread(nhfp->fd, (genericptr_t) objects[i].oc_uname, len);
             }
         }
     }
@@ -574,7 +570,7 @@ choose_disco_sort(
     menu_item *selected;
     anything any;
     int i, n, choice;
-    int clr = 0;
+    int clr = NO_COLOR;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -592,18 +588,13 @@ choose_disco_sort(
         /* called via 'm `' where full alphabetize doesn't make sense
            (only showing one class so can't span all classes) but the
            chosen sort will stick and also apply to '\' usage */
-        any = cg.zeroany;
-        add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr,
-                 "", MENU_ITEMFLAGS_NONE);
-        add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr,
-                 "Note: full alphabetical and alphabetical within class",
-                 MENU_ITEMFLAGS_NONE);
-        add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr,
-                 "      are equivalent for single class discovery, but",
-                 MENU_ITEMFLAGS_NONE);
-        add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr,
-                 "      will matter for future use of total discoveries.",
-                 MENU_ITEMFLAGS_NONE);
+        add_menu_str(tmpwin, "");
+        add_menu_str(tmpwin,
+                     "Note: full alphabetical and alphabetical within class");
+        add_menu_str(tmpwin,
+                     "      are equivalent for single class discovery, but");
+        add_menu_str(tmpwin,
+                     "      will matter for future use of total discoveries.");
     }
     end_menu(tmpwin, "Ordering of discoveries");
 
@@ -700,7 +691,7 @@ dodiscovered(void) /* free after Robert Viduya */
     lootsort = (flags.discosort == 's');
     sortindx = strchr(disco_order_let, flags.discosort) - disco_order_let;
 
-    tmpwin = create_nhwindow(NHW_MENU);
+    tmpwin = create_nhwindow(NHW_TEXT);
     Sprintf(buf, "Discoveries, %s", disco_orders_descr[sortindx]);
     putstr(tmpwin, 0, buf);
     putstr(tmpwin, 0, "");
@@ -711,7 +702,7 @@ dodiscovered(void) /* free after Robert Viduya */
     for (i = dis = 0; i < SIZE(uniq_objs); i++)
         if (objects[uniq_objs[i]].oc_name_known) {
             if (!dis++)
-                putstr(tmpwin, iflags.menu_headings, "Unique items");
+                putstr(tmpwin, iflags.menu_headings.attr, "Unique items");
             ++uniq_ct;
             Sprintf(buf, "  %s", OBJ_NAME(objects[uniq_objs[i]]));
             putstr(tmpwin, 0, buf);
@@ -751,7 +742,7 @@ dodiscovered(void) /* free after Robert Viduya */
                     }
                     if (!alphabetized || alphabyclass) {
                         /* header for new class */
-                        putstr(tmpwin, iflags.menu_headings,
+                        putstr(tmpwin, iflags.menu_headings.attr,
                                let_to_name(oclass, FALSE, FALSE));
                         prev_class = oclass;
                     }
@@ -777,7 +768,7 @@ dodiscovered(void) /* free after Robert Viduya */
                classes, we normally don't need a header; but it we showed
                any unique items or any artifacts then we do need one */
             if ((uniq_ct || arti_ct) && alphabetized && !alphabyclass)
-                putstr(tmpwin, iflags.menu_headings, "Discovered items");
+                putstr(tmpwin, iflags.menu_headings.attr, "Discovered items");
             qsort(sorted_lines, sorted_ct, sizeof (char *), discovered_cmp);
             for (j = 0; j < sorted_ct; ++j) {
                 p = sorted_lines[j];
@@ -825,7 +816,7 @@ doclassdisco(void)
          *sorted_lines[NUM_OBJECTS]; /* overkill */
     int i, ct, dis, xtras, sorted_ct;
     boolean traditional, alphabetized, lootsort;
-    int clr = 0;
+    int clr = NO_COLOR;
 
     if (!flags.discosort || !(p = strchr(disco_order_let, flags.discosort)))
         flags.discosort = 'o';
@@ -947,11 +938,11 @@ doclassdisco(void)
     /*
      * show discoveries for object class c
      */
-    tmpwin = create_nhwindow(NHW_MENU);
+    tmpwin = create_nhwindow(NHW_TEXT);
     ct = 0;
     switch (c) {
     case 'u':
-        putstr(tmpwin, iflags.menu_headings,
+        putstr(tmpwin, iflags.menu_headings.attr,
                upstart(strcpy(buf, unique_items)));
         for (i = 0; i < SIZE(uniq_objs); i++)
             if (objects[uniq_objs[i]].oc_name_known) {
@@ -1031,7 +1022,7 @@ rename_disco(void)
     winid tmpwin;
     anything any;
     menu_item *selected = 0;
-    int clr = 0;
+    int clr = NO_COLOR;
 
     any = cg.zeroany;
     tmpwin = create_nhwindow(NHW_MENU);
@@ -1060,10 +1051,8 @@ rename_disco(void)
 
             if (oclass != prev_class) {
                 any.a_int = 0;
-                add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-                         iflags.menu_headings, clr,
-                         let_to_name(oclass, FALSE, FALSE),
-                         MENU_ITEMFLAGS_NONE);
+                add_menu_heading(tmpwin,
+                                 let_to_name(oclass, FALSE, FALSE));
                 prev_class = oclass;
             }
             any.a_int = dis;

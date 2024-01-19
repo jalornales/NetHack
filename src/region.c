@@ -80,7 +80,7 @@ create_region(NhRect *rects, int nrect)
     NhRegion *reg;
 
     reg = (NhRegion *) alloc(sizeof(NhRegion));
-    (void) memset((genericptr_t)reg, 0, sizeof(NhRegion));
+    (void) memset((genericptr_t) reg, 0, sizeof(NhRegion));
     /* Determines bounding box */
     if (nrect > 0) {
         reg->bounding_box = rects[0];
@@ -1010,6 +1010,10 @@ inside_gas_cloud(genericptr_t p1, genericptr_t p2)
      * start next to water and spread over it.
      */
 
+    /* fog clouds maintain gas clouds, even poisonous ones */
+    if (reg->ttl < 20 && mtmp && mtmp->data == &mons[PM_FOG_CLOUD])
+        reg->ttl += 5;
+
     if (dam < 1)
         return FALSE; /* if no damage then there's nothing to do here... */
 
@@ -1024,13 +1028,16 @@ inside_gas_cloud(genericptr_t p1, genericptr_t p2)
             pline("%s is burning your %s!", Something,
                   makeplural(body_part(LUNG)));
             You("cough and spit blood!");
+            wake_nearto(u.ux, u.uy, 2);
             dam = Maybe_Half_Phys(rnd(dam) + 5);
             if (Half_gas_damage) /* worn towel */
                 dam = (dam + 1) / 2;
             losehp(dam, "gas cloud", KILLED_BY_AN);
+            monstunseesu(M_SEEN_POISON);
             return FALSE;
         } else {
             You("cough!");
+            wake_nearto(u.ux, u.uy, 2);
             monstseesu(M_SEEN_POISON);
             return FALSE;
         }
@@ -1040,6 +1047,7 @@ inside_gas_cloud(genericptr_t p1, genericptr_t p2)
         if (m_poisongas_ok(mtmp) != M_POISONGAS_OK) {
             if (cansee(mtmp->mx, mtmp->my))
                 pline("%s coughs!", Monnam(mtmp));
+            wake_nearto(mtmp->mx, mtmp->my, 2);
             if (heros_fault(reg))
                 setmangry(mtmp, TRUE);
             if (haseyes(mtmp->data) && mtmp->mcansee) {

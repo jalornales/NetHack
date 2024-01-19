@@ -1,5 +1,5 @@
 \documentstyle[titlepage,longtable]{article}
-% NetHack 3.7  Guidebook.tex $NHDT-Date: 1431192762 2015/12/16 17:32:42 $  $NHDT-Branch: master $:$NHDT-Revision: 1.60 $ */
+% NetHack 3.7  Guidebook.tex $NHDT-Date: 1699260377 2023/11/06 08:46:17 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.531 $ */
 %+% we're still limping along in LaTeX 2.09 compatibility mode
 %-%\documentclass{article}
 %-%\usepackage{hyperref} % before longtable
@@ -46,7 +46,7 @@
 \author{Original version - Eric S. Raymond\\
 (Edited and expanded for 3.7.0 by Mike Stephenson and others)}
 %DO NOT REMOVE NH_DATESUB \date{DATE(%B %-d, %Y)}
-\date{August 5, 2023}
+\date{January 02, 2024}
 
 \maketitle
 
@@ -1697,21 +1697,47 @@ Search for traps and secret doors around you. Default key is `{\tt s}'.
 %.lp
 \item[\tb{\#seeall}]
 Show all equipment in use. Default key is `{\tt *}'.
+%.lp ""
+\\
+Will display in-use items in a menu even when there is only one.
 %.lp
 \item[\tb{\#seeamulet}]
 Show the amulet currently worn. Default key is `{\tt "}'.
+%.lp ""
+\\
+Using the `{\tt m}' prefix will force the display of a worn
+amulet in a menu rather than with just a message.
 %.lp
 \item[\tb{\#seearmor}]
 Show the armor currently worn. Default key is `{\tt [}'.
+%.lp ""
+\\
+Will display worn armor in a menu even when there is only thing worn.
 %.lp
 \item[\tb{\#seerings}]
 Show the ring(s) currently worn. Default key is `{\tt =}'.
+%.lp ""
+Will display worn rings in a menu if there are two (or there is
+just one and is a meat ring rather than a ``real'' ring).
+Use the `{\tt m}' prefix to force a menu for one ring.
 %.lp
 \item[\tb{\#seetools}]
 Show the tools currently in use. Default key is `{\tt (}'.
+%.lp ""
+Will display the result in a message if there is one tool in use (worn
+blindfold or towel or lenses, lit lamp(s) and/or candle(s), leashes
+attached to pets).
+Will display a menu if there are more than one or if the command is
+preceded by the `{\tt m}' prefix.
 %.lp
 \item[\tb{\#seeweapon}]
 Show the weapon currently wielded. Default key is `{\tt )}'.
+%.lp ""
+If dual-wielding, a separate message about the secondary weapon will be
+given.
+Using the `{\tt m}' prefix will force a menu and it will include
+primary weapon, alternate weapon even when not dual-wielding, and also
+whatever is currently assigned to the quiver slot.
 %.lp
 \item[\tb{\#shell}]
 Do a shell escape, switching from NetHack to a subprocess.
@@ -4056,6 +4082,9 @@ applies only to new games.
 
 \blist{}
 %.lp
+\item[\ib{accessiblemsg}]
+Add location or direction information to messages (default is off).
+%.lp
 \item[\ib{acoustics}]
 Enable messages about what your character hears (default on).
 Note that this has nothing to do with your computer's audio capabilities.
@@ -4197,6 +4226,12 @@ Show out-of-sight areas of lit rooms (default on).  Persistent.
 %.lp
 \item[\ib{deaf}]
 Start the character permanently deaf (default false).  Persistent.
+%.lp
+\item[\ib{dropped\verb+_+nopick}]
+If this option is on, items you dropped will not be automatically picked up,
+even if ``{\it autopickup\/}'' is also on and they are in
+``{\it pickup\verb+_+types\/}'' or match a positive autopickup exception
+(default on).  Persistent.
 %.lp
 \item[\ib{disclose}]
 Controls what information the program reveals when the game ends.
@@ -4449,9 +4484,8 @@ Implemented by the Amiga, Gem and tty ports.
 Default `\verb+^+'.
 \item[\ib{menu\verb+_+headings}]
 Controls how the headings in a menu are highlighted.
-Values are ``{\tt none}'', ``{\tt bold}'', ``{\tt dim}'',
-``{\tt italic}'', ``{\tt underline}'',``{\tt blink}'', or
-``{\tt inverse}''.
+Takes a text attribute, or text color and attribute separated by ampersand.
+For allowed attributes and colors, see ``{\it Configuring Menu Colors\/}``.
 Not all ports can actually display all types.
 \item[\ib{menu\verb+_+invert\verb+_+all}]
 Key to invert all items in a menu.
@@ -4646,7 +4680,7 @@ a peaceful monster;
 \item[{\tt wand-break}]
 require ``{\tt yes}'' rather than `{\tt y}' to confirm breaking
 a wand with the {\it apply} command;
-\item[{\tt eating}]
+\item[{\tt eating~}]
 require ``{\tt yes}'' rather than `{\tt y}' to confirm whether to
 continue eating;
 \item[{\tt Were-change}]
@@ -4656,6 +4690,11 @@ to lycanthropy when hero has polymorph control;
 require `{\tt y}' to confirm an attempt to pray rather
 than immediately praying; on by default;
 (to require ``yes'' rather than just `y', set Confirm too);
+\item[{\tt trap~~~}]
+require `{\tt y}' to confirm an attempt to move into or onto a known trap,
+unless doing so is considered to be harmless;
+(to require ``yes'' rather than just `y', set Confirm too);
+confirmation can be skipped by using the `{\tt m}' movement prefix;
 \item[{\tt swim~~~}]
 prevent walking into water or lava; on by default; (to deliberately step
 onto/into such terrain when this is set, use the `{\tt m}'
@@ -4691,8 +4730,44 @@ The positive (no `!') and negative (with `!') entries
 can be intermixed.
 %.lp
 \item[\ib{perm\verb+_+invent}]
-If true, always display your current inventory in a window.  This only
+If true, always display your current inventory in a window (default is false).
+%.lp ""
+\\
+This only
 makes sense for windowing system interfaces that implement this feature.
+For those that do, the
+{\tt perminv\verb+_+mode}
+option can be used to refine what gets displayed
+for {\it perm\verb+_+invent\/}.
+Setting that to a value other than {\it none\/}
+while {\it perm\verb+_+invent\/} is false will change it to true.
+%.lp
+\item[\ib{perminv\verb+_+mode}]
+Augments the
+{\tt perm\verb+_+invent}
+option.
+Value is one of
+%.PS "\f(CRin-use\fP"
+\settowidth{\pcwidth}{\tt in-use}  %reuse the paranoid_confirm width
+\addtolength{\pcwidth}{\labelsep}
+\blist{\leftmargin \pcwidth \topsep 1mm \itemsep 0mm}
+%.PL
+\item[{\tt none}]
+behave as if {\it perm\verb+_+invent\/} is false;
+\item[{all}]
+show all inventory except for gold;
+\item[{full}]
+show full inventory including gold;
+\item[{in-use}]
+only show items which are in use (worn, wielded, lit lamp).
+%.PE
+\elist
+Default is {\it none\/} but if {\it perm\verb+_+invent\/} gets set to true
+while it is {\it none\/} it will be changed to {\it all\/}.
+%.lp ""
+\\
+Note: if gold has been equipped in quiver/ammo-pouch then it will be
+included for {\it all\/} despite that mode normally omitting gold.
 %.lp
 %.\" petattr is a wincap option but we'll document it here...
 \item[\ib{petattr}]
@@ -4742,6 +4817,14 @@ When you pick up an item that would exceed this encumbrance
 level (Unencumbered, Burdened, streSsed, straiNed, overTaxed,
 or overLoaded), you will be asked if you want to continue.
 (Default `S').  Persistent.
+%.lp
+\item[\ib{pickup\verb+_+stolen}]
+If this option is on and ``{\it autopickup\/}'' is also on, try to pick up
+things that a monster stole from you, even if they aren't in
+``{\it pickup\verb+_+types\/}'' or
+match an autopickup exception.
+Default is on.
+Persistent.
 %.lp
 \item[\ib{pickup\verb+_+thrown}]
 If this option is on and ``{\it autopickup\/}'' is also on, try to pick up
@@ -5008,6 +5091,9 @@ Allow sounds to be emitted from an integrated sound library (default on).
 \item[\ib{sparkle}]
 Display a sparkly effect when a monster (including yourself) is hit by an
 attack to which it is resistant (default on).  Persistent.
+%.lp
+\item[\ib{spot\verb+_+monsters}]
+Show a message when hero notices a monster (default is off).
 %.lp
 \item[\ib{standout}]
 Boldface monsters and ``{\tt --More--}'' (default off).  Persistent.
@@ -6449,6 +6535,12 @@ traditional Rogue-like commands.
 \item[\ib{paranoid\verb+_+confirmation:swim}]
 Prevent walking into water or lava.
 %.lp
+\item[\ib{accessiblemsg}]
+Adds direction or location information to messages.
+%.lp
+\item[\ib{spot\verb+_+monsters}]
+Shows a message when hero notices a monster; combine with accessiblemsg.
+%.lp
 \item[\ib{autodescribe}]
 Automatically describe the terrain under the cursor when targeting.
 %.lp
@@ -6608,6 +6700,13 @@ Only relevant if the program was built with LIVELOG enabled.
 When available, it should be left commented out on single player
 installations because over time the file could grow to be extremely
 large unless it is actively maintained.
+%.lp
+\item[\ib{CRASHREPORTURL}]
+If set to
+{\tt https://www.nethack.org/common/contact.html}
+and support is compiled in, brings up a browser window populated with
+the information needed to report a problem if the game panics or ends
+up in an internally inconsistent state.
 \elist
 
 %.hn 1

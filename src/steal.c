@@ -1,4 +1,4 @@
-/* NetHack 3.7	steal.c	$NHDT-Date: 1646688070 2022/03/07 21:21:10 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.98 $ */
+/* NetHack 3.7	steal.c	$NHDT-Date: 1702529046 2023/12/14 04:44:06 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.114 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -54,8 +54,10 @@ somegold(long lmoney)
  * Deals in gold only, as leprechauns don't care for lesser coins.
 */
 struct obj *
-findgold(register struct obj* chain)
+findgold(register struct obj* argchain)
 {
+    struct obj *chain = argchain; /* allow arg to be nonnull */
+
     while (chain && chain->otyp != GOLD_PIECE)
         chain = chain->nobj;
     return chain;
@@ -121,7 +123,7 @@ stealgold(register struct monst* mtmp)
         if (!tele_restrict(mtmp))
             (void) rloc(mtmp, RLOC_MSG);
         monflee(mtmp, 0, FALSE, FALSE);
-        gc.context.botl = 1;
+        disp.botl = TRUE;
     }
 }
 
@@ -215,10 +217,30 @@ remove_worn_item(
     struct obj *obj,
     boolean unchain_ball) /* whether to unpunish or just unwield */
 {
+    unsigned oldinuse;
+
     if (donning(obj))
         cancel_don();
     if (!obj->owornmask)
         return;
+
+    /*
+     * Losing worn gear might drop hero into water or lava or onto a
+     * location-changing trap or take away the ability to breathe in water.
+     * Marking it 'in_use' prevents emergency_disrobe() from dropping it.
+     * in_lava() appears to be ok; other cases impacting object location
+     * (or destruction) might still have issues.
+     *
+     * Note:  if a hangup save occurs when 'in_use' is set, the item will
+     * be destroyed via useup() during restore.  Maybe remove_worn_item()
+     * and emergency_disrobe() should switch to using obj->bypass instead
+     * but that would need a lot more cooperation by callers.  It's a
+     * tradeoff between protecting the player against unintentional hangup
+     * and defending the game against deliberate hangup when player sees a
+     * message about something undesireable followed by --More--.
+     */
+    oldinuse = obj->in_use;
+    obj->in_use = 1;
 
     if (obj->owornmask & W_ARMOR) {
         if (obj == uskin) {
@@ -264,6 +286,21 @@ remove_worn_item(
         /* catchall */
         setnotworn(obj);
     }
+
+    /*
+     * Fingers crossed; hope unwearing obj didn't destroy it.  Loss of
+     * levitation, flight, water walking, magical breathing or perhaps
+     * some other property can subject hero to hardship.  drown() won't
+     * drop an 'in_use' item during emergency_disrobe() to crawl out
+     * of water.  Surviving in_lava() only burns up items which aren't
+     * able to confer such properties but dying to it will destroy all
+     * in-use items, keeping them out of subsequent bones.  Triggering
+     * traps might pose a risk of item destruction (fire, explosion)
+     * but usually that will be like the surviving lava case--the items
+     * that are affected aren't ones that will be unworn and trigger
+     * the whole mess.
+     */
+    obj->in_use = oldinuse;
 }
 
 /* Returns 1 when something was stolen (or at least, when N should flee now),
@@ -384,7 +421,7 @@ steal(struct monst* mtmp, char* objnambuf)
                                                "take" };
  cant_take:
             pline("%s tries to %s %s%s but gives up.", Monnam(mtmp),
-                  how[rn2(SIZE(how))],
+                  ROLL_FROM(how),
                   (otmp->owornmask & W_ARMOR) ? "your " : "",
                   (otmp->owornmask & W_ARMOR) ? equipname(otmp)
                                               : yname(otmp));
@@ -470,8 +507,9 @@ steal(struct monst* mtmp, char* objnambuf)
             impossible("Tried to steal a strange worn thing. [%d]",
                        otmp->oclass);
         }
-    } else if (otmp->owornmask) /* weapon or ball&chain */
+    } else if (otmp->owornmask) { /* weapon or ball&chain */
         remove_worn_item(otmp, TRUE);
+    }
 
     /* do this before removing it from inventory */
     if (objnambuf)
@@ -491,6 +529,7 @@ steal(struct monst* mtmp, char* objnambuf)
     (void) encumber_msg();
     could_petrify = (otmp->otyp == CORPSE
                      && touch_petrifies(&mons[otmp->corpsenm]));
+    otmp->how_lost = LOST_STOLEN;
     (void) mpickobj(mtmp, otmp); /* may free otmp */
     if (could_petrify && !(mtmp->misc_worn_check & W_ARMG)) {
         minstapetrify(mtmp, TRUE);
@@ -536,17 +575,29 @@ mpickobj(struct monst *mtmp, struct obj *otmp)
             pline("%s out.", Tobjnam(otmp, "go"));
         snuff_otmp = TRUE;
     }
-    /* for hero owned object on shop floor, mtmp is taking possession
-       and if it's eventually dropped in a shop, shk will claim it */
-    if (!mtmp->mtame)
+    /* some object handling is only done if mtmp isn't a pet */
+    if (!mtmp->mtame) {
+        /* for hero owned object on shop floor, mtmp is taking possession
+           and if it's eventually dropped in a shop, shk will claim it */
         otmp->no_charge = 0;
-    /* if monster is unseen, info hero knows about this object becomes lost;
-       continual pickup and drop by pets makes this too annoying if it is
-       applied to them; when engulfed (where monster can't be seen because
-       vision is disabled), or when held (or poly'd and holding) while blind,
-       behave as if the monster can be 'seen' by touch */
-    if (!mtmp->mtame && !(canseemon(mtmp) || mtmp == u.ustuck))
-        unknow_object(otmp);
+        /* if monst is unseen, some info hero knows about this object becomes
+           lost; continual pickup and drop by pets makes this too annoying if
+           it is applied to them; when engulfed (where monster can't be seen
+           because vision is disabled), or when held (or poly'd and holding)
+           while blind, behave as if the monster can be 'seen' by touch */
+        if (!canseemon(mtmp) && mtmp != u.ustuck)
+            unknow_object(otmp);
+        /* if otmp has flags set for how it left hero's inventory, change
+           those flags; if thrown, now stolen and autopickup might override
+           pickup_types and autopickup exceptions based on 'pickup_stolen'
+           rather than 'pickup_thrown'; if previously stolen, stays stolen;
+           if previously dropped, now forgotten and autopickup will operate
+           normally regardless of the setting for 'dropped_nopick' */
+        if (otmp->how_lost == LOST_THROWN)
+            otmp->how_lost = LOST_STOLEN;
+        else if (otmp->how_lost == LOST_DROPPED)
+            otmp->how_lost = LOST_NONE;
+    }
     /* Must do carrying effects on object prior to add_to_minv() */
     carry_obj_effects(otmp);
     /* add_to_minv() might free otmp [if merged with something else],
@@ -707,7 +758,7 @@ mdrop_obj(
     }
     /* obj_no_longer_held(obj); -- done by place_object */
     if (verbosely && cansee(omx, omy))
-        pline("%s drops %s.", Monnam(mon), obj_name);
+        pline_xy(mon->mx, mon->my, "%s drops %s.", Monnam(mon), obj_name);
     if (!flooreffects(obj, omx, omy, "fall")) {
         place_object(obj, omx, omy);
         stackobj(obj);
@@ -764,7 +815,7 @@ relobj(
     } /* isgd && has gold */
 
     while ((otmp = (is_pet ? droppables(mtmp) : mtmp->minvent)) != 0) {
-        mdrop_obj(mtmp, otmp, is_pet && Verbose(1, relobj));
+        mdrop_obj(mtmp, otmp, is_pet && flags.verbose);
     }
 
     if (show && cansee(omx, omy))

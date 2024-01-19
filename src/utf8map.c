@@ -228,26 +228,27 @@ set_map_u(glyph_map *gmap, uint32 utf32ch, const uint8 *utf8str, long ucolor)
 {
     static uint32_t closecolor = 0;
     static int clridx = 0;
+    glyph_map *tmpgm = gmap;
 
-    if (gmap) {
-        if (gmap->u == 0) {
-            gmap->u = (struct unicode_representation *) alloc(sizeof *gmap->u);
-            gmap->u->utf8str = 0;
-        }
-        if (gmap->u->utf8str != 0) {
-            free(gmap->u->utf8str);
-            gmap->u->utf8str = 0;
-        }
-        gmap->u->utf8str = (uint8 *) dupstr((const char *) utf8str);
-        gmap->u->ucolor = ucolor;
-        if (closest_color(ucolor, &closecolor, &clridx))
-            gmap->u->u256coloridx = clridx;
-        else
-            gmap->u->u256coloridx = 0;
-        gmap->u->utf32ch = utf32ch;
-        return 1;
+    if (!tmpgm)
+        return 0;
+
+    if (gmap->u == 0) {
+        gmap->u = (struct unicode_representation *) alloc(sizeof *gmap->u);
+        gmap->u->utf8str = 0;
     }
-    return 0;
+    if (gmap->u->utf8str != 0) {
+        free(gmap->u->utf8str);
+        gmap->u->utf8str = 0;
+    }
+    gmap->u->utf8str = (uint8 *) dupstr((const char *) utf8str);
+    gmap->u->ucolor = ucolor;
+    if (closest_color(ucolor, &closecolor, &clridx))
+        gmap->u->u256coloridx = clridx;
+    else
+        gmap->u->u256coloridx = 0;
+    gmap->u->utf32ch = utf32ch;
+    return 1;
 }
 
 
@@ -270,7 +271,7 @@ glyph_find_core(const char *id, struct find_struct *findwhat)
                     break;
                 case find_pm:
                     if (glyph_is_monster(glyph)
-                        && mons[glyph_to_mon(glyph)].mlet == findwhat->val)
+                        && monsym(&mons[glyph_to_mon(glyph)]) == findwhat->val)
                         do_callback = TRUE;
                     break;
                 case find_oc:
@@ -540,33 +541,6 @@ mixed_to_utf8(char *buf, size_t bufsz, const char *str, int *retflags)
     }
     *put = '\0';
     return buf;
-}
-
-/*
- * helper routine if a window port wants to extract the unicode
- * representation from a glyph representation in the string;
- * the returned string is the remainder of the string after
- * extracting the \GNNNNNNNN information.
- */
-const char *
-mixed_to_glyphinfo(const char *str, glyph_info *gip)
-{
-    int dcount, ggv;
-
-    if (!str || !gip)
-        return " ";
-
-    *gip = nul_glyphinfo;
-    if (*str == '\\' && *(str + 1) == 'G') {
-        if ((dcount = decode_glyph(str + 2, &ggv))) {
-            map_glyphinfo(0, 0, ggv, 0, gip);
-            /* 'str' is ready for the next loop iteration and
-                '*str' should not be copied at the end of this
-                iteration */
-            str += (dcount + 2);
-        }
-    }
-    return str;
 }
 
 void

@@ -1,4 +1,4 @@
-/* NetHack 3.7	bones.c	$NHDT-Date: 1654931350 2022/06/11 07:09:10 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.119 $ */
+/* NetHack 3.7	bones.c	$NHDT-Date: 1701500709 2023/12/02 07:05:09 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.129 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985,1993. */
 /*-Copyright (c) Robert Patrick Rankin, 2012. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -8,9 +8,10 @@
 static boolean no_bones_level(d_level *);
 static void goodfruit(int);
 static void resetobjs(struct obj *, boolean);
-static void give_to_nearby_mon(struct obj *, coordxy, coordxy);
-static boolean fixuporacle(struct monst *);
-static void remove_mon_from_bones(struct monst *);
+static void give_to_nearby_mon(struct obj *, coordxy, coordxy) NONNULLARG1;
+static boolean fixuporacle(struct monst *) NONNULLARG1;
+static void remove_mon_from_bones(struct monst *) NONNULLARG1;
+static void set_ghostly_objlist(struct obj *objchain);
 
 static boolean
 no_bones_level(d_level *lev)
@@ -106,7 +107,7 @@ resetobjs(struct obj *ochain, boolean restore)
             otmp->cknown = 0;
             otmp->invlet = 0;
             otmp->no_charge = 0;
-            otmp->was_thrown = 0;
+            otmp->how_lost = LOST_NONE;
 
             /* strip user-supplied names */
             /* Statue and some corpse names are left intact,
@@ -138,7 +139,7 @@ resetobjs(struct obj *ochain, boolean restore)
                 otmp->spe = 0; /* not "laid by you" in next game */
             } else if (otmp->otyp == TIN) {
                 /* make tins of unique monster's meat be empty */
-                if (otmp->corpsenm >= LOW_PM
+                if (ismnum(otmp->corpsenm)
                     && unique_corpstat(&mons[otmp->corpsenm]))
                     otmp->corpsenm = NON_PM;
             } else if (otmp->otyp == CORPSE || otmp->otyp == STATUE) {
@@ -448,18 +449,42 @@ savebones(int how, time_t when, struct obj *corpse)
     for (f = gf.ffruit; f; f = f->nextf)
         f->fid = -f->fid;
 
+    set_ghostly_objlist(gi.invent);
     /* dispose of your possessions, usually cursed */
-    if (u.ugrave_arise == (NON_PM - 1)) {
+    if (ismnum(u.ugrave_arise)) {
+        /* give your possessions to the monster you become */
+        gi.in_mklev = TRUE; /* use <u.ux,u.uy> as-is */
+        mtmp = makemon(&mons[u.ugrave_arise], u.ux, u.uy, NO_MINVENT);
+        gi.in_mklev = FALSE;
+        if (!mtmp) { /* arise-type might have been genocided */
+            drop_upon_death((struct monst *) 0, (struct obj *) 0, u.ux, u.uy);
+            u.ugrave_arise = NON_PM; /* in case caller cares */
+            return;
+        }
+        give_u_to_m_resistances(mtmp);
+        mtmp = christen_monst(mtmp, gp.plname);
+        newsym(u.ux, u.uy);
+        /* ["Your body rises from the dead as an <mname>..." used
+           to be given here, but it has been moved to done() so that
+           it gets delivered even when savebones() isn't called] */
+        drop_upon_death(mtmp, (struct obj *) 0, u.ux, u.uy);
+        /* 'mtmp' now has hero's inventory; if 'mtmp' is a mummy, give it
+           a wrapping unless already carrying one */
+        if (mtmp->data->mlet == S_MUMMY && !m_carrying(mtmp, MUMMY_WRAPPING))
+            (void) mongets(mtmp, MUMMY_WRAPPING);
+        m_dowear(mtmp, TRUE);
+    } else if (u.ugrave_arise == LEAVESTATUE) {
         struct obj *otmp;
 
         /* embed your possessions in your statue */
-        otmp = mk_named_object(STATUE, &mons[u.umonnum], u.ux, u.uy, gp.plname);
+        otmp = mk_named_object(STATUE, &mons[u.umonnum], u.ux, u.uy,
+                               gp.plname);
 
         drop_upon_death((struct monst *) 0, otmp, u.ux, u.uy);
         if (!otmp)
             return; /* couldn't make statue */
         mtmp = (struct monst *) 0;
-    } else if (u.ugrave_arise < LOW_PM) {
+    } else { /* u.ugrave_arise < LEAVESTATUE */
         /* drop everything */
         drop_upon_death((struct monst *) 0, (struct obj *) 0, u.ux, u.uy);
         /* trick makemon() into allowing monster creation
@@ -473,27 +498,6 @@ savebones(int how, time_t when, struct obj *corpse)
         mtmp = christen_monst(mtmp, gp.plname);
         if (corpse)
             (void) obj_attach_mid(corpse, mtmp->m_id);
-    } else {
-        /* give your possessions to the monster you become */
-        gi.in_mklev = TRUE; /* use <u.ux,u.uy> as-is */
-        mtmp = makemon(&mons[u.ugrave_arise], u.ux, u.uy, NO_MINVENT);
-        gi.in_mklev = FALSE;
-        if (!mtmp) { /* arise-type might have been genocided */
-            drop_upon_death((struct monst *) 0, (struct obj *) 0, u.ux, u.uy);
-            u.ugrave_arise = NON_PM; /* in case caller cares */
-            return;
-        }
-        mtmp = christen_monst(mtmp, gp.plname);
-        newsym(u.ux, u.uy);
-        /* ["Your body rises from the dead as an <mname>..." used
-           to be given here, but it has been moved to done() so that
-           it gets delivered even when savebones() isn't called] */
-        drop_upon_death(mtmp, (struct obj *) 0, u.ux, u.uy);
-        /* 'mtmp' now has hero's inventory; if 'mtmp' is a mummy, give it
-           a wrapping unless already carrying one */
-        if (mtmp->data->mlet == S_MUMMY && !m_carrying(mtmp, MUMMY_WRAPPING))
-            (void) mongets(mtmp, MUMMY_WRAPPING);
-        m_dowear(mtmp, TRUE);
     }
     if (mtmp) {
         mtmp->m_lev = (u.ulevel ? u.ulevel : 1);
@@ -502,17 +506,22 @@ savebones(int how, time_t when, struct obj *corpse)
         mtmp->msleeping = 1;
     }
     for (mtmp = fmon; mtmp; mtmp = mtmp->nmon) {
+        set_ghostly_objlist(mtmp->minvent);
         resetobjs(mtmp->minvent, FALSE);
         /* do not zero out m_ids for bones levels any more */
         mtmp->mlstmv = 0L;
         if (mtmp->mtame)
             mtmp->mtame = mtmp->mpeaceful = 0;
+        /* observations about the current hero won't apply to future game */
+        mtmp->seen_resistance = M_SEEN_NOTHING;
     }
     for (ttmp = gf.ftrap; ttmp; ttmp = ttmp->ntrap) {
         ttmp->madeby_u = 0;
         ttmp->tseen = unhideable_trap(ttmp->ttyp);
     }
+    set_ghostly_objlist(fobj);
     resetobjs(fobj, FALSE);
+    set_ghostly_objlist(gl.level.buriedobjlist);
     resetobjs(gl.level.buriedobjlist, FALSE);
 
     /* Hero is no longer on the map. */
@@ -589,7 +598,8 @@ getbones(void)
 {
     int ok;
     NHFILE *nhfp = (NHFILE *) 0;
-    char c = 0, *bonesid, oldbonesid[40]; /* was [10]; more should be safer */
+    char c = 0, *bonesid,
+         oldbonesid[40] = { 0 }; /* was [10]; more should be safer */
 
     if (discover) /* save bones files for real games */
         return 0;
@@ -613,7 +623,7 @@ getbones(void)
         return 0;
     }
 
-    if (validate(nhfp, gb.bones) != 0) {
+    if (validate(nhfp, gb.bones, FALSE) != 0) {
         if (!wizard)
             pline("Discarding unusable bones; no need to panic...");
         ok = FALSE;
@@ -631,8 +641,18 @@ getbones(void)
                string and wasn't recorded in the file */
             mread(nhfp->fd, (genericptr_t) &c,
                   sizeof c); /* length including terminating '\0' */
-            mread(nhfp->fd, (genericptr_t) oldbonesid,
-                  (unsigned) c); /* DD.nn or Qrrr.n for role rrr */
+            if ((unsigned) c <= sizeof oldbonesid) {
+                mread(nhfp->fd, (genericptr_t) oldbonesid,
+                      (unsigned) c); /* DD.nn or Qrrr.n for role rrr */
+            } else {
+                if (wizard)
+                    debugpline2("Abandoning bones , %u > %u.",
+                                (unsigned) c, (unsigned) sizeof oldbonesid);
+                close_nhfile(nhfp);
+                compress_bonesfile();
+                /* ToDo: maybe unlink these problematic bones? */
+                return 0;
+            }
         }
         if (strcmp(bonesid, oldbonesid) != 0) {
             char errbuf[BUFSZ];
@@ -717,6 +737,41 @@ bones_include_name(const char *name)
     }
 
     return FALSE;
+}
+
+/* set the ghostly bit in a list of objects */
+static void
+set_ghostly_objlist(struct obj *objchain)
+{
+    while (objchain) {
+        objchain->ghostly = 1;
+        objchain = objchain->nobj;
+    }
+}
+
+/* This is called when a marked object from a bones file is picked-up.
+   Some could result in a message, and the obj->ghostly flag is always
+   cleared. obj->ghostly has no other usage at this time. */
+void
+fix_ghostly_obj(struct obj *obj)
+{
+    if (!obj->ghostly)
+        return;
+    switch(obj->otyp) {
+        /* asymetrical weapons */
+        case BOW:
+        case ELVEN_BOW:
+        case ORCISH_BOW:
+        case YUMI:
+        case BOOMERANG:
+            You("make adjustments to %s to suit your %s hand.",
+                the(xname(obj)),
+                URIGHTY ? "right" : "left");
+            break;
+        default:
+            break;
+    }
+    obj->ghostly = 0;
 }
 
 /*bones.c*/

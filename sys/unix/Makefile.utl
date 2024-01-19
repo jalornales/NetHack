@@ -1,5 +1,5 @@
 #	Makefile for NetHack's utility programs.
-# NetHack 3.7  Makefile.utl    $NHDT-Date: 1602258295 2020/10/09 15:44:55 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.53 $
+# NetHack 3.7  Makefile.utl    $NHDT-Date: 1693334279 2023/08/29 18:37:59 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.68 $
 # Copyright (c) 2018 by Robert Patrick Rankin
 # NetHack may be freely redistributed.  See license for details.
 
@@ -378,7 +378,7 @@ uudecode.o: ../sys/share/uudecode.c
 # make sure host object files from src are available when needed
 # (note: these dependencies have been copied from Makefile.src so only come
 # indirectly from 'make depend', hence are subject to bit rot as src changes)
-$(OBJDIR)/alloc.o: ../src/alloc.c $(CONFIG_H)
+$(OBJDIR)/alloc.o: ../src/alloc.c $(CONFIG_H) ../include/nhlua.h
 	$(CC) $(CFLAGS) $(CSTD) -c ../src/alloc.c -o $@
 $(OBJDIR)/drawing.o: ../src/drawing.c $(CONFIG_H) ../include/color.h \
 		../include/rm.h ../include/objclass.h ../include/defsym.h \
@@ -388,8 +388,8 @@ $(OBJDIR)/decl.o: ../src/decl.c $(HACK_H)
 	$(CC) $(CFLAGS) $(CSTD) -c ../src/decl.c -o $@
 $(OBJDIR)/monst.o: ../src/monst.c $(CONFIG_H) ../include/permonst.h \
 		../include/align.h ../include/monattk.h ../include/monflag.h \
-		../include/monsters.h ../include/sym.h ../include/defsym.h \
-		../include/color.h
+		../include/monsters.h ../include/wintype.h ../include/sym.h \
+		../include/defsym.h ../include/color.h
 	$(CC) $(CFLAGS) $(CSTD) -c ../src/monst.c -o $@
 $(OBJDIR)/objects.o: ../src/objects.c $(CONFIG_H) ../include/obj.h \
 		../include/prop.h ../include/skills.h ../include/color.h \
@@ -400,7 +400,8 @@ $(OBJDIR)/dlb.o: ../src/dlb.c $(CONFIG_H) ../include/dlb.h
 # this differs substantially from what Makefile.src specifies
 $(OBJDIR)/date.o: ../src/date.c $(CONFIG_H)
 	$(CC) $(CFLAGS) $(CSTD) -c ../src/date.c -o $@
-
+../include/nhlua.h:
+	@( cd .. ; $(MAKE) lua_support )
 # make sure hack.h dependencies get transitive information
 $(HACK_H): $(CONFIG_H)
 	@( cd ../src ; $(MAKE) $(HACK_H) )

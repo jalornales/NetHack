@@ -1,12 +1,12 @@
-/* NetHack 3.7	write.c	$NHDT-Date: 1596498232 2020/08/03 23:43:52 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.26 $ */
+/* NetHack 3.7	write.c	$NHDT-Date: 1702023275 2023/12/08 08:14:35 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.41 $ */
 /* NetHack may be freely redistributed.  See license for details. */
 
 #include "hack.h"
 
-static int cost(struct obj *);
-static boolean label_known(int, struct obj *);
-static int write_ok(struct obj *);
-static char *new_book_description(int, char *);
+static int cost(struct obj *) NONNULLARG1;
+static boolean label_known(int, struct obj *) NO_NNARGS;
+static int write_ok(struct obj *) NO_NNARGS;
+static char *new_book_description(int, char *) NONNULL NONNULLPTRS;
 
 /*
  * returns basecost of a scroll or a spellbook
@@ -313,8 +313,8 @@ dowrite(struct obj *pen)
     /*
      * Writing by name requires that the hero knows the scroll or
      * book type.  One has previously been read (and its effect
-     * was evident) or been ID'd via scroll/spell/throne and it
-     * will be on the discoveries list.
+     * was evident) or been ID'd via scroll/spell/throne (or skill
+     * for Wizards) and it will be on the discoveries list.
      * Unknown spellbooks can also be written by name if the hero
      * has fresh knowledge of the spell, or if the spell is almost
      * forgotten and the hero is Lucky (with a greater chance than
@@ -349,7 +349,8 @@ dowrite(struct obj *pen)
         /* else fresh knowledge of the spell works */
         && spell_knowledge != spe_Fresh
         /* and Luck might override after previous checks have failed */
-        && rnl((Role_if(PM_WIZARD) || spell_knowledge == spe_GoingStale)
+        && rnl(((Role_if(PM_WIZARD) && paper->oclass != SPBOOK_CLASS)
+                || spell_knowledge == spe_GoingStale)
                ? 5 : 15)) {
         You("%s to write that.", by_descr ? "fail" : "don't know how");
         /* scrolls disappear, spellbooks don't */

@@ -1,4 +1,4 @@
-/* NetHack 3.7	sp_lev.c	$NHDT-Date: 1646428015 2022/03/04 21:06:55 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.259 $ */
+/* NetHack 3.7	sp_lev.c	$NHDT-Date: 1704787190 2024/01/09 07:59:50 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.349 $ */
 /*      Copyright (c) 1989 by Jean-Christophe Collet */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -141,6 +141,7 @@ int lspo_ladder(lua_State *);
 int lspo_level_flags(lua_State *);
 int lspo_level_init(lua_State *);
 int lspo_levregion(lua_State *);
+int lspo_exclusion(lua_State *);
 int lspo_map(lua_State *);
 int lspo_mazewalk(lua_State *);
 int lspo_message(lua_State *);
@@ -336,11 +337,11 @@ map_cleanup(void)
         for (y = 0; y < ROWNO; y++) {
             schar typ = levl[x][y].typ;
 
-            if (typ == LAVAPOOL || typ == LAVAWALL || IS_POOL(typ)) {
+            if (IS_LAVA(typ) || IS_POOL(typ)) {
                 /* in case any boulders are on liquid, delete them */
                 while ((otmp = sobj_at(BOULDER, x, y)) != 0) {
                     obj_extract_self(otmp);
-                    obfree(otmp, (struct obj *)0);
+                    obfree(otmp, (struct obj *) 0);
                 }
 
                 /* traps on liquid? */
@@ -960,7 +961,7 @@ flip_level_rnd(int flp, boolean extras)
 static void
 sel_set_wall_property(coordxy x, coordxy y, genericptr_t arg)
 {
-    int prop = *(int *)arg;
+    int prop = *(int *) arg;
 
     if (IS_STWALL(levl[x][y].typ) || IS_TREE(levl[x][y].typ)
         /* 3.6.2: made iron bars eligible to be flagged nondiggable
@@ -983,7 +984,7 @@ set_wall_property(coordxy x1, coordxy y1, coordxy x2, coordxy y2, int prop)
     y2 = min(y2, ROWNO - 1);
     for (y = y1; y <= y2; y++)
         for (x = x1; x <= x2; x++) {
-            sel_set_wall_property(x, y, (genericptr_t)&prop);
+            sel_set_wall_property(x, y, (genericptr_t) &prop);
         }
 }
 
@@ -1124,7 +1125,7 @@ rnddoor(void)
 {
     static int state[] = { D_NODOOR, D_BROKEN, D_ISOPEN, D_CLOSED, D_LOCKED };
 
-    return state[rn2(SIZE(state))];
+    return ROLL_FROM(state);
 }
 
 /*
@@ -1787,7 +1788,7 @@ create_trap(spltrap *t, struct mkroom *croom)
 {
     coordxy x = -1, y = -1;
     coord tm;
-    int mktrap_flags = MKTRAP_MAZEFLAG;
+    unsigned mktrap_flags = MKTRAP_MAZEFLAG;
 
     if (t->type == VIBRATING_SQUARE) {
         pick_vibrasquare_location();
@@ -1976,7 +1977,7 @@ create_monster(monster *m, struct mkroom *croom)
         if (m->appear_as.str
             && ((mtmp->data->mlet == S_MIMIC)
                 /* shapechanger (chameleons, et al, and vampires) */
-                || (mtmp->cham >= LOW_PM && m->appear == M_AP_MONSTER))
+                || (ismnum(mtmp->cham) && m->appear == M_AP_MONSTER))
             && !Protection_from_shape_changers) {
             int i;
 
@@ -2348,7 +2349,8 @@ create_object(object *o, struct mkroom *croom)
             if (!gc.context.achieveo.mines_prize_oid) {
                 gc.context.achieveo.mines_prize_oid = otmp->o_id;
                 gc.context.achieveo.mines_prize_otyp = otmp->otyp;
-                /* prevent stacking; cleared when achievement is recorded */
+                /* prevent stacking; cleared when achievement is recorded;
+                   will be reset in addinv_core1() */
                 otmp->nomerge = 1;
             } else {
                 impossible(prize_warning, "mines end");
@@ -2357,7 +2359,8 @@ create_object(object *o, struct mkroom *croom)
             if (!gc.context.achieveo.soko_prize_oid) {
                 gc.context.achieveo.soko_prize_oid = otmp->o_id;
                 gc.context.achieveo.soko_prize_otyp = otmp->otyp;
-                otmp->nomerge = 1; /* redundant; Sokoban prizes don't stack */
+                otmp->nomerge = 1; /* redundant; Sokoban prizes don't stack;
+                                    * will be reset in addinv_core1() */
             } else {
                 impossible(prize_warning, "sokoban end");
             }
@@ -2797,8 +2800,7 @@ light_region(region *tmpregion)
     for (x = lowx; x <= hix; x++) {
         lev = &levl[x][lowy];
         for (y = lowy; y <= hiy; y++) {
-            if (lev->typ != LAVAPOOL) /* this overrides normal lighting */
-                lev->lit = litstate;
+            lev->lit = IS_LAVA(lev->typ) ? 1 : litstate;
             lev++;
         }
     }
@@ -3303,15 +3305,13 @@ lspo_monster(lua_State *L)
         tmpmons.coord = SP_COORD_PACK(mx, my);
 
     if (tmpmons.id != NON_PM && tmpmons.class == -1)
-        tmpmons.class = def_monsyms[(int) mons[tmpmons.id].mlet].sym;
+        tmpmons.class = monsym(&mons[tmpmons.id]);
 
     create_monster(&tmpmons, gc.coder->croom);
 
     if (tmpmons.has_invent && lua_type(L, -1) == LUA_TFUNCTION) {
         lua_remove(L, -2);
-        if (nhl_pcall(L, 0, 0)){
-            impossible("Lua error: %s", lua_tostring(L, -1));
-        }
+        nhl_pcall_handle(L, 0, 0, "lspo_monster", NHLpa_panic);
         spo_end_moninvent();
     } else
         lua_pop(L, 1);
@@ -3656,9 +3656,7 @@ lspo_object(lua_State *L)
     if (lua_type(L, -1) == LUA_TFUNCTION) {
         lua_remove(L, -2);
         nhl_push_obj(L, otmp);
-        if (nhl_pcall(L, 1, 0)){
-            impossible("Lua error: %s", lua_tostring(L, -1));
-        }
+        nhl_pcall_handle(L, 1, 0, "lspo_object", NHLpa_panic);
     } else
         lua_pop(L, 1);
 
@@ -3711,6 +3709,8 @@ lspo_level_flags(lua_State *L)
             gc.coder->premapped = 1;
         else if (!strcmpi(s, "solidify"))
             gc.coder->solidify = 1;
+        else if (!strcmpi(s, "sokoban"))
+            Sokoban = 1; /* gl.level.flags.sokoban_rules */
         else if (!strcmpi(s, "inaccessibles"))
             gc.coder->check_inaccessibles = 1;
         else if (!strcmpi(s, "noflipx"))
@@ -4007,9 +4007,7 @@ lspo_room(lua_State *L)
                 if (lua_type(L, -1) == LUA_TFUNCTION) {
                     lua_remove(L, -2);
                     l_push_mkroom_table(L, tmpcr);
-                    if (nhl_pcall(L, 1, 0)){
-                        impossible("Lua error: %s", lua_tostring(L, -1));
-                    }
+                    nhl_pcall_handle(L, 1, 0, "lspo_room", NHLpa_panic);
                 } else
                     lua_pop(L, 1);
                 spo_endroom(gc.coder);
@@ -4670,7 +4668,7 @@ struct selectionvar *
 selection_not(struct selectionvar *s)
 {
     int x, y;
-    NhRect tmprect;
+    NhRect tmprect = cg.zeroNhRect;
 
     for (x = 0; x < s->wid; x++)
         for (y = 0; y < s->hei; y++)
@@ -4684,7 +4682,7 @@ selection_filter_mapchar(struct selectionvar *ov,  xint16 typ, int lit)
 {
     int x, y;
     struct selectionvar *ret;
-    NhRect rect;
+    NhRect rect = cg.zeroNhRect;
 
     if (!ov)
         return NULL;
@@ -4722,7 +4720,7 @@ selection_filter_percent(
 {
     int x, y;
     struct selectionvar *ret;
-    NhRect rect;
+    NhRect rect = cg.zeroNhRect;
 
     if (!ov)
         return NULL;
@@ -4748,7 +4746,7 @@ selection_rndcoord(
     int idx = 0;
     int c;
     int dx, dy;
-    NhRect rect;
+    NhRect rect = cg.zeroNhRect;
 
     selection_getbounds(ov, &rect);
 
@@ -4789,7 +4787,7 @@ selection_do_grow(struct selectionvar *ov, int dir)
 {
     coordxy x, y;
     struct selectionvar *tmp;
-    NhRect rect;
+    NhRect rect = cg.zeroNhRect;
 
     if (!ov)
         return;
@@ -5217,7 +5215,7 @@ selection_iterate(
     genericptr_t arg)
 {
     coordxy x, y;
-    NhRect rect;
+    NhRect rect = cg.zeroNhRect;
 
     if (!ov)
         return;
@@ -5250,6 +5248,8 @@ sel_set_ter(coordxy x, coordxy y, genericptr_t arg)
         levl[x][y].horizontal = 1;
     } else if (splev_init_present && levl[x][y].typ == ICE) {
         levl[x][y].icedpool = icedpools ? ICED_POOL : ICED_MOAT;
+    } else if (levl[x][y].typ == CLOUD) {
+        del_engr_at(x, y); /* clouds cannot have engravings */
     }
 }
 
@@ -5638,7 +5638,7 @@ lspo_replace_terrain(lua_State *L)
     lua_Integer x1, y1, x2, y2;
     int chance;
     int tolit;
-    NhRect rect;
+    NhRect rect = cg.zeroNhRect;
 
     create_des_coder();
 
@@ -5782,7 +5782,7 @@ generate_way_out_method(
 
     /* generate one of the escape items */
     if (selection_rndcoord(ov2, &x, &y, FALSE)) {
-        mksobj_at(escapeitems[rn2(SIZE(escapeitems))], x, y, TRUE, FALSE);
+        mksobj_at(ROLL_FROM(escapeitems), x, y, TRUE, FALSE);
         goto gotitdone;
     }
 
@@ -6073,12 +6073,41 @@ lspo_levregion(lua_State *L)
     return 0;
 }
 
+/* exclusion({ type = "teleport", region = { x1,y1, x2,y2 } }); */
+int
+lspo_exclusion(lua_State *L)
+{
+    static const char *const ez_types[] = {
+        "teleport", "teleport-up", "teleport-down", NULL
+    };
+    static const int ez_types2i[] = {
+        LR_TELE, LR_UPTELE, LR_DOWNTELE, 0
+    };
+    struct exclusion_zone *ez = (struct exclusion_zone *) alloc(sizeof *ez);
+    lua_Integer x1,y1,x2,y2;
+
+    create_des_coder();
+    lcheck_param_table(L);
+    ez->zonetype = ez_types2i[get_table_option(L, "type", "teleport",
+                                                      ez_types)];
+    get_table_region(L, "region", &x1, &y1, &x2, &y2, FALSE);
+    ez->lx = x1;
+    ez->ly = y1;
+    ez->hx = x2;
+    ez->hy = y2;
+    cvt_to_abscoord(&ez->lx, &ez->ly);
+    cvt_to_abscoord(&ez->hx, &ez->hy);
+    ez->next = ge.exclusion_zones;
+    ge.exclusion_zones = ez;
+    return 0;
+}
+
 static void
 sel_set_lit(coordxy x, coordxy y, genericptr_t arg)
 {
-     int lit = *(int *)arg;
+     int lit = *(int *) arg;
 
-     levl[x][y].lit = (levl[x][y].typ == LAVAPOOL) ? 1 : lit;
+     levl[x][y].lit = (IS_LAVA(levl[x][y].typ) || lit) ? 1 : 0;
 }
 
 /* Add to the room any doors within/bordering it */
@@ -6155,6 +6184,8 @@ lspo_region(lua_State *L)
             selection_do_grow(sel, W_ANY);
         selection_iterate(sel, sel_set_lit, (genericptr_t) &rlit);
 
+        selection_free(sel, TRUE);
+
         /* TODO: skip the rest of this function? */
         return 0;
     } else {
@@ -6230,9 +6261,7 @@ lspo_region(lua_State *L)
             if (lua_type(L, -1) == LUA_TFUNCTION) {
                 lua_remove(L, -2);
                 l_push_mkroom_table(L, troom);
-                if (nhl_pcall(L, 1, 0)){
-                    impossible("Lua error: %s", lua_tostring(L, -1));
-                }
+                nhl_pcall_handle(L, 1, 0, "lspo_region", NHLpa_panic);
             } else {
                 lua_pop(L, 1);
             }
@@ -6580,12 +6609,12 @@ lspo_finalize_level(lua_State *L UNUSED)
     if (L && gc.coder->solidify)
         solidify_map();
 
-    /* This must be done before sokoban_detect(),
+    /* This must be done before premap_detect(),
      * otherwise branch stairs won't be premapped. */
     fixup_special();
 
     if (L && gc.coder->premapped)
-        sokoban_detect();
+        premap_detect();
 
     level_finalize_topology();
 
@@ -6842,9 +6871,7 @@ TODO: gc.coder->croom needs to be updated
     }
     else if (has_contents) {
         l_push_wid_hei_table(L, gx.xsize, gy.ysize);
-        if (nhl_pcall(L, 1, 0)){
-            impossible("Lua error: %s", lua_tostring(L, -1));
-        }
+        nhl_pcall_handle(L, 1, 0, "lspo_map", NHLpa_panic);
         reset_xystart_size();
     }
 
@@ -6960,6 +6987,7 @@ static const struct luaL_Reg nhl_functions[] = {
     { "drawbridge", lspo_drawbridge },
     { "region", lspo_region },
     { "levregion", lspo_levregion },
+    { "exclusion", lspo_exclusion },
     { "wallify", lspo_wallify },
     { "wall_property", lspo_wall_property },
     { "non_diggable", lspo_non_diggable },
@@ -7010,7 +7038,7 @@ boolean
 load_special(const char *name)
 {
     boolean result = FALSE;
-    nhl_sandbox_info sbi = {NHL_SB_SAFE, 0, 0, 0};
+    nhl_sandbox_info sbi = {NHL_SB_SAFE, 1*1024*1024, 0, 1*1024*1024};
 
     create_des_coder();
 
@@ -7042,12 +7070,12 @@ load_special(const char *name)
     if (gc.coder->solidify)
         solidify_map();
 
-    /* This must be done before sokoban_detect(),
+    /* This must be done before premap_detect(),
      * otherwise branch stairs won't be premapped. */
     fixup_special();
 
     if (gc.coder->premapped)
-        sokoban_detect();
+        premap_detect();
 
     result = TRUE;
  give_up:

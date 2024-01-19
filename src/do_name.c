@@ -1,4 +1,4 @@
-/* NetHack 3.7	do_name.c	$NHDT-Date: 1672605786 2023/01/01 20:43:06 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.280 $ */
+/* NetHack 3.7	do_name.c	$NHDT-Date: 1693292527 2023/08/29 07:02:07 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.289 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Pasi Kallinen, 2018. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -20,12 +20,12 @@ static void gloc_filter_done(void);
 static boolean gather_locs_interesting(coordxy, coordxy, int);
 static void gather_locs(coord **, int *, int);
 static void truncate_to_map(int *, int *, schar, schar);
-static void getpos_refresh(int *);
+static void getpos_refresh(int *) NONNULLARG1;
 static char *name_from_player(char *, const char *, const char *);
 static void do_mgivenname(void);
-static boolean alreadynamed(struct monst *, char *, char *);
-static void do_oname(struct obj *);
-static char *docall_xname(struct obj *);
+static boolean alreadynamed(struct monst *, char *, char *) NONNULLPTRS;
+static void do_oname(struct obj *) NONNULLARG1;
+static char *docall_xname(struct obj *) NONNULLARG1;
 static void namefloorobj(void);
 
 extern const char what_is_an_unknown_object[]; /* from pager.c */
@@ -643,7 +643,7 @@ getpos_menu(coord *ccp, int gloc)
     int i, pick_cnt;
     menu_item *picks = (menu_item *) 0;
     char tmpbuf[BUFSZ];
-    int clr = 0;
+    int clr = NO_COLOR;
 
     gather_locs(&garr, &gcount, gloc);
 
@@ -730,9 +730,20 @@ enum hilite_states {
 static void
 getpos_refresh(int *hilite_statep)
 {
-    if (*hilite_statep == Hilite_Active)
+    int redrawflags = docrtRefresh;
+
+    if (*hilite_statep == Hilite_Active) {
+        /* removing SHOWVALID markers; just redraw the map */
         (*getpos_hilitefunc)(2); /* tmp_at(DISP_END) */
-    docrt(); /* redraw everything */
+        redrawflags |= docrtMapOnly;
+    } else {
+        /* ^R: player requested that the screen be redrawn; maybe something
+         * outside of nethack has clobbered it; clear it, redisplay what we
+         * think the map already shows rather than recalculate that, do a
+         * full status update, and show perminv, if applicable */
+        ; /* just docrtRefresh */
+    }
+    docrt_flags(redrawflags);
     *hilite_statep = Hilite_Inactive;
 }
 
@@ -810,13 +821,13 @@ getpos(coord *ccp, boolean force, const char *goal)
 
     if (!goal)
         goal = "desired location";
-    if (Verbose(0, getpos1)) {
+    if (flags.verbose) {
         pline("(For instructions type a '%s')",
               visctrl(gc.Cmd.spkeys[NHKF_GETPOS_HELP]));
         msg_given = TRUE;
     }
-    cx = ccp->x;
-    cy = ccp->y;
+    cx = gg.getposx = ccp->x;
+    cy = gg.getposy = ccp->y;
 #ifdef CLIPPING
     cliparound(cx, cy);
 #endif
@@ -928,6 +939,7 @@ getpos(coord *ccp, boolean force, const char *goal)
                 getpos_help(force, goal);
             /* ^R: docrt(), hilite_state = Hilite_Inactive */
             getpos_refresh(&hilite_state);
+            curs(WIN_MAP, cx, cy);
             /* update message window to reflect that we're still targeting */
             show_goal_msg = TRUE;
         } else if (c == gc.Cmd.spkeys[NHKF_GETPOS_SHOWVALID]) {
@@ -953,7 +965,7 @@ getpos(coord *ccp, boolean force, const char *goal)
         } else if (c == gc.Cmd.spkeys[NHKF_GETPOS_AUTODESC]) {
             iflags.autodescribe = !iflags.autodescribe;
             pline("Automatic description %sis %s.",
-                  Verbose(0, getpos2) ? "of features under cursor " : "",
+                  flags.verbose ? "of features under cursor " : "",
                   iflags.autodescribe ? "on" : "off");
             if (!iflags.autodescribe)
                 show_goal_msg = TRUE;
@@ -1122,7 +1134,7 @@ getpos(coord *ccp, boolean force, const char *goal)
             break;
         }
  nxtc:
-        ;
+        gg.getposx = cx, gg.getposy = cy;
 #ifdef CLIPPING
         cliparound(cx, cy);
 #endif
@@ -1138,6 +1150,7 @@ getpos(coord *ccp, boolean force, const char *goal)
         clear_nhwindow(WIN_MESSAGE);
     ccp->x = cx;
     ccp->y = cy;
+    gg.getposx = gg.getposy = 0;
     for (i = 0; i < NUM_GLOCS; i++)
         if (garr[i])
             free((genericptr_t) garr[i]);
@@ -1322,6 +1335,7 @@ do_mgivenname(void)
     coord cc;
     int cx, cy;
     struct monst *mtmp = 0;
+    boolean do_swallow = FALSE;
 
     if (Hallucination) {
         You("would never recognize it anyway.");
@@ -1345,12 +1359,23 @@ do_mgivenname(void)
     } else
         mtmp = m_at(cx, cy);
 
-    if (!mtmp
+    /* Allow you to name the monster that has swallowed you */
+    if (!mtmp && u.uswallow) {
+        int glyph = glyph_at(cx, cy);
+
+        if (glyph_is_swallow(glyph)) {
+            mtmp = u.ustuck;
+            do_swallow = TRUE;
+        }
+    }
+
+    if (!do_swallow && (!mtmp
         || (!sensemon(mtmp)
             && (!(cansee(cx, cy) || see_with_infrared(mtmp))
                 || mtmp->mundetected || M_AP_TYPE(mtmp) == M_AP_FURNITURE
                 || M_AP_TYPE(mtmp) == M_AP_OBJECT
-                || (mtmp->minvis && !See_invisible)))) {
+                || (mtmp->minvis && !See_invisible))))) {
+
         pline("I see no monster there.");
         return;
     }
@@ -1463,6 +1488,9 @@ do_oname(struct obj *obj)
            a valid artifact name */
         u.uconduct.literate++;
     } else if (obj->otyp == objtyp) {
+        /* artifact_name() always returns non-Null when it sets objtyp */
+        assert(aname != 0);
+
         /* artifact_name() found a match and restrict_name() didn't reject
            it; since 'obj' is the right type, naming will change it into an
            artifact so use canonical capitalization (Sting or Orcrist) */
@@ -1610,7 +1638,7 @@ docallcmd(void)
     char ch = 0;
     /* if player wants a,b,c instead of i,o when looting, do that here too */
     boolean abc = flags.lootabc;
-    int clr = 0;
+    int clr = NO_COLOR;
 
     if ((cmdq = cmdq_pop()) != 0) {
         cq = *cmdq;
@@ -1740,40 +1768,39 @@ void
 docall(struct obj *obj)
 {
     char buf[BUFSZ], qbuf[QBUFSZ];
-    char **str1;
+    char **uname_p;
+    boolean had_name = FALSE;
 
     if (!obj->dknown)
-        return; /* probably blind */
+        return; /* probably blind; Blind || Hallucination for 'fromsink' */
     flush_screen(1); /* buffered updates might matter to player's response */
 
     if (obj->oclass == POTION_CLASS && obj->fromsink)
-        /* kludge, meaning it's sink water */
+        /* fromsink: kludge, meaning it's sink water */
         Sprintf(qbuf, "Call a stream of %s fluid:",
                 OBJ_DESCR(objects[obj->otyp]));
     else
         (void) safe_qbuf(qbuf, "Call ", ":", obj,
                          docall_xname, simpleonames, "thing");
     /* pointer to old name */
-    str1 = &(objects[obj->otyp].oc_uname);
+    uname_p = &(objects[obj->otyp].oc_uname);
     /* use getlin() to get a name string from the player */
-    if (!name_from_player(buf, qbuf, *str1))
+    if (!name_from_player(buf, qbuf, *uname_p))
         return;
 
     /* clear old name */
-    if (*str1)
-        free((genericptr_t) *str1);
+    if (*uname_p) {
+        had_name = TRUE;
+        free((genericptr_t) *uname_p), *uname_p = NULL; /* clear oc_uname */
+    }
 
     /* strip leading and trailing spaces; uncalls item if all spaces */
     (void) mungspaces(buf);
     if (!*buf) {
-        if (*str1) { /* had name, so possibly remove from disco[] */
-            /* strip name first, for the update_inventory() call
-               from undiscover_object() */
-            *str1 = (char *) 0;
+        if (had_name) /* possibly remove from disco[]; old *uname_p is gone */
             undiscover_object(obj->otyp);
-        }
     } else {
-        *str1 = dupstr(buf);
+        *uname_p = dupstr(buf);
         discover_object(obj->otyp, FALSE, TRUE); /* possibly add to disco[] */
     }
 }
@@ -1874,7 +1901,7 @@ static const char *const ghostnames[] = {
 const char *
 rndghostname(void)
 {
-    return rn2(7) ? ghostnames[rn2(SIZE(ghostnames))]
+    return rn2(7) ? ROLL_FROM(ghostnames)
                   : (const char *) gp.plname;
 }
 
@@ -1942,6 +1969,16 @@ x_monnam(
     if (article == ARTICLE_YOUR && !mtmp->mtame)
         article = ARTICLE_THE;
 
+    if (u.uswallow && mtmp == u.ustuck) {
+        /*
+         * This monster has become important, for the moment anyway.
+         * As the hero's consumer, it is worthy of ARTICLE_THE.
+         * Also, suppress invisible as that particular characteristic
+         * is unimportant now and you can see it's interior anyway.
+         */
+        article = ARTICLE_THE;
+        suppress |= SUPPRESS_INVISIBLE;
+    }
     do_hallu = Hallucination && !(suppress & SUPPRESS_HALLUCINATION);
     do_invis = mtmp->minvis && !(suppress & SUPPRESS_INVISIBLE);
     do_it = !canspotmon(mtmp) && article != ARTICLE_YOUR
@@ -1973,21 +2010,15 @@ x_monnam(
             EHalluc_resistance = 1L;
         if (!do_invis)
             mtmp->minvis = 0;
-        name = priestname(mtmp, article, buf2);
+        /* EXACT_NAME will force "of <deity>" on the Astral Plane */
+        name = priestname(mtmp, article,
+                          ((suppress & EXACT_NAME) == EXACT_NAME), buf2);
         EHalluc_resistance = save_prop;
         mtmp->minvis = save_invis;
         if (article == ARTICLE_NONE && !strncmp(name, "the ", 4))
             name += 4;
         return strcpy(buf, name);
     }
-#if 0   /* [now handled by mon_pmname()] */
-    /* an "aligned priest" not flagged as a priest or minion should be
-       "priest" or "priestess" (normally handled by priestname()) */
-    if (mdat == &mons[PM_ALIGNED_CLERIC])
-        pm_name = mtmp->female ? "priestess" : "priest";
-    else if (mdat == &mons[PM_HIGH_CLERIC] && mtmp->female)
-        pm_name = "high priestess";
-#endif
 
     /* Shopkeepers: use shopkeeper name.  For normal shopkeepers, just
      * "Asidonhopo"; for unusual ones, "Asidonhopo the invisible
@@ -2388,12 +2419,12 @@ obj_pmname(struct obj *obj)
         struct monst *m = OMONST(obj);
 
         /* obj->oextra->omonst->data is Null but ...->mnum is set */
-        if (m->mnum >= LOW_PM)
+        if (ismnum(m->mnum))
             return pmname(&mons[m->mnum], m->female ? FEMALE : MALE);
     }
 #endif
     if ((obj->otyp == CORPSE || obj->otyp == STATUE || obj->otyp == FIGURINE)
-        && obj->corpsenm >= LOW_PM) {
+        && ismnum(obj->corpsenm)) {
         int cgend = (obj->spe & CORPSTAT_GENDER),
             mgend = ((cgend == CORPSTAT_MALE) ? MALE
                      : (cgend == CORPSTAT_FEMALE) ? FEMALE
@@ -2562,7 +2593,7 @@ hliquid(
         if (liquidpref && *liquidpref)
             ++count;
         indx = rn2_on_display_rng(count);
-        if (indx < SIZE(hliquids))
+        if (IndexOk(indx, hliquids))
             return hliquids[indx];
     }
     return liquidpref;
@@ -2606,7 +2637,7 @@ rndorcname(char *s)
         for (i = 0; i < iend; ++i) {
             vstart = 1 - vstart;                /* 0 -> 1, 1 -> 0 */
             Sprintf(eos(s), "%s%s", (i > 0 && !rn2(30)) ? "-" : "",
-                    vstart ? v[rn2(SIZE(v))] : snd[rn2(SIZE(snd))]);
+                    vstart ? ROLL_FROM(v) : ROLL_FROM(snd));
         }
     }
     return s;
@@ -2713,7 +2744,7 @@ lookup_novel(const char *lookname, int *idx)
         }
     }
     /* name not found; if novelidx is already set, override the name */
-    if (idx && *idx >= 0 && *idx < SIZE(sir_Terry_novels))
+    if (idx && IndexOk(*idx, sir_Terry_novels))
         return sir_Terry_novels[*idx];
 
     return (const char *) 0;

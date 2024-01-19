@@ -1,4 +1,4 @@
-/* NetHack 3.7	insight.c	$NHDT-Date: 1683710630 2023/05/10 09:23:50 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.95 $ */
+/* NetHack 3.7	insight.c	$NHDT-Date: 1702023267 2023/12/08 08:14:27 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.104 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -114,25 +114,41 @@ static struct ll_achieve_msg achieve_msg [] = {
 static void
 enlght_out(const char *buf)
 {
-    int clr = 0;
-
     if (ge.en_via_menu) {
-        anything any;
-
-        any = cg.zeroany;
-        add_menu(ge.en_win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr, buf,
-                 MENU_ITEMFLAGS_NONE);
+        add_menu_str(ge.en_win, buf);
     } else
         putstr(ge.en_win, 0, buf);
 }
 
 static void
-enlght_line(const char *start, const char *middle, const char *end,
-            const char *ps)
+enlght_line(
+    const char *start,
+    const char *middle,
+    const char *end,
+    const char *ps)
 {
+#ifndef NO_ENLGHT_CONTRACTIONS
+    static const struct contrctn {
+        const char *twowords, *contrctn;
+    } contra[] = {
+        { " are not ", " aren't " },
+        { " were not ", " weren't " },
+        { " have not ", " haven't " },
+        { " had not ", " hadn't " },
+        { " can not ", " can't " },
+        { " could not ", " couldn't " },
+    };
+    int i;
+#endif
     char buf[BUFSZ];
 
     Sprintf(buf, " %s%s%s%s.", start, middle, end, ps);
+#ifndef NO_ENLGHT_CONTRACTIONS
+    if (strstri(buf, " not ")) { /* TODO: switch to libc strstr() */
+        for (i = 0; i < SIZE(contra); ++i)
+            (void) strsubst(buf, contra[i].twowords, contra[i].contrctn);
+    }
+#endif
     enlght_out(buf);
 }
 
@@ -426,7 +442,7 @@ background_enlightenment(int unused_mode UNUSED, int final)
        to access hero's saved gender-as-human/elf/&c rather than current */
     innategend = (Upolyd ? u.mfemale : flags.female) ? 1 : 0;
     role_titl = (innategend && gu.urole.name.f) ? gu.urole.name.f
-                                               : gu.urole.name.m;
+                                                : gu.urole.name.m;
     rank_titl = rank_of(u.ulevel, Role_switch, innategend);
 
     enlght_out(""); /* separator after title */
@@ -538,6 +554,13 @@ background_enlightenment(int unused_mode UNUSED, int final)
                 difalgn ? align_str(u.ualignbase[A_ORIGINAL]) : "");
         enlght_out(buf);
     }
+
+    /* "You are left-handed." won't work well if polymorphed into something
+       without hands; use "You are normally left-handed." in that situation */
+    Sprintf(buf, "%s%s-handed",
+            !strcmp(body_part(HANDED), "handed") ? "" : "normally ",
+            URIGHTY ? "right" : "left");
+    you_are(buf, "");
 
     /* As of 3.6.2: dungeon level, so that ^X really has all status info as
        claimed by the comment below; this reveals more information than
@@ -1406,13 +1429,33 @@ weapon_insight(int final)
     } /* skill applies */
 }
 
+static void
+item_resistance_message(
+    int adtyp,
+    const char *prot_message,
+    int final)
+{
+    int protection = u_adtyp_resistance_obj(adtyp);
+
+    if (protection) {
+        boolean somewhat = protection < 99;
+
+        enl_msg("Your items ",
+                somewhat ? "are somewhat" : "are",
+                somewhat ? "were somewhat" : "were",
+                prot_message, item_what(adtyp));
+    }
+}
+
 /* attributes: intrinsics and the like, other non-obvious capabilities */
 static void
-attributes_enlightenment(int unused_mode UNUSED, int final)
+attributes_enlightenment(
+    int unused_mode UNUSED,
+    int final)
 {
     static NEARDATA const char
         if_surroundings_permitted[] = " if surroundings permitted";
-    int ltmp, armpro;
+    int ltmp, armpro, warnspecies;
     char buf[BUFSZ];
 
     /*\
@@ -1446,26 +1489,18 @@ attributes_enlightenment(int unused_mode UNUSED, int final)
         you_are("magic-protected", from_what(ANTIMAGIC));
     if (Fire_resistance)
         you_are("fire resistant", from_what(FIRE_RES));
-    if (u_adtyp_resistance_obj(AD_FIRE))
-        enl_msg("Your items ", "are", "were", " protected from fire",
-                item_what(AD_FIRE));
+    item_resistance_message(AD_FIRE, " protected from fire", final);
     if (Cold_resistance)
         you_are("cold resistant", from_what(COLD_RES));
-    if (u_adtyp_resistance_obj(AD_COLD))
-        enl_msg("Your items ", "are", "were", " protected from cold",
-                item_what(AD_COLD));
+    item_resistance_message(AD_COLD, " protected from cold", final);
     if (Sleep_resistance)
         you_are("sleep resistant", from_what(SLEEP_RES));
     if (Disint_resistance)
         you_are("disintegration resistant", from_what(DISINT_RES));
-    if (u_adtyp_resistance_obj(AD_DISN))
-        enl_msg("Your items ", "are", "were",
-                " protected from disintegration", item_what(AD_DISN));
+    item_resistance_message(AD_DISN, " protected from disintegration", final);
     if (Shock_resistance)
         you_are("shock resistant", from_what(SHOCK_RES));
-    if (u_adtyp_resistance_obj(AD_ELEC))
-        enl_msg("Your items ", "are", "were",
-                " protected from electric shocks", item_what(AD_ELEC));
+    item_resistance_message(AD_ELEC, " protected from electric shocks", final);
     if (Poison_resistance)
         you_are("poison resistant", from_what(POISON_RES));
     if (Acid_resistance) {
@@ -1474,9 +1509,7 @@ attributes_enlightenment(int unused_mode UNUSED, int final)
                 "acid resistant");
         you_are(buf, from_what(ACID_RES));
     }
-    if (u_adtyp_resistance_obj(AD_ACID))
-        enl_msg("Your items ", "are", "were", " protected from acid",
-                item_what(AD_ACID));
+    item_resistance_message(AD_ACID, " protected from acid", final);
     if (Drain_resistance)
         you_are("level-drain resistant", from_what(DRAIN_RES));
     if (Sick_resistance)
@@ -1533,9 +1566,10 @@ attributes_enlightenment(int unused_mode UNUSED, int final)
                                             : "certain monsters");
         you_are(buf, "");
     }
-    if (Warn_of_mon && gc.context.warntype.speciesidx >= LOW_PM) {
+    warnspecies =  gc.context.warntype.speciesidx;
+    if (Warn_of_mon && ismnum(warnspecies)) {
         Sprintf(buf, "aware of the presence of %s",
-             makeplural(mons[gc.context.warntype.speciesidx].pmnames[NEUTRAL]));
+                makeplural(mons[warnspecies].pmnames[NEUTRAL]));
         you_are(buf, from_what(WARN_OF_MON));
     }
     if (Undead_warning)
@@ -1597,8 +1631,13 @@ attributes_enlightenment(int unused_mode UNUSED, int final)
         you_are("visible", from_what(-INVIS));
     if (Displaced)
         you_are("displaced", from_what(DISPLACED));
-    if (Stealth)
+    if (Stealth) {
         you_are("stealthy", from_what(STEALTH));
+    } else if (BStealth && (HStealth || EStealth)) {
+        Sprintf(buf, " steathy%s",
+                (BStealth == FROMOUTSIDE) ? " if not mounted" : "");
+        enl_msg(You_, "would be", "would have been", buf, "");
+    }
     if (Aggravate_monster)
         enl_msg("You aggravate", "", "d", " monsters",
                 from_what(AGGRAVATE_MONSTER));
@@ -1752,7 +1791,7 @@ attributes_enlightenment(int unused_mode UNUSED, int final)
         /* blocked shape changes */
         if (Polymorph)
             what = !final ? "polymorph" : "have polymorphed";
-        else if (u.ulycn >= LOW_PM)
+        else if (ismnum(u.ulycn))
             what = !final ? "change shape" : "have changed shape";
         if (what) {
             Sprintf(buf, "would %s periodically", what);
@@ -1787,7 +1826,7 @@ attributes_enlightenment(int unused_mode UNUSED, int final)
     }
     if (lays_eggs(gy.youmonst.data) && flags.female) /* Upolyd */
         you_can("lay eggs", "");
-    if (u.ulycn >= LOW_PM) {
+    if (ismnum(u.ulycn)) {
         /* "you are a werecreature [in beast form]" */
         Strcpy(buf, an(pmname(&mons[u.ulycn],
                flags.female ? FEMALE : MALE)));
@@ -2623,7 +2662,7 @@ set_vanq_order(boolean for_vanq)
     char buf[BUFSZ];
     const char *desc;
     int i, n, choice,
-        clr = 0;
+        clr = NO_COLOR;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -2742,7 +2781,9 @@ list_vanquished(char defquery, boolean ask)
                 mlet = mons[i].mlet;
                 if (class_header && mlet != prev_mlet) {
                     Strcpy(buf, def_monsyms[(int) mlet].explain);
-                    putstr(klwin, ask ? 0 : iflags.menu_headings,
+                    /* 'ask' implies final disclosure, where highlighting
+                       of various header lines is suppressed */
+                    putstr(klwin, ask ? ATR_NONE : iflags.menu_headings.attr,
                            upstart(buf));
                     prev_mlet = mlet;
                 }
@@ -2882,14 +2923,18 @@ list_genocided(char defquery, boolean ask)
     char c;
     winid klwin;
     char buf[BUFSZ];
-    boolean dumping; /* for DUMPLOG; doesn't need to be conditional */
+    boolean genoing, /* prompting for genocide or class genocide */
+            dumping; /* for DUMPLOG; doesn't need to be conditional */
     boolean both = (gp.program_state.gameover || wizard || discover);
 
     dumping = (defquery == 'd');
-    if (dumping)
+    genoing = (defquery == 'g');
+    if (dumping || genoing)
         defquery = 'y';
+    if (genoing)
+        both = FALSE; /* genocides only, not extinctions */
 
-    /* this goess through the whole monster list up to three times but will
+    /* this goes through the whole monster list up to three times but will
        happen rarely and is simpler than a more general single pass check;
        extinctions are only revealed during end of game disclosure or when
        running in wizard or explore mode */
@@ -2947,7 +2992,9 @@ list_genocided(char defquery, boolean ask)
                 mlet = mons[mndx].mlet;
                 if (class_header && mlet != prev_mlet) {
                     Strcpy(buf, def_monsyms[(int) mlet].explain);
-                    putstr(klwin, ask ? 0 : iflags.menu_headings,
+                    /* 'ask' implies final disclosure, where highlighting
+                       of various header lines is suppressed */
+                    putstr(klwin, ask ? ATR_NONE : iflags.menu_headings.attr,
                            upstart(buf));
                     prev_mlet = mlet;
                 }
@@ -2985,7 +3032,7 @@ list_genocided(char defquery, boolean ask)
     } else if (!gp.program_state.gameover) {
         /* #genocided rather than final disclosure, so pline() is ok and
            extinction has been ignored */
-        pline("No creatures have been genocided.");
+        pline("No creatures have been genocided%s.", genoing ? " yet" : "");
 #ifdef DUMPLOG
     } else if (dumping) { /* 'gameover' is True if we make it here */
         putstr(0, 0, "No species were genocided or became extinct.");
@@ -3168,7 +3215,7 @@ mstatusline(struct monst *mtmp)
                     segndx, ordin(segndx), nsegs);
         }
     }
-    if (mtmp->cham >= LOW_PM && mtmp->data != &mons[mtmp->cham])
+    if (ismnum(mtmp->cham) && mtmp->data != &mons[mtmp->cham])
         /* don't reveal the innate form (chameleon, vampire, &c),
            just expose the fact that this current form isn't it */
         Strcat(info, ", shapechanger");

@@ -1,4 +1,4 @@
-/* NetHack 3.7	spell.c	$NHDT-Date: 1646838390 2022/03/09 15:06:30 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.131 $ */
+/* NetHack 3.7	spell.c	$NHDT-Date: 1702023273 2023/12/08 08:14:33 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.157 $ */
 /*      Copyright (c) M. Stephenson 1988                          */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -28,6 +28,7 @@
 static int spell_let_to_idx(char);
 static boolean cursed_book(struct obj * bp);
 static boolean confused_book(struct obj *);
+static void deadbook_pacify_undead(struct monst *);
 static void deadbook(struct obj *);
 static int learn(void);
 static boolean rejectcasting(void);
@@ -40,6 +41,7 @@ static int percent_success(int);
 static char *spellretention(int, char *);
 static int throwspell(void);
 static void cast_protection(void);
+static void cast_chain_lightning(void);
 static void spell_backfire(int);
 static boolean spelleffects_check(int, int *, int *);
 static const char *spelltypemnemonic(int);
@@ -197,12 +199,31 @@ confused_book(struct obj* spellbook)
     return gone;
 }
 
+/* pacify or tame an undead monster */
+static void
+deadbook_pacify_undead(struct monst *mtmp)
+{
+    if ((is_undead(mtmp->data) || is_vampshifter(mtmp))
+        && cansee(mtmp->mx, mtmp->my)) {
+        mtmp->mpeaceful = TRUE;
+        if (sgn(mtmp->data->maligntyp) == sgn(u.ualign.type)
+            && mdistu(mtmp) < 4)
+            if (mtmp->mtame) {
+                if (mtmp->mtame < 20)
+                    mtmp->mtame++;
+            } else
+                (void) tamedog(mtmp, (struct obj *) 0);
+        else
+            monflee(mtmp, 0, FALSE, TRUE);
+    }
+}
+
 /* special effects for The Book of the Dead; reading it while blind is
    allowed so that needs to be taken into account too */
 static void
 deadbook(struct obj* book2)
 {
-    struct monst *mtmp, *mtmp2;
+    struct monst *mtmp;
     coord mm;
 
     You("turn the pages of the Book of the Dead...");
@@ -295,25 +316,7 @@ deadbook(struct obj* book2)
         mm.y = u.uy;
         mkundead(&mm, TRUE, NO_MINVENT);
     } else if (book2->blessed) {
-        for (mtmp = fmon; mtmp; mtmp = mtmp2) {
-            mtmp2 = mtmp->nmon; /* tamedog() changes chain */
-            if (DEADMONSTER(mtmp))
-                continue;
-
-            if ((is_undead(mtmp->data) || is_vampshifter(mtmp))
-                && cansee(mtmp->mx, mtmp->my)) {
-                mtmp->mpeaceful = TRUE;
-                if (sgn(mtmp->data->maligntyp) == sgn(u.ualign.type)
-                    && mdistu(mtmp) < 4)
-                    if (mtmp->mtame) {
-                        if (mtmp->mtame < 20)
-                            mtmp->mtame++;
-                    } else
-                        (void) tamedog(mtmp, (struct obj *) 0);
-                else
-                    monflee(mtmp, 0, FALSE, TRUE);
-            }
-        }
+        iter_mons(deadbook_pacify_undead);
     } else {
         switch (rn2(3)) {
         case 0:
@@ -670,7 +673,7 @@ rejectcasting(void)
     } else if (!can_chant(&gy.youmonst)) {
         You("are unable to chant the incantation.");
         return TRUE;
-    } else if (!freehand()) {
+    } else if (!freehand() && !(uwep && uwep->otyp == QUARTERSTAFF)) {
         /* Note: !freehand() occurs when weapon and shield (or two-handed
          * weapon) are welded to hands, so "arms" probably doesn't need
          * to be makeplural(bodypart(ARM)).
@@ -693,6 +696,7 @@ getspell(int* spell_no)
 {
     int nspells, idx;
     char ilet, lets[BUFSZ], qbuf[QBUFSZ];
+    struct _cmd_queue cq, *cmdq;
 
     if (spellid(0) == NO_SPELL) {
         You("don't know any spells right now.");
@@ -700,6 +704,21 @@ getspell(int* spell_no)
     }
     if (rejectcasting())
         return FALSE; /* no spell chosen */
+
+    if ((cmdq = cmdq_pop()) != 0) {
+        cq = *cmdq;
+        free(cmdq);
+        if (cq.typ == CMDQ_KEY) {
+            nspells = num_spells();
+            idx = spell_let_to_idx(cq.key);
+            if (idx < 0 || idx >= nspells)
+                return FALSE;
+            *spell_no = idx;
+            return TRUE;
+        } else {
+            return FALSE;
+        }
+    }
 
     if (flags.menu_style == MENU_TRADITIONAL) {
         /* we know there is at least 1 known spell */
@@ -755,7 +774,8 @@ dowizcast(void)
         if (n >= SPE_BLANK_PAPER)
             break;
         any.a_int = n;
-        add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, 0, OBJ_NAME(objects[n]), MENU_ITEMFLAGS_NONE);
+        add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, NO_COLOR,
+                 OBJ_NAME(objects[n]), MENU_ITEMFLAGS_NONE);
     }
     end_menu(win, "Cast which spell?");
     n = select_menu(win, PICK_ONE, &selected);
@@ -775,9 +795,11 @@ docast(void)
 {
     int spell_no;
 
-    if (getspell(&spell_no))
+    if (getspell(&spell_no)) {
+        cmdq_add_key(CQ_REPEAT, spellet(spell_no));
         return spelleffects(gs.spl_book[spell_no].sp_id, FALSE, FALSE);
-    return ECMD_OK;
+    }
+    return ECMD_FAIL;
 }
 
 static const char *
@@ -809,6 +831,222 @@ spell_skilltype(int booktype)
 {
     return objects[booktype].oc_skill;
 }
+
+/* Wizards learn what spellbooks look like based on their skill in the
+   spell's school */
+void
+skill_based_spellbook_id(void)
+{
+    if (!Role_if(PM_WIZARD))
+        return;
+
+    int booktype;
+    const uchar spbook_class = (uchar) SPBOOK_CLASS;
+
+    for (booktype = gb.bases[spbook_class];
+         booktype < gb.bases[spbook_class + 1];
+         booktype++) {
+        int known_up_to_level;
+        int skill = spell_skilltype(booktype);
+
+        if (skill == P_NONE)
+            continue;
+
+        switch (P_SKILL(skill)) {
+        case P_BASIC:
+            known_up_to_level = 3;
+            break;
+        case P_SKILLED:
+            known_up_to_level = 5;
+            break;
+        case P_EXPERT:
+        case P_MASTER:
+        case P_GRAND_MASTER:
+            known_up_to_level = 7;
+            break;
+        case P_UNSKILLED:
+        default:
+            known_up_to_level = 1;
+            break;
+        }
+
+        if (objects[booktype].oc_level <= known_up_to_level)
+            makeknown(booktype);
+    }
+}
+
+
+/* Limit the total area chain lightning can cover; this is both for
+   technical reasons (making it possible to limit the size of arrays
+   here and in the display code) and for gameplay balance reasons;
+   this value should be smaller than TMP_AT_MAX_GLYPHS (display.c) in
+   order for chain lightning to display properly */
+#define CHAIN_LIGHTNING_LIMIT 100
+/* Unlike most zaps, chain lightning can't hit solid terrain (it
+   doesn't have enough power), it only covers open space; this also
+   means that it can't hit monsters inside walls, which makes sense as
+   they would be earthed */
+#define CHAIN_LIGHTNING_TYP(typ) (IS_POOL(typ) || SPACE_POS(typ))
+#define CHAIN_LIGHTNING_POS(x, y)                                       \
+    (isok(x, y) && (CHAIN_LIGHTNING_TYP(levl[x][y].typ) ||              \
+                    (IS_DOOR(levl[x][y].typ) &&                         \
+                     !(levl[x][y].doormask & (D_CLOSED | D_LOCKED)))))
+
+struct chain_lightning_zap {
+    /* direction in which this zap is currently moving; this is an
+       enum movementdirs, clamped to the range 0 inclusive to N_DIRS
+       exclusive */
+    uchar dir;
+    /* current location of the zap */
+    coordxy x, y;
+    /* distance this zap can cover without chaining */
+    char strength;
+};
+
+struct chain_lightning_queue {
+    struct chain_lightning_zap q[CHAIN_LIGHTNING_LIMIT];
+    int head;
+    int tail;
+    int displayed_beam;
+};
+
+/* Given a potential chain lightning zap, moves it one square forward in
+   the given direction, then adds it to the queue unless it would hit an
+   invalid square or is out of power.
+
+   zap is passed by value, so the move-forward doesn't change the passed
+   argument. */
+static void
+propagate_chain_lightning(
+    struct chain_lightning_queue *clq,
+    struct chain_lightning_zap zap)
+{
+    struct monst *mon;
+
+    zap.x += xdir[zap.dir];
+    zap.y += ydir[zap.dir];
+
+    if (clq->tail >= CHAIN_LIGHTNING_LIMIT)
+        return;    /* zap has covered too many squares */
+    if (!CHAIN_LIGHTNING_POS(zap.x, zap.y))
+        return;    /* zap can't go to this square */
+
+    mon = m_at(zap.x, zap.y);
+    if (mon && mon->mpeaceful)
+        return;    /* chain lightning avoids peaceful and tame monsters */
+
+    /* When hitting a monster that isn't electricity-resistant, a
+       particular chain lightning zap regains all its power, allowing it to
+       chain to other monsters; upon hitting a shock-resistant monster it
+       can't continue any further, but we let it hit the monster to show
+       the shield effect */
+    if (mon && !resists_elec(mon) && !defended(mon, AD_ELEC))
+        zap.strength = 3;
+    else if (mon)
+        zap.strength = 0;
+
+    /* Unless it hits a monster, the last square of a zap isn't drawn on
+       screen and can't propagate further, so it may as well be discarded
+       now */
+    if (!mon && !zap.strength)
+        return;
+
+    /* The same square can't be chained to twice. */
+    for (int i = 0; i < clq->tail; i++) {
+        if (clq->q[i].x == zap.x && clq->q[i].y == zap.y)
+            return;
+    }
+
+    /* This array access must be inbounds due to the CHAIN_LIGHTNING_LIMIT
+       check earlier. */
+    clq->q[clq->tail++] = zap;
+
+    /* Draw it. */
+    tmp_at(DISP_CHANGE, zapdir_to_glyph(
+               xdir[zap.dir], ydir[zap.dir], clq->displayed_beam));
+    tmp_at(zap.x, zap.y);
+}
+
+static void
+cast_chain_lightning(void)
+{
+    struct chain_lightning_queue clq = {
+        {{0}}, 0, 0, Hallucination ? rn2_on_display_rng(6) : (AD_ELEC - 1)
+    };
+
+    if (u.uswallow) {
+        // TODO: damage the engulfer
+        return;
+    }
+
+    /* set the type of beam we're using; the direction here is arbitrary
+       because we change the beam direction just before drawing the beam
+       anyway */
+    tmp_at(DISP_BEAM, zapdir_to_glyph(0, 1, clq.displayed_beam));
+
+    /* start by propagating in all directions from the caster */
+    for (int dir = 0; dir < N_DIRS; dir++) {
+        struct chain_lightning_zap zap = { dir, u.ux, u.uy, 2 };
+
+        propagate_chain_lightning(&clq, zap);
+    }
+    nh_delay_output();
+
+    while (clq.head < clq.tail) {
+        int delay_tail = clq.tail;
+
+        while (clq.head < delay_tail) {
+            struct chain_lightning_zap zap = clq.q[clq.head++];
+            /* damage any monster that was hit */
+            struct monst *mon = m_at(zap.x, zap.y);
+
+            if (mon) {
+                struct obj *unused; /* AD_ELEC can't destroy armor */
+                int dmg = zhitm(mon, BZ_U_SPELL(AD_ELEC - 1), 2, &unused);
+
+                if (dmg) {
+                    /* mon has been damaged, but we haven't yet printed the
+                       messages or given kill credit; assume the hero can
+                       sense their spell hitting monsters, because they can
+                       steer it away from peacefuls */
+                    if (DEADMONSTER(mon))
+                        xkilled(mon, XKILL_GIVEMSG);
+                    else
+                        pline("You shock %s%s", mon_nam(mon), exclam(dmg));
+                } else if (canseemon(mon)) {
+                    pline("%s resists.", Monnam(mon));
+                }
+            }
+
+            /* each zap propagates forwards with 1 less strength, and
+               diagonally with 0 strength (thus the diagonal zaps aren't
+               drawn and don't spread unless they hit a monster);
+               exception: if the zap just hit a monster, the diagonals have
+               as much strength as the forwards zap */
+            if (!zap.strength)
+                continue; /* happens upon hitting a shock-resistant monster */
+            zap.strength--;
+
+            propagate_chain_lightning(&clq, zap);
+
+            if (zap.strength < 2)
+                zap.strength = 0;
+            else if (u.uen > 0)
+                u.uen--; /* propagating past mons increases Pw cost a bit */
+            zap.dir = DIR_LEFT(zap.dir);
+            propagate_chain_lightning(&clq, zap);
+
+            zap.dir = DIR_RIGHT2(zap.dir);
+            propagate_chain_lightning(&clq, zap);
+        }
+        nh_delay_output();
+    }
+    nh_delay_output();
+    nh_delay_output();
+
+    tmp_at(DISP_END, 0);
+}
+
 
 static void
 cast_protection(void)
@@ -965,7 +1203,7 @@ spelleffects_check(int spell, int *res, int *energy)
         u.uen -= rnd(*energy);
         if (u.uen < 0)
             u.uen = 0;
-        gc.context.botl = 1;
+        disp.botl = TRUE;
         *res = ECMD_TIME;
         return TRUE;
     } else if (spellknow(spell) <= KEEN / 200) { /* 100 turns left */
@@ -1008,7 +1246,7 @@ spelleffects_check(int spell, int *res, int *energy)
         u.uen -= rnd(2 * *energy);
         if (u.uen < 0)
             u.uen = 0;
-        gc.context.botl = 1;
+        disp.botl = TRUE;
         *res = ECMD_TIME; /* time is used even if spell doesn't get cast */
     }
 
@@ -1082,7 +1320,7 @@ spelleffects_check(int spell, int *res, int *energy)
     if (confused || (rnd(100) > chance)) {
         You("fail to cast the spell correctly.");
         u.uen -= *energy / 2;
-        gc.context.botl = 1;
+        disp.botl = TRUE;
         *res = ECMD_TIME;
         return TRUE;
     }
@@ -1105,7 +1343,7 @@ spelleffects(int spell_otyp, boolean atme, boolean force)
         return res;
 
     u.uen -= energy;
-    gc.context.botl = 1;
+    disp.botl = TRUE;
     exercise(A_WIS, TRUE);
     /* pseudo is a temporary "false" object containing the spell stats */
     pseudo = mksobj(force ? spell : spellid(spell), FALSE, FALSE);
@@ -1280,6 +1518,9 @@ spelleffects(int spell_otyp, boolean atme, boolean force)
     case SPE_JUMPING:
         if (!(jump(max(role_skill, 1)) & ECMD_TIME))
             pline1(nothing_happens);
+        break;
+    case SPE_CHAIN_LIGHTNING:
+        cast_chain_lightning();
         break;
     default:
         impossible("Unknown spell %d attempted.", spell);
@@ -1644,7 +1885,7 @@ spellsortmenu(void)
     anything any;
     char let;
     int i, n, choice;
-    int clr = 0;
+    int clr = NO_COLOR;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -1654,9 +1895,7 @@ spellsortmenu(void)
         if (i == SORTRETAINORDER) {
             let = 'z'; /* assumes fewer than 26 sort choices... */
             /* separate final choice from others with a blank line */
-            any.a_int = 0;
-            add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-                     ATR_NONE, clr, "", MENU_ITEMFLAGS_NONE);
+            add_menu_str(tmpwin, "");
         } else {
             let = 'a' + i;
         }
@@ -1735,7 +1974,7 @@ dospellmenu(
     const char *fmt;
     menu_item *selected;
     anything any;
-    int clr = 0;
+    int clr = NO_COLOR;
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -1761,8 +2000,7 @@ dospellmenu(
     if (wizard)
         Sprintf(eos(buf), "%c%6s", sep, "turns");
 
-    add_menu(tmpwin, &nul_glyphinfo, &any, 0, 0,
-             iflags.menu_headings, clr, buf, MENU_ITEMFLAGS_NONE);
+    add_menu_heading(tmpwin, buf);
     for (i = 0; i < MAXSPELL && spellid(i) != NO_SPELL; i++) {
         splnum = !gs.spl_orderindx ? i : gs.spl_orderindx[i];
         Sprintf(buf, fmt, spellname(splnum), spellev(splnum),
@@ -1843,6 +2081,9 @@ percent_success(int spell)
         splcaster -= gu.urole.spelarmr;
     if (uarms)
         splcaster += gu.urole.spelshld;
+
+    if (uwep && uwep->otyp == QUARTERSTAFF)
+        splcaster -= 3; /* Small bonus */
 
     if (!paladin_bonus) {
         if (uarmh && is_metallic(uarmh)) /* && otyp != HELM_OF_BRILLIANCE */

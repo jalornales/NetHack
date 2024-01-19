@@ -1,4 +1,4 @@
-/* NetHack 3.7	decl.c	$NHDT-Date: 1686726255 2023/06/14 07:04:15 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.286 $ */
+/* NetHack 3.7	decl.c	$NHDT-Date: 1704043695 2023/12/31 17:28:15 $  $NHDT-Branch: keni-luabits2 $:$NHDT-Revision: 1.309 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2009. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -38,6 +38,7 @@ const char *c_obj_colors[] = {
 
 const struct c_common_strings c_common_strings =
     { "Nothing happens.",
+      "Nothing seems to happen.",
       "That's enough tries!",
       "That is a silly thing to %s.",
       "shudder for a moment.",
@@ -103,6 +104,7 @@ const schar dirs_ord[N_DIRS] =
 NEARDATA boolean has_strong_rngseed = FALSE;
 struct engr *head_engr;
 NEARDATA struct instance_flags iflags;
+NEARDATA struct accessibility_data a11y;
 /* NOTE: the order of these words exactly corresponds to the
    order of oc_material values #define'd in objclass.h. */
 const char *materialnm[] = { "mysterious", "liquid",  "wax",        "organic",
@@ -187,6 +189,7 @@ const struct Race urace_init_data = {
     { 1, 0, 2, 0, 2, 0 }  /* Energy */
 };
 
+struct display_hints disp = { 0 };
 
 const struct instance_globals_a g_init_a = {
     /* artifact.c */
@@ -204,6 +207,8 @@ const struct instance_globals_a g_init_a = {
     UNDEFINED_PTR, /* animal_list */
     UNDEFINED_VALUE, /* animal_list_count */
     /* pickup.c */
+    0, /* A_first_hint */
+    0, /* A_second_hint */
     UNDEFINED_VALUE, /* abort_looting */
     /* shk.c */
     FALSE, /* auto_credit */
@@ -218,7 +223,7 @@ const struct instance_globals_a g_init_a = {
 
 const struct instance_globals_b g_init_b = {
     /* botl.c */
-    { { { NULL, NULL, 0L, FALSE, FALSE, 0, 0U, { 0 }, NULL, 0, 0, 0
+    { { { NULL, NULL, 0L, FALSE, FALSE, 0, 0U, { 0 }, { 0 }, NULL, 0, 0, 0
 #ifdef STATUS_HILITES
             , UNDEFINED_PTR, UNDEFINED_PTR
 #endif
@@ -247,6 +252,7 @@ const struct instance_globals_b g_init_b = {
     FALSE, /* bucx_filter */
     /* zap.c */
     NULL, /* buzzer -- monst that zapped/cast/breathed to initiate buzz() */
+    FALSE, /* bot_disabled */
 
     TRUE, /* havestate*/
     IVMAGIC  /* b_magic to validate that structure layout has been preserved */
@@ -306,10 +312,14 @@ const struct instance_globals_d g_init_d = {
     0L, /* done_money */
     0L, /* domove_attempting */
     0L, /* domove_succeeded */
-    { { UNDEFINED_VALUES } }, /* dungeons */
+    { { {0},{0},{0},{0}, 0, {0}, 0, 0, 0, 0, 0 } }, /* dungeons */
     { 0, 0, 0, 0, 0, 0, 0, 0 }, /* dndest */
     FALSE, /* defer_see_monsters */
-    { DUMMY }, /* dungeon_topology */
+    { {0}, {0}, {0}, {0}, {0}, {0}, {0}, {0}, {0}, {0},
+      {0}, {0}, {0}, {0}, {0}, {0}, {0}, {0}, {0}, {0},
+       0, 0, 0, 0, 0,
+      {0}, {0}, {0},
+      {0}, {0}, {0} }, /* dungeon_topology */
     0, /* doors_alloc */
     NULL, /* doors */
     /* dig.c */
@@ -328,6 +338,9 @@ const struct instance_globals_d g_init_d = {
     DUMMY, /* disco */
     /* objname.c */
     0, /* distantname */
+    /* pickup.c */
+    FALSE, /* decor_fumble_override */
+    FALSE, /* decor_levitate_override */
     TRUE, /* havestate*/
     IVMAGIC  /* d_magic to validate that structure layout has been preserved */
 };
@@ -342,6 +355,7 @@ const struct instance_globals_e g_init_e = {
     /* mkmaze.c */
     UNDEFINED_PTR, /* ebubbles */
     /* new */
+    NULL, /* exclusion_zones */
     0,      /* early_raw_messages */
     TRUE, /* havestate*/
     IVMAGIC  /* e_magic to validate that structure layout has been preserved */
@@ -373,6 +387,7 @@ const struct instance_globals_g g_init_g = {
     UNDEFINED_VALUES, /* gbug_stop */
 
     /* do_name.c */
+    0, 0, /* getposx, getposy */
     UNDEFINED_PTR, /* gloc_filter_map */
     UNDEFINED_VALUE, /* gloc_filter_floodfill_match_glyph */
     /* dog.c */
@@ -434,6 +449,7 @@ const struct instance_globals_i g_init_i = {
     UNDEFINED_PTR, /* id_map */
     /* sp_lev.c */
     FALSE, /* in_mk_themerooms */
+
     TRUE, /* havestate*/
     IVMAGIC  /* i_magic to validate that structure layout has been preserved */
 };
@@ -458,10 +474,13 @@ const struct instance_globals_k g_init_k = {
 const struct instance_globals_l g_init_l = {
     /* cmd.c */
     UNDEFINED_VALUE, /* last_command_count */
-    /* dbridge.c */
+    /* decl.c */
     { { 0 } }, /* lastseentyp */
     { UNDEFINED_VALUES }, /* level_info */
-    { { { UNDEFINED_VALUES } } }, /* level */
+    { { { UNDEFINED_VALUES } }, /* level.locations */
+      { { UNDEFINED_PTR } },    /* level.objects   */
+      { { UNDEFINED_PTR } },    /* level.monsters  */
+      NULL, NULL, NULL, NULL, NULL, {0} }, /* level */
 #if defined(UNIX) || defined(VMS)
     0, /* locknum */
 #endif
@@ -487,6 +506,8 @@ const struct instance_globals_l g_init_l = {
     /* nhlua.c */
     UNDEFINED_VALUE, /* luacore */
     DUMMY, /* lua_warnbuf[] */
+    0, /* loglua */
+    0, /* lua_sid */
     /* options.c */
     FALSE, /* loot_reset_justpicked */
     /* save.c */
@@ -621,6 +642,7 @@ const struct instance_globals_o g_init_o = {
     FALSE, /* opt_from_file */
     FALSE, /* opt_need_redraw */
     FALSE, /* opt_need_glyph_reset */
+    FALSE, /* opt_need_promptstyle */
     /* pickup.c */
     0,  /* oldcap */
     /* restore.c */
@@ -659,6 +681,7 @@ const struct instance_globals_p g_init_p = {
     0,       /* perm_invent_toggling_direction */
     /* pickup.c */
     FALSE, /* picked_filter */
+    0, /* pickup_encumbrance */
     /* pline.c */
     0U, /* pline_flags */
     UNDEFINED_VALUES, /* prevmsg */
@@ -700,7 +723,7 @@ const struct instance_globals_r g_init_r = {
     /* role.c */
     UNDEFINED_VALUES, /* role_pa */
     UNDEFINED_VALUE, /* role_post_attrib */
-    { UNDEFINED_VALUES }, /* rfilter */
+    { { 0 }, 0 }, /* rfilter */
     /* shk.c */
     UNDEFINED_VALUES, /* repo */
     TRUE, /* havestate*/
@@ -811,8 +834,8 @@ const struct instance_globals_u g_init_u = {
     { 0, 0, 0, 0, 0, 0, 0, 0 }, /* updest */
     FALSE, /* unweapon */
     /* role.c */
-    { UNDEFINED_VALUES }, /* urole */
-    UNDEFINED_VALUES, /* urace */
+    UNDEFINED_ROLE, /* urole */
+    UNDEFINED_RACE, /* urace */
     /* save.c */
     { 0, 0 }, /* uz_save */
     TRUE, /* havestate*/
@@ -940,6 +963,7 @@ const struct const_globals cg = {
     DUMMY, /* zeroobj */
     DUMMY, /* zeromonst */
     DUMMY, /* zeroany */
+    DUMMY, /* zeroNhRect */
 };
 
 #define ZERO(x) memset(&x, 0, sizeof(x))
@@ -1037,6 +1061,8 @@ decl_globals_init(void)
 
     ZERO(flags);
     ZERO(iflags);
+    ZERO(a11y);
+    ZERO(disp);
     ZERO(u);
     ZERO(ubirthday);
     ZERO(urealtime);
@@ -1051,9 +1077,8 @@ decl_globals_init(void)
     gu.urace = urace_init_data;
 }
 
-#ifndef NO_VERBOSE_GRANULARITY
-long verbosity_suppressions[vb_elements] = { 0L, 0L, 0L, 0L, 0L, };
-#endif
+/* fields in 'hands_obj' don't matter, just its distinct address */
+struct obj hands_obj = DUMMY;
 
 /* gcc 12.2's static analyzer thinks that some fields of gc.context.victual
    are uninitialized when compiling 'bite(eat.c)' but that's impossible;
@@ -1067,5 +1092,4 @@ sa_victual(
 {
     return;
 }
-
 /*decl.c*/

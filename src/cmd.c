@@ -1,4 +1,4 @@
-/* NetHack 3.7	cmd.c	$NHDT-Date: 1684791777 2023/05/22 21:42:57 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.677 $ */
+/* NetHack 3.7	cmd.c	$NHDT-Date: 1704225560 2024/01/02 19:59:20 $  $NHDT-Branch: keni-luabits2 $:$NHDT-Revision: 1.699 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2013. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -486,7 +486,7 @@ can_do_extcmd(const struct ext_func_tab *extcmd)
         lua_getglobal(gl.luacore, "nh_callback_run");
         lua_pushstring(gl.luacore, nhcb_name[NHCB_CMD_BEFORE]);
         lua_pushstring(gl.luacore, extcmd->ef_txt);
-        nhl_pcall(gl.luacore, 2, 1);
+        nhl_pcall_handle(gl.luacore, 2, 1, "can_do_extcmd", NHLpa_panic);
         if (!lua_toboolean(gl.luacore, -1))
             return FALSE;
     }
@@ -541,20 +541,16 @@ doc_extcmd_flagstr(
     const struct ext_func_tab *efp) /* if Null, add a footnote to the menu */
 {
     static char Abuf[10]; /* 5 would suffice: {'[','m','A',']','\0'} */
-    int clr = 0;
 
     /* note: tag shown for menu prefix is 'm' even if m-prefix action
        has been bound to some other key */
     if (!efp) {
         char qbuf[QBUFSZ];
-        anything any = cg.zeroany;
 
-        add_menu(menuwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr,
-                 "[A] Command autocompletes", MENU_ITEMFLAGS_NONE);
+        add_menu_str(menuwin, "[A] Command autocompletes");
         Sprintf(qbuf, "[m] Command accepts '%s' prefix",
                 visctrl(cmd_from_func(do_reqmenu)));
-        add_menu(menuwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr, qbuf,
-                 MENU_ITEMFLAGS_NONE);
+        add_menu_str(menuwin, qbuf);
         return (char *) 0;
     } else {
         boolean mprefix = accept_menu_prefix(efp),
@@ -591,7 +587,7 @@ doextlist(void)
     boolean redisplay = TRUE, search = FALSE;
     static const char *const headings[] = { "Extended commands",
                                       "Debugging Extended Commands" };
-    int clr = 0;
+    int clr = NO_COLOR;
 
     searchbuf[0] = '\0';
     menuwin = create_nhwindow(NHW_MENU);
@@ -600,11 +596,8 @@ doextlist(void)
         redisplay = FALSE;
         any = cg.zeroany;
         start_menu(menuwin, MENU_BEHAVE_STANDARD);
-        add_menu(menuwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr,
-                 "Extended Commands List",
-                 MENU_ITEMFLAGS_NONE);
-        add_menu(menuwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr,
-                 "", MENU_ITEMFLAGS_NONE);
+        add_menu_str(menuwin, "Extended Commands List");
+        add_menu_str(menuwin, "");
 
         Sprintf(buf, "Switch to %s commands that don't autocomplete",
                 menumode ? "including" : "excluding");
@@ -642,9 +635,7 @@ doextlist(void)
        : "Switch to showing all alphabetically, including debugging commands",
                      MENU_ITEMFLAGS_NONE);
         }
-        any = cg.zeroany;
-        add_menu(menuwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr,
-                 "", MENU_ITEMFLAGS_NONE);
+        add_menu_str(menuwin, "");
         menushown[0] = menushown[1] = 0;
         n = 0;
         for (pass = 0; pass <= 1; ++pass) {
@@ -695,26 +686,21 @@ doextlist(void)
                    results menu. */
                 if (!menushown[pass]) {
                     Strcpy(buf, headings[pass]);
-                    add_menu(menuwin, &nul_glyphinfo, &any, 0, 0,
-                             iflags.menu_headings, clr, buf,
-                             MENU_ITEMFLAGS_NONE);
+                    add_menu_heading(menuwin, buf);
                     menushown[pass] = 1;
                 }
                 /* longest ef_txt at present is "wizrumorcheck" (13 chars);
                    2nd field will be "    " or " [A]" or " [m]" or "[mA]" */
                 Sprintf(buf, " %-14s %4s %s", efp->ef_txt,
                         doc_extcmd_flagstr(menuwin, efp), cmd_desc);
-                add_menu(menuwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-                         clr, buf, MENU_ITEMFLAGS_NONE);
+                add_menu_str(menuwin, buf);
                 ++n;
             }
             if (n)
-                add_menu(menuwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-                         clr, "", MENU_ITEMFLAGS_NONE);
+                add_menu_str(menuwin, "");
         }
         if (*searchbuf && !n)
-            add_menu(menuwin, &nul_glyphinfo, &any, 0, 0, ATR_NONE,
-                     clr, "no matches", MENU_ITEMFLAGS_NONE);
+            add_menu_str(menuwin, "no matches");
         else
             (void) doc_extcmd_flagstr(menuwin, (struct ext_func_tab *) 0);
 
@@ -792,7 +778,7 @@ extcmd_via_menu(void)
     int accelerator, prevaccelerator;
     int matchlevel = 0;
     boolean wastoolong, one_per_line;
-    int clr = 0;
+    int clr = NO_COLOR;
 
     ret = 0;
     cbuf[0] = '\0';
@@ -816,7 +802,7 @@ extcmd_via_menu(void)
       "Exceeded %d extended commands in doextcmd() menu; 'extmenu' disabled.",
                                MAX_EXT_CMD);
 #endif /* NH_DEVEL_STATUS != NH_STATUS_RELEASED */
-                    iflags.extmenu = 0;
+                    iflags.extmenu = FALSE;
                     return -1;
                 }
             }
@@ -960,6 +946,9 @@ domonability(void)
             aggravate();
     } else if (is_vampire(uptr) || is_vampshifter(&gy.youmonst)) {
         return dopoly();
+    } else if (u.usteed && can_breathe(u.usteed->data)) {
+        (void) pet_ranged_attk(u.usteed);
+        return ECMD_TIME;
     } else if (Upolyd) {
         pline("Any special ability you may have is purely reflexive.");
     } else {
@@ -976,10 +965,7 @@ enter_explore_mode(void)
     } else {
         const char *oldmode = !wizard ? "normal game" : "debug mode";
 
-#ifdef SYSCF
-#if defined(UNIX)
-        if (!sysopt.explorers || !sysopt.explorers[0]
-            || !check_user_string(sysopt.explorers)) {
+        if (!authorize_explore_mode()) {
             if (!wizard) {
                 You("cannot access explore mode.");
                 return ECMD_OK;
@@ -989,8 +975,6 @@ enter_explore_mode(void)
                 /* keep going */
             }
         }
-#endif
-#endif
         pline("Beware!  From explore mode there will be no return to %s,",
               oldmode);
         if (paranoid_query(ParanoidQuit,
@@ -1073,7 +1057,7 @@ makemap_unmakemon(struct monst *mtmp, boolean migratory)
            monsters won't get out of sync; it is not on the map but
            mongone() -> m_detach() -> mon_leaving_level() copes with that */
         mtmp->mstate |= MON_OFFMAP;
-        mtmp->mstate &= ~(MON_MIGRATING | MON_LIMBO);
+        mtmp->mstate &= ~(MON_MIGRATING | MON_LIMBO | MON_ENDGAME_MIGR);
         mtmp->nmon = fmon;
         fmon = mtmp;
     }
@@ -1166,8 +1150,8 @@ makemap_prepost(boolean pre, boolean wiztower)
         /* escape from trap */
         reset_utrap(FALSE);
         check_special_room(TRUE); /* room exit */
-        (void) memset((genericptr_t)&gd.dndest, 0, sizeof (dest_area));
-        (void) memset((genericptr_t)&gu.updest, 0, sizeof (dest_area));
+        (void) memset((genericptr_t) &gd.dndest, 0, sizeof (dest_area));
+        (void) memset((genericptr_t) &gu.updest, 0, sizeof (dest_area));
         u.ustuck = (struct monst *) 0;
         u.uswallow = u.uswldtim = 0;
         set_uinwater(0); /* u.uinwater = 0 */
@@ -1388,6 +1372,13 @@ wiz_kill(void)
             break;
         }
     }
+    /* since #wizkill takes no game time, it is possible to kill something
+       in the main dungeon and immediately level teleport into the endgame
+       which will delete the main dungeon's level files; avoid triggering
+       impossible "dmonsfree: 0 removed doesn't match N pending" by forcing
+       dead monster cleanup; we don't track whether anything was actually
+       killed above--if nothing was, this will be benign */
+    dmonsfree();
     /* distinction between ECMD_CANCEL and ECMD_OK is unimportant here */
     return ECMD_OK; /* no time elapses */
 }
@@ -1398,7 +1389,10 @@ wiz_load_lua(void)
 {
     if (wizard) {
         char buf[BUFSZ];
-        nhl_sandbox_info sbi = {NHL_SB_SAFE | NHL_SB_DEBUGGING, 0, 0, 0};
+            /* Large but not unlimited memory and CPU so random bits of
+             * code can be tested by wizards. */
+        nhl_sandbox_info sbi = {NHL_SB_SAFE | NHL_SB_DEBUGGING,
+                16*1024*1024, 0, 16*1024*1024};
 
         buf[0] = '\0';
         getlin("Load which lua file?", buf);
@@ -2015,7 +2009,7 @@ wiz_intrinsic(void)
         long oldtimeout, newtimeout;
         const char *propname;
         menu_item *pick_list = (menu_item *) 0;
-        int clr = 0;
+        int clr = NO_COLOR;
 
         any = cg.zeroany;
         win = create_nhwindow(NHW_MENU);
@@ -2025,9 +2019,7 @@ wiz_intrinsic(void)
             Sprintf(buf,
         "[Precede any selection with a count to increment by other than %d.]",
                     DEFAULT_TIMEOUT_INCR);
-            any.a_int = 0;
-            add_menu(win, &nul_glyphinfo, &any, 0, 0, ATR_NONE, clr, buf,
-                     MENU_ITEMFLAGS_NONE);
+            add_menu_str(win, buf);
         }
         for (i = 0; (propname = property_by_index(i, &p)) != 0; ++i) {
             if (p == HALLUC_RES) {
@@ -2041,9 +2033,7 @@ wiz_intrinsic(void)
                 /* FIRE_RES and properties beyond it (in the propertynames[]
                    ordering, not their numerical PROP values), can only be
                    set to timed values here so show a separator */
-                any.a_int = 0;
-                add_menu(win, &nul_glyphinfo, &any, 0, 0,
-                         ATR_NONE, clr, "--", MENU_ITEMFLAGS_NONE);
+                add_menu_str(win, "--");
             }
             any.a_int = i + 1; /* +1: avoid 0 */
             oldtimeout = u.uprops[p].intrinsic & TIMEOUT;
@@ -2132,7 +2122,7 @@ wiz_intrinsic(void)
  def_feedback:
                 if (p != GLIB)
                     incr_itimeout(&u.uprops[p].intrinsic, amt);
-                gc.context.botl = 1; /* have pline() do a status update */
+                disp.botl = TRUE; /* have pline() do a status update */
                 pline("Timeout for %s %s %d.", propname,
                       oldtimeout ? "increased by" : "set to", amt);
                 break;
@@ -2170,7 +2160,11 @@ doterrain(void)
     anything any;
     int n;
     int which;
-    int clr = 0;
+    int clr = NO_COLOR;
+
+    /* this used to be done each time vision was recalculated, so would
+       always be up to date (hopefully); now we do it on demand instead */
+    recalc_mapseen();
 
     /*
      * normal play: choose between known map without mons, obj, and traps
@@ -2231,16 +2225,16 @@ doterrain(void)
 
     switch (which) {
     case 1: /* known map */
-        reveal_terrain(0, TER_MAP);
+        reveal_terrain(TER_MAP);
         break;
     case 2: /* known map with known traps */
-        reveal_terrain(0, TER_MAP | TER_TRP);
+        reveal_terrain(TER_MAP | TER_TRP);
         break;
     case 3: /* known map with known traps and objects */
-        reveal_terrain(0, TER_MAP | TER_TRP | TER_OBJ);
+        reveal_terrain(TER_MAP | TER_TRP | TER_OBJ);
         break;
     case 4: /* full map */
-        reveal_terrain(1, TER_MAP);
+        reveal_terrain(TER_MAP | TER_FULL);
         break;
     case 5: /* map internals */
         wiz_map_levltyp();
@@ -2658,7 +2652,7 @@ struct ext_func_tab extcmdlist[] = {
     { '\0',   "panic", "test panic routine (fatal to game)",
               wiz_panic, IFBURIED | AUTOCOMPLETE | WIZMODECMD, NULL },
     { 'p',    "pay", "pay your shopping bill",
-              dopay, 0, NULL },
+              dopay, CMD_M_PREFIX, NULL },
     { '|',    "perminv", "scroll persistent inventory display",
               doperminv, IFBURIED | GENERALCMD | NOFUZZERCMD, NULL },
     { ',',    "pickup", "pick up things at the current location",
@@ -2711,17 +2705,17 @@ struct ext_func_tab extcmdlist[] = {
     { 's',    "search", "search for traps and secret doors",
               dosearch, IFBURIED | CMD_M_PREFIX, "searching" },
     { '*',    "seeall", "show all equipment in use",
-              doprinuse, IFBURIED, NULL },
+              doprinuse, IFBURIED | CMD_M_PREFIX, NULL },
     { AMULET_SYM, "seeamulet", "show the amulet currently worn",
-              dopramulet, IFBURIED, NULL },
+              dopramulet, IFBURIED | CMD_M_PREFIX, NULL },
     { ARMOR_SYM, "seearmor", "show the armor currently worn",
-              doprarm, IFBURIED, NULL },
+              doprarm, IFBURIED | CMD_M_PREFIX, NULL },
     { RING_SYM, "seerings", "show the ring(s) currently worn",
-              doprring, IFBURIED, NULL },
+              doprring, IFBURIED | CMD_M_PREFIX, NULL },
     { TOOL_SYM, "seetools", "show the tools currently in use",
-              doprtool, IFBURIED, NULL },
+              doprtool, IFBURIED | CMD_M_PREFIX, NULL },
     { WEAPON_SYM, "seeweapon", "show the weapon currently wielded",
-              doprwep, IFBURIED, NULL },
+              doprwep, IFBURIED | CMD_M_PREFIX, NULL },
     { '!', "shell", "leave game to enter a sub-shell ('exit' to come back)",
               dosh_core, (IFBURIED | GENERALCMD | NOFUZZERCMD
 #ifndef SHELL
@@ -2730,7 +2724,7 @@ struct ext_func_tab extcmdlist[] = {
                         ), NULL },
     /* $ is like ),=,&c but is not included with *, so not called "seegold" */
     { GOLD_SYM, "showgold", "show gold, possibly shop credit or debt",
-              doprgold, IFBURIED, NULL },
+              doprgold, IFBURIED | CMD_M_PREFIX, NULL },
     { SPBOOK_SYM, "showspells", "list and reorder known spells",
               dovspell, IFBURIED, NULL },
     { '^',    "showtrap", "describe an adjacent, discovered trap",
@@ -3014,6 +3008,7 @@ handler_rebind_keys_add(boolean keyfirst)
     char buf[BUFSZ];
     char buf2[QBUFSZ];
     uchar key = '\0';
+    int clr = NO_COLOR;
 
     if (keyfirst) {
         pline("Bind which key? ");
@@ -3035,19 +3030,16 @@ handler_rebind_keys_add(boolean keyfirst)
             Sprintf(buf, "Key '%s' is not bound to anything.",
                     key2txt(key, buf2));
         }
-        add_menu(win, &nul_glyphinfo, &any, '\0', 0, ATR_NONE, 0, buf,
-                 MENU_ITEMFLAGS_NONE);
-        add_menu(win, &nul_glyphinfo, &any, '\0', 0, ATR_NONE, 0, "",
-                 MENU_ITEMFLAGS_NONE);
+        add_menu_str(win, buf);
+        add_menu_str(win, "");
     }
 
     any.a_int = -1;
-    add_menu(win, &nul_glyphinfo, &any, '\0', 0, ATR_NONE, 0, "nothing: unbind the key",
+    add_menu(win, &nul_glyphinfo, &any, '\0', 0, ATR_NONE, clr,
+             "nothing: unbind the key",
              MENU_ITEMFLAGS_NONE);
 
-    any.a_int = 0;
-    add_menu(win, &nul_glyphinfo, &any, '\0', 0, ATR_NONE, 0, "",
-             MENU_ITEMFLAGS_NONE);
+    add_menu_str(win, "");
 
     for (i = 0; i < extcmdlist_length; i++) {
         ec = &extcmdlist[i];
@@ -3057,7 +3049,7 @@ handler_rebind_keys_add(boolean keyfirst)
 
         any.a_int = (i + 1);
         Sprintf(buf, "%s: %s", ec->ef_txt, ec->ef_desc);
-        add_menu(win, &nul_glyphinfo, &any, '\0', 0, ATR_NONE, 0, buf,
+        add_menu(win, &nul_glyphinfo, &any, '\0', 0, ATR_NONE, clr, buf,
              MENU_ITEMFLAGS_NONE);
     }
     if (key)
@@ -3113,6 +3105,7 @@ handler_rebind_keys(void)
     anything any;
     int i, npick;
     menu_item *picks = (menu_item *) 0;
+    int clr = NO_COLOR;
 
 redo_rebind:
 
@@ -3121,15 +3114,15 @@ redo_rebind:
     any = cg.zeroany;
 
     any.a_int = 1;
-    add_menu(win, &nul_glyphinfo, &any, '\0', 0, ATR_NONE, 0, "bind key to a command",
-             MENU_ITEMFLAGS_NONE);
+    add_menu(win, &nul_glyphinfo, &any, '\0', 0, ATR_NONE, clr,
+             "bind key to a command", MENU_ITEMFLAGS_NONE);
     any.a_int = 2;
-    add_menu(win, &nul_glyphinfo, &any, '\0', 0, ATR_NONE, 0, "bind command to a key",
-             MENU_ITEMFLAGS_NONE);
+    add_menu(win, &nul_glyphinfo, &any, '\0', 0, ATR_NONE, clr,
+             "bind command to a key", MENU_ITEMFLAGS_NONE);
     if (count_bind_keys()) {
         any.a_int = 3;
-        add_menu(win, &nul_glyphinfo, &any, '\0', 0, ATR_NONE, 0, "view changed key binds",
-                 MENU_ITEMFLAGS_NONE);
+        add_menu(win, &nul_glyphinfo, &any, '\0', 0, ATR_NONE, clr,
+                 "view changed key binds", MENU_ITEMFLAGS_NONE);
     }
     end_menu(win, "Do what?");
     npick = select_menu(win, PICK_ONE, &picks);
@@ -4151,7 +4144,7 @@ wiz_display_macros(void)
                  putstr(win, 0, buf);
             }
             /* check against defsyms array subscripts */
-            if (test < 0 || test >= SIZE(defsyms)) {
+            if (!IndexOk(test, defsyms)) {
                 if (!trouble++)
                     putstr(win, 0, display_issues);
                 Sprintf(buf, "glyph_to_cmap(glyph=%d) returns %d"
@@ -5138,8 +5131,8 @@ movecmd(char sym, int mode)
 {
     int d = DIR_ERR;
 
-    if (gc.Cmd.commands[(uchar)sym]) {
-        int (*fnc)(void) = gc.Cmd.commands[(uchar)sym]->ef_funct;
+    if (gc.Cmd.commands[(uchar) sym]) {
+        int (*fnc)(void) = gc.Cmd.commands[(uchar) sym]->ef_funct;
 
         if (mode == MV_ANY) {
             for (d = N_DIRS_Z - 1; d > DIR_ERR; d--)
@@ -5334,7 +5327,8 @@ getdir(const char *s)
                 break;
             }
         }
-        iflags.getdir_click = mod;
+        if (iflags.getdir_click)
+            iflags.getdir_click = mod;
         return (pos >= 0);
     } else if (!(is_mov = movecmd(dirsym, MV_ANY)) && !u.dz) {
         boolean did_help = FALSE, help_requested;
@@ -5597,6 +5591,7 @@ dotherecmdmenu(void)
         else
             ch = there_cmd_menu(x, y, iflags.getdir_click);
         gc.clicklook_cc.x = gc.clicklook_cc.y = -1;
+        iflags.getdir_click = 0;
         return (ch && ch != '\033') ? ECMD_TIME : ECMD_OK;
     }
 
@@ -5662,7 +5657,7 @@ static void
 mcmd_addmenu(winid win, int act, const char *txt)
 {
     anything any;
-    int clr = 0;
+    int clr = NO_COLOR;
 
     /* TODO: fixed letters for the menu entries? */
     any = cg.zeroany;
@@ -6391,7 +6386,7 @@ hangup(
         gp.program_state.in_moveloop = 0;
     nhwindows_hangup();
 #ifdef SAFERHANGUP
-    /* When using SAFERHANGUP, the done_hup flag it tested in rhack
+    /* When using SAFERHANGUP, the done_hup flag is tested in rhack
        and a couple of other places; actual hangup handling occurs then.
        This is 'safer' because it disallows certain cheats and also
        protects against losing objects in the process of being thrown,
@@ -6684,19 +6679,28 @@ yn_function(
     return res;
 }
 
-/* for paranoid_confirm:quit,die,attack prompting */
-boolean
-paranoid_query(boolean be_paranoid, const char *prompt)
+/* for paranoid_confirm:quit,die,attack,&c prompting; allows yes, n|no,
+   or q|quit; result is one of 'y' or 'n' or 'q'; ESC yields 'q' */
+char
+paranoid_ynq(
+    boolean be_paranoid,
+    const char *prompt,
+    boolean accept_q)
 {
-    boolean confirmed_ok;
+    char c = 'n'; /* default result */
 
     /* when paranoid, player must respond with "yes" rather than just 'y'
        to give the go-ahead for this query; default is "no" unless the
        ParanoidConfirm flag is set in which case there's no default */
     if (be_paranoid) {
         char pbuf[BUFSZ], qbuf[QBUFSZ], ans[BUFSZ];
-        const char *promptprefix = "",
-                *responsetype = ParanoidConfirm ? "[yes|no]" : "[yes|n] (n)";
+        const char *promptprefix = "", /* empty for first iteration */
+            *responsetype = ParanoidConfirm ? (accept_q ? "[yes|no|quit]"
+                                               : "[yes|no]")
+                                            /* default of 'n' is shown for
+                                             * the !ParanoidConfirm cases */
+                                            : (accept_q ? "[yes|n|q] (n)"
+                                               : "[yes|n] (n)");
         int k, trylimit = 6; /* 1 normal, 5 more with "Yes or No:" prefix */
 
         copynchars(pbuf, prompt, BUFSZ - 1);
@@ -6713,20 +6717,39 @@ paranoid_query(boolean be_paranoid, const char *prompt)
                 Strcpy(pbuf + (QBUFSZ - 1) - k - 4, "...?"); /* -4: "...?" */
             }
 
-            Snprintf(qbuf, sizeof(qbuf), "%s%s %s", promptprefix, pbuf,
+            Snprintf(qbuf, sizeof qbuf, "%s%s %s", promptprefix, pbuf,
                      responsetype);
             *ans = '\0';
             getlin(qbuf, ans);
             (void) mungspaces(ans);
-            confirmed_ok = !strcmpi(ans, "yes");
-            if (confirmed_ok || *ans == '\033')
+            if (!strcmpi(ans, "yes")) {
+                c = 'y';
                 break;
+            }
+            if (!strcmpi(ans, "quit") || *ans == '\033') {
+                c = 'q';
+                break;
+            }
+            /* we don't bother adding "or \"Quit\"" for the accept_q case */
             promptprefix = "\"Yes\" or \"No\": ";
+            /* for empty input, return value c will already be 'n' */
         } while (ParanoidConfirm && strcmpi(ans, "no") && --trylimit);
+    } else if (accept_q) {
+        c = ynq(prompt); /* 'y', 'n', or 'q' */
     } else {
-        confirmed_ok = (y_n(prompt) == 'y');
+        c = y_n(prompt); /* 'y' or 'n' */
     }
-    return confirmed_ok;
+    if (c != 'y' && (c != 'q' || !accept_q))
+        c = 'n';
+    return c;
+}
+
+/* for paranoid_confirm:quit,die,attack,&c prompting; allows yes or n|no;
+   result is True for yes; n|no and ESC yield False */
+boolean
+paranoid_query(boolean be_paranoid, const char *prompt)
+{
+    return (paranoid_ynq(be_paranoid, prompt, FALSE) == 'y');
 }
 
 /* ^Z command, #suspend */

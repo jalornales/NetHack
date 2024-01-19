@@ -254,9 +254,11 @@ menu_key(Widget w, XEvent *event, String *params, Cardinal *num_params)
     if (menu_info->is_active || perminv_scrolling) { /* handle the input */
         /* first check for an explicit selector match, so that it won't be
            overridden if it happens to duplicate a mapped menu command (':'
-           to look inside a container vs ':' to select via search string) */
+           to look inside a container vs ':' to select via search string);
+           check for group accelerator match too */
         for (curr = menu_info->curr_menu.base; curr; curr = curr->next)
-            if (curr->identifier.a_void != 0 && curr->selector == ch)
+            if (curr->identifier.a_void != 0
+                && (curr->selector == ch || curr->gselector == ch))
                 goto make_selection;
 
         ch = map_menu_cmd(ch);
@@ -366,7 +368,8 @@ menu_key(Widget w, XEvent *event, String *params, Cardinal *num_params)
             selected_something = FALSE;
             for (count = 0, curr = menu_info->curr_menu.base; curr;
                  curr = curr->next, count++)
-                if (curr->identifier.a_void != 0 && curr->selector == ch)
+                if (curr->identifier.a_void != 0
+                    && (curr->selector == ch || curr->gselector == ch))
                     break;
 
             if (curr) {
@@ -791,7 +794,7 @@ X11_add_menu(winid window,
              char ch,  /* selector letter; 0 if not selectable */
              char gch, /* group accelerator (0 = no group) */
              int attr,
-             int clr UNUSED,
+             int clr,
              const char *str,
              unsigned itemflags)
 {
@@ -810,6 +813,7 @@ X11_add_menu(winid window,
     item->next = (x11_menu_item *) 0;
     item->identifier = *identifier;
     item->attr = attr;
+    item->color = clr;
     item->itemflags = itemflags;
     item->selected = item->preselected = preselected;
     item->pick_count = -1L;
@@ -1310,9 +1314,9 @@ menu_create_entries(struct xwindow *wp, struct menu *curr_menu)
         XtSetArg(args[num_args], nhStr(XtNborderWidth), 0); num_args++;
         XtSetArg(args[num_args], nhStr(XtNvertDistance), 0); num_args++;
 
-        if (!iflags.use_menu_color || wp->menu_information->disable_mcolors
-            || !get_menu_coloring(curr->str, &color, &attr))
-            attr = curr->attr;
+        attr = curr->attr;
+        if (!wp->menu_information->disable_mcolors)
+            color = curr->color;
 
         if (color != NO_COLOR) {
             if (attr != ATR_INVERSE)

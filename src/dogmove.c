@@ -18,10 +18,9 @@ static int dog_goal(struct monst *, struct edog *, int, int, int);
 static struct monst *find_targ(struct monst *, int, int, int);
 static int find_friends(struct monst *, struct monst *, int);
 static struct monst *best_target(struct monst *);
-static int pet_ranged_attk(struct monst *);
 static long score_targ(struct monst *, struct monst *);
 static boolean can_reach_location(struct monst *, coordxy, coordxy, coordxy,
-                                  coordxy);
+                                  coordxy) NONNULLARG1;
 
 /* pick a carried item for pet to drop */
 struct obj *
@@ -302,7 +301,7 @@ dog_eat(struct monst *mtmp,
         mtmp->mstun = 1;
         if (canseemon(mtmp)) {
             obj_name = distant_name(obj, doname); /* (see above) */
-            if (Verbose(0, dog_eat))
+            if (flags.verbose)
                 pline("%s spits %s out in disgust!",
                       Monnam(mtmp), obj_name);
         }
@@ -437,8 +436,8 @@ dog_invent(struct monst *mtmp, struct edog *edog, int udist)
                                while otmp is still on floor */
                             char *otmpname = distant_name(otmp, doname);
 
-                            if (Verbose(0, dog_invent))
-                                pline("%s picks up %s.",
+                            if (flags.verbose)
+                                pline_xy(omx, omy, "%s picks up %s.",
                                       Monnam(mtmp), otmpname);
                         }
                         obj_extract_self(otmp);
@@ -866,7 +865,7 @@ best_target(struct monst *mtmp)   /* Pet */
 }
 
 /* Pet considers and maybe executes a ranged attack */
-static int
+int
 pet_ranged_attk(struct monst *mtmp)
 {
     struct monst *mtarg;
@@ -1402,7 +1401,7 @@ void
 finish_meating(struct monst *mtmp)
 {
     mtmp->meating = 0;
-    if (M_AP_TYPE(mtmp) && mtmp->mappearance && mtmp->data->mlet != S_MIMIC) {
+    if (M_AP_TYPE(mtmp) != M_AP_NOTHING && mtmp->data->mlet != S_MIMIC) {
         /* was eating a mimic and now appearance needs resetting */
         mtmp->m_ap_type = M_AP_NOTHING;
         mtmp->mappearance = 0;

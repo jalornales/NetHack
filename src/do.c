@@ -1,4 +1,4 @@
-/* NetHack 3.7	do.c	$NHDT-Date: 1689629244 2023/07/17 21:27:24 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.358 $ */
+/* NetHack 3.7	do.c	$NHDT-Date: 1704225560 2024/01/02 19:59:20 $  $NHDT-Branch: keni-luabits2 $:$NHDT-Revision: 1.376 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Derek S. Ray, 2015. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -7,7 +7,6 @@
 
 #include "hack.h"
 
-static void polymorph_sink(void);
 static boolean teleport_sink(void);
 static void dosinkring(struct obj *);
 static int drop(struct obj *);
@@ -100,7 +99,7 @@ boulder_hits_pool(
                     Strcpy(whobuf, y_monnam(u.usteed));
                 pline("%s %s %s into the %s.", upstart(whobuf),
                       vtense(whobuf, "push"), the(xname(otmp)), what);
-                if (Verbose(0, boulder_hits_pool1) && !Blind)
+                if (flags.verbose && !Blind)
                     pline("Now you can cross it!");
                 /* no splashing in this case */
             }
@@ -136,7 +135,7 @@ boulder_hits_pool(
                 dmg = d((Fire_resistance ? 1 : 3), 6);
                 losehp(Maybe_Half_Phys(dmg), /* lava damage */
                        "molten lava", KILLED_BY);
-            } else if (!fills_up && Verbose(0, boulder_hits_pool2)
+            } else if (!fills_up && flags.verbose
                        && (pushing ? !Blind : cansee(rx, ry)))
                 pline("It sinks without a trace!");
         }
@@ -293,17 +292,57 @@ flooreffects(struct obj *obj, coordxy x, coordxy y, const char *verb)
             res = TRUE;
         }
     } else if (obj->globby) {
+        struct obj *globbyobj = obj;  /* allow obj to be nonnull arg */
+
         /* Globby things like puddings might stick together */
-        while (obj && (otmp = obj_nexto_xy(obj, x, y, TRUE)) != 0) {
-            pudding_merge_message(obj, otmp);
+        while (globbyobj
+               && (otmp = obj_nexto_xy(globbyobj, x, y, TRUE)) != 0) {
+            pudding_merge_message(globbyobj, otmp);
             /* intentionally not getting the melded object; obj_meld may set
              * obj to null. */
-            (void) obj_meld(&obj, &otmp);
+            (void) obj_meld(&globbyobj, &otmp);
         }
-        res = (boolean) !obj;
+        res = (boolean) !globbyobj;
     } else if (gc.context.mon_moving && IS_ALTAR(levl[x][y].typ)
                && cansee(x,y)) {
         doaltarobj(obj);
+    } else if (obj->oclass == POTION_CLASS && gl.level.flags.temperature > 0
+               && (levl[x][y].typ == ROOM || levl[x][y].typ == CORR)) {
+        /* Potions are sometimes destroyed when landing on very hot
+           ground. The basic odds are 50% for nonblessed potions and
+           30% for blessed potions; if you have handled the object
+           (i.e. it is or was yours), these odds are adjusted by Luck
+           (each Luck point affects them by 2%). Artifact potions
+           would not be affected, if any existed.
+
+           Oil is not affected because its boiling point (and flash
+           point) are higher than that of water. For example, whale
+           oil, one of the substances traditionally used in oil lamps,
+           can survive over 100 degrees Centigrade more heat than
+           water can.*/
+        if (cansee(x,y)) {
+            /* unconditional "ground" is safe as this only runs for
+               room and corridor tiles */
+            pline("%s up as %s the hot ground.", Tobjnam(obj, "heat"),
+                  is_plural(obj) ? "they hit" : "it hits");
+        }
+
+        int survival_chance = obj->blessed ? 70 : 50;
+        if (obj->invlet)
+            survival_chance += Luck * 2;
+        if (obj->otyp == POT_OIL)
+            survival_chance = 100;
+
+        if (!obj_resists(obj, survival_chance, 100)) {
+            if (cansee(x,y)) {
+                pline("%s from the heat!",
+                      is_plural(obj) ? "They shatter" : "It shatters");
+            } else {
+                You_hear("a shattering noise.");
+            }
+            breakobj(obj, x, y, FALSE, FALSE);
+            res = TRUE;
+        }
     }
 
     gb.bhitpos = save_bhitpos;
@@ -352,7 +391,7 @@ trycall(struct obj *obj)
 
 /* Transforms the sink at the player's position into
    a fountain, throne, altar or grave. */
-static void
+void
 polymorph_sink(void)
 {
     uchar sym = S_sink;
@@ -685,7 +724,7 @@ drop(struct obj *obj)
 
     if (u.uswallow) {
         /* barrier between you and the floor */
-        if (Verbose(0, drop1)) {
+        if (flags.verbose) {
             char *onam_p, *mnam_p, monbuf[BUFSZ];
 
             mnam_p = mon_nam(u.ustuck);
@@ -713,7 +752,7 @@ drop(struct obj *obj)
 
             if (levhack)
                 ELevitation = W_ART; /* other than W_ARTI */
-            if (Verbose(0, drop2))
+            if (flags.verbose)
                 You("drop %s.", doname(obj));
             freeinv(obj);
             hitfloor(obj, TRUE);
@@ -721,9 +760,10 @@ drop(struct obj *obj)
                 float_down(I_SPECIAL | TIMEOUT, W_ARTI | W_ART);
             return ECMD_TIME;
         }
-        if (!IS_ALTAR(levl[u.ux][u.uy].typ) && Verbose(0, drop3))
+        if (!IS_ALTAR(levl[u.ux][u.uy].typ) && flags.verbose)
             You("drop %s.", doname(obj));
     }
+    obj->how_lost = LOST_DROPPED;
     dropx(obj);
     return ECMD_TIME;
 }
@@ -778,6 +818,7 @@ dropz(struct obj *obj, boolean with_impact)
         place_object(obj, u.ux, u.uy);
         if (with_impact)
             container_impact_dmg(obj, u.ux, u.uy);
+        impact_disturbs_zombies(obj, with_impact);
         if (obj == uball)
             drop_ball(u.ux, u.uy);
         else if (gl.level.flags.has_shop)
@@ -927,8 +968,13 @@ menu_drop(int retry)
                             | BUC_BLESSED | BUC_CURSED | BUC_UNCURSED
                             | BUC_UNKNOWN | JUSTPICKED | INCLUDE_VENOM),
                            &pick_list, PICK_ANY);
+            /* when paranoid_confirm:A is set, 'A' by itself implies
+               'A'+'a' which will be followed by a confirmation prompt;
+               when that option isn't set, 'A' by itself is rejected
+               by query_categorry() and result here will be n==0 */
         if (!n)
-            goto drop_done;
+            goto drop_done; /* no non-autopick category filters specified */
+
         for (i = 0; i < n; i++) {
             if (pick_list[i].item.a_int == ALL_TYPES_SELECTED) {
                 all_categories = TRUE;
@@ -953,7 +999,7 @@ menu_drop(int retry)
         i = ggetobj("drop", drop, 0, TRUE, &ggoresults);
         if (i == -2)
             all_categories = TRUE;
-        if (ggoresults & ALL_FINISHED) {
+        if ((ggoresults & ALL_FINISHED) != 0) {
             n_dropped = i;
             goto drop_done;
         }
@@ -990,8 +1036,8 @@ menu_drop(int retry)
         /* drop the just picked item automatically, if only one stack */
         otmp = find_justpicked(gi.invent);
         if (otmp)
-            n_dropped += ((menudrop_split(otmp, justpicked_quan) & ECMD_TIME)
-                          != 0) ? 1 : 0;
+            n_dropped += ((menudrop_split(otmp, justpicked_quan)
+                           & ECMD_TIME) != 0) ? 1 : 0;
     } else {
         /* should coordinate with perm invent, maybe not show worn items */
         n = query_objlist("What would you like to drop?", &gi.invent,
@@ -1002,7 +1048,7 @@ menu_drop(int retry)
             /*
              * picklist[] contains a set of pointers into inventory, but
              * as soon as something gets dropped, they might become stale
-             * (see the drop_everything code above for an explanation).
+             * (see the autopick code above for an explanation).
              * Just checking to see whether one is still in the gi.invent
              * chain is not sufficient validation since destroyed items
              * will be freed and items we've split here might have already
@@ -1419,7 +1465,6 @@ goto_level(
             new = FALSE; /* made a new level? */
     struct monst *mtmp;
     char whynot[BUFSZ];
-    char *annotation;
     int dist = depth(newlevel) - depth(&u.uz);
     boolean do_fall_dmg = FALSE;
     schar prev_temperature = gl.level.flags.temperature;
@@ -1512,7 +1557,7 @@ goto_level(
     if (gl.luacore && nhcb_counts[NHCB_LVL_LEAVE]) {
         lua_getglobal(gl.luacore, "nh_callback_run");
         lua_pushstring(gl.luacore, nhcb_name[NHCB_LVL_LEAVE]);
-        nhl_pcall(gl.luacore, 1, 0);
+        nhl_pcall_handle(gl.luacore, 1, 0, "goto_level", NHLpa_panic);
     }
 
     /* tethered movement makes level change while trapped feasible */
@@ -1682,7 +1727,7 @@ goto_level(
             /* you climb up the {stairs|ladder};
                fly up the stairs; fly up along the ladder */
             great_effort = (Punished && !Levitation);
-            if (Verbose(0, go_to_level1) || great_effort)
+            if (flags.verbose || great_effort)
                 pline("%s %s up%s the %s.",
                       great_effort ? "With great effort, you" : "You",
                       u_locomotion("climb"),
@@ -1700,7 +1745,7 @@ goto_level(
             if (!u.dz) {
                 ; /* stayed on same level? (no transit effects) */
             } else if (Flying) {
-                if (Verbose(0, go_to_level2))
+                if (flags.verbose)
                     You("fly down %s.",
                         ga.at_ladder ? "along the ladder" : "the stairs");
             } else if (near_capacity() > UNENCUMBERED
@@ -1721,7 +1766,7 @@ goto_level(
                            KILLED_BY);
                 selftouch("Falling, you");
             } else { /* ordinary descent */
-                if (Verbose(0, go_to_level3))
+                if (flags.verbose)
                     You("%s.", ga.at_ladder ? "climb down the ladder"
                                          : "descend the stairs");
             }
@@ -1753,8 +1798,6 @@ goto_level(
     if ((mtmp = m_at(u.ux, u.uy)) != 0)
         u_collide_m(mtmp);
 
-    initrack();
-
     /* initial movement of bubbles just before vision_recalc */
     if (Is_waterlevel(&u.uz) || Is_airlevel(&u.uz))
         movebubbles();
@@ -1764,6 +1807,7 @@ goto_level(
     /* Reset the screen. */
     vision_reset(); /* reset the blockages */
     reset_glyphmap(gm_levelchange);
+    notice_mon_off(); /* not noticing monsters yet! */
     docrt(); /* does a full vision recalc */
     flush_screen(-1);
 
@@ -1880,10 +1924,10 @@ goto_level(
 #ifdef INSURANCE
     save_currentstate();
 #endif
+    notice_mon_on();
+    notice_all_mons(TRUE);
 
-    if ((annotation = get_annotation(&u.uz)) != 0)
-        You("remember this level as %s.", annotation);
-
+    print_level_annotation();
     /* give room entrance message, if any */
     check_special_room(FALSE);
     /* deliver objects traveling with player */
@@ -2041,6 +2085,8 @@ revive_corpse(struct obj *corpse)
                                chewed ? "bite-covered" : (const char *) 0,
                                CXN_SINGULAR));
     mcarry = (where == OBJ_MINVENT) ? corpse->ocarry : 0;
+    /* mcarry is NULL for (where == OBJ_BURIED and OBJ_CONTAINED) now */
+
     (void) get_obj_location(corpse, &corpsex, &corpsey,
                             CONTAINED_TOO | BURIED_TOO);
 
@@ -2089,7 +2135,7 @@ revive_corpse(struct obj *corpse)
 
         case OBJ_MINVENT: /* probably a nymph's */
             if (cansee(mtmp->mx, mtmp->my)) {
-                if (canseemon(mcarry))
+                if (mcarry && canseemon(mcarry))
                     pline("Startled, %s drops %s as it %s!",
                           mon_nam(mcarry), an(cname),
                           canspotmon(mtmp) ? "revives" : "disappears");
@@ -2128,7 +2174,8 @@ revive_corpse(struct obj *corpse)
                     struct trap *ttmp;
 
                     ttmp = t_at(mtmp->mx, mtmp->my);
-                    ttmp->tseen = TRUE;
+                    if (ttmp)
+                        ttmp->tseen = TRUE;
                     pline("%s claws itself out of the ground!",
                           canspotmon(mtmp) ? Amonnam(mtmp) : Something);
                     newsym(mtmp->mx, mtmp->my);
@@ -2333,7 +2380,7 @@ set_wounded_legs(long side, int timex)
      * You still call this function, but don't lose hp.
      * Caller is also responsible for adjusting messages.
      */
-    gc.context.botl = 1;
+    disp.botl = TRUE;
     if (!Wounded_legs)
         ATEMP(A_DEX)--;
 
@@ -2353,7 +2400,7 @@ heal_legs(
     int how) /* 0: ordinary, 1: dismounting steed, 2: limbs turn to stone */
 {
     if (Wounded_legs) {
-        gc.context.botl = 1;
+        disp.botl = TRUE;
         if (ATEMP(A_DEX) < 0)
             ATEMP(A_DEX)++;
 

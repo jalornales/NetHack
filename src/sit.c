@@ -28,7 +28,7 @@ take_gold(void)
         You_feel("a strange sensation.");
     } else {
         You("notice you have no gold!");
-        gc.context.botl = 1;
+        disp.botl = TRUE;
     }
 }
 
@@ -69,7 +69,7 @@ throne_sit_effect(void)
             make_blinded(0L, TRUE);
             make_sick(0L, (char *) 0, FALSE, SICK_ALL);
             heal_legs(0);
-            gc.context.botl = 1;
+            disp.botl = TRUE;
             break;
         case 5:
             take_gold();
@@ -285,7 +285,13 @@ dosit(void)
             You("sit on %s.", the(xname(obj)));
             if (obj->otyp == CORPSE && amorphous(&mons[obj->corpsenm]))
                 pline("It's squishy...");
-            else if (!(Is_box(obj) || objects[obj->otyp].oc_material == CLOTH))
+            else if (obj->otyp == CREAM_PIE) {
+                 if (!Deaf) {
+                   Soundeffect(se_squelch, 30);
+                   pline("Squelch!");
+                }
+                useupf(obj, obj->quan);
+            } else if (!(Is_box(obj) || objects[obj->otyp].oc_material == CLOTH))
                 pline("It's not very comfortable...");
         }
     } else if (trap != 0 || (u.utrap && (u.utraptype >= TT_LAVA))) {
@@ -321,7 +327,7 @@ dosit(void)
                 u.utrap++;
             }
         } else {
-            /* when flying, "you land" might need some refinement; it aounds
+            /* when flying, "you land" might need some refinement; it sounds
                as if you're staying on the ground but you will immediately
                take off again unless you become stuck in a holding trap */
             You("%s.", Flying ? "land" : "sit down");

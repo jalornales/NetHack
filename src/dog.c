@@ -1,4 +1,4 @@
-/* NetHack 3.7	dog.c	$NHDT-Date: 1652689621 2022/05/16 08:27:01 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.121 $ */
+/* NetHack 3.7	dog.c	$NHDT-Date: 1700012881 2023/11/15 01:48:01 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.147 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Robert Patrick Rankin, 2011. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -7,7 +7,7 @@
 
 static int pet_type(void);
 static void set_mon_lastmove(struct monst *);
-static int mon_leave(struct monst *);
+static int mon_leave(struct monst *) NONNULLARG1;
 static boolean keep_mon_accessible(struct monst *);
 
 enum arrival {
@@ -188,12 +188,10 @@ makedog(void)
         return ((struct monst *) 0);
 
     pettype = pet_type();
-    if (pettype == PM_LITTLE_DOG)
-        petname = gd.dogname;
-    else if (pettype == PM_PONY)
-        petname = gh.horsename;
-    else
-        petname = gc.catname;
+    petname = (pettype == PM_LITTLE_DOG) ? gd.dogname
+              : (pettype == PM_KITTEN) ? gc.catname
+                : (pettype == PM_PONY) ? gh.horsename
+                  : "";
 
     /* default pet names */
     if (!*petname && pettype == PM_LITTLE_DOG) {
@@ -606,10 +604,12 @@ mon_catchup_elapsed_time(
         mtmp->mstun = 0;
 
     /* might finish eating or be able to use special ability again */
-    if (imv > mtmp->meating)
-        finish_meating(mtmp);
-    else
-        mtmp->meating -= imv;
+    if (mtmp->meating) {
+        if (imv > mtmp->meating)
+            finish_meating(mtmp);
+        else
+            mtmp->meating -= imv;
+    }
     if (imv > mtmp->mspec_used)
         mtmp->mspec_used = 0;
     else
@@ -735,7 +735,7 @@ keepdogs(
                unlike level change for steed, don't bother trying
                to achieve a normal trap escape first */
             mtmp->mtrapped = 0;
-            mtmp->meating = 0;
+            finish_meating(mtmp);
             mtmp->msleeping = 0;
             mtmp->mfrozen = 0;
             mtmp->mcanmove = 1;
@@ -929,14 +929,18 @@ dogfood(struct monst *mon, struct obj *obj)
     switch (obj->oclass) {
     case FOOD_CLASS:
         fx = (obj->otyp == CORPSE || obj->otyp == TIN || obj->otyp == EGG)
+                /* corpsenm might be NON_PM (special tin, unhatachable egg) */
                 ? obj->corpsenm
-                : NUMMONS; /* valid mons[mndx] to pacify static analyzer */
-        fptr = &mons[fx];
+                : NON_PM;
+        /* mons[NUMMONS] is a valid array entry, though not a valid monster;
+         * predicate tests against it will fail */
+        fptr = &mons[(ismnum(fx)) ? fx : NUMMONS];
 
         if (obj->otyp == CORPSE && is_rider(fptr))
             return TABU;
         if ((obj->otyp == CORPSE || obj->otyp == EGG)
-            && touch_petrifies(fptr) && !resists_ston(mon))
+            && flesh_petrifies(fptr) /* c*ckatrice or Medusa */
+            && !resists_ston(mon))
             return POISON;
         if (obj->otyp == LUMP_OF_ROYAL_JELLY
             && mon->data == &mons[PM_KILLER_BEE]) {
@@ -1100,7 +1104,7 @@ tamedog(struct monst *mtmp, struct obj *obj)
             /* pet will "catch" and eat this thrown food */
             if (canseemon(mtmp)) {
                 boolean big_corpse =
-                    (obj->otyp == CORPSE && obj->corpsenm >= LOW_PM
+                    (obj->otyp == CORPSE && ismnum(obj->corpsenm)
                      && mons[obj->corpsenm].msize > mtmp->data->msize);
                 pline("%s catches %s%s", Monnam(mtmp), the(xname(obj)),
                       !big_corpse ? "." : ", or vice versa!");

@@ -1,4 +1,4 @@
-/* NetHack 3.7	flag.h	$NHDT-Date: 1684791761 2023/05/22 21:42:41 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.217 $ */
+/* NetHack 3.7	flag.h	$NHDT-Date: 1698264779 2023/10/25 20:12:59 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.224 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2006. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -45,8 +45,10 @@ struct flag {
     boolean mention_decor;   /* give feedback for unobscured furniture */
     boolean mention_walls;   /* give feedback when bumping walls */
     boolean nap;             /* `timed_delay' option for display effects */
+    boolean nopick_dropped;  /* items you dropped may be autopicked */
     boolean null;            /* OK to send nulls to the terminal */
     boolean pickup;          /* whether you pickup or move and look */
+    boolean pickup_stolen;   /* auto-pickup items stolen by a monster */
     boolean pickup_thrown;   /* auto-pickup items you threw */
     boolean pushweapon; /* When wielding, push old weapon into second slot */
     boolean quick_farsight;  /* True disables map browsing during random
@@ -85,7 +87,8 @@ struct flag {
 #define PARANOID_WERECHANGE 0x0100
 #define PARANOID_EATING     0x0200
 #define PARANOID_SWIM       0x0400
-#define PARANOID_AUTOALL    0x0800
+#define PARANOID_TRAP       0x0800
+#define PARANOID_AUTOALL    0x1000
     int pickup_burden; /* maximum burden before prompt */
     int pile_limit;    /* controls feedback when walking over objects */
     char discosort;    /* order of dodiscovery/doclassdisco output: o,s,c,a */
@@ -185,6 +188,23 @@ struct debug_flags {
 #endif
 };
 
+struct accessibility_data {
+    boolean accessiblemsg; /* use msg_loc for plined messages */
+    coord msg_loc;         /* accessiblemsg: location */
+    boolean mon_notices;   /* msg when hero notices a monster */
+    int mon_notices_blocked; /* temp disable mon_notices */
+};
+
+/* Use notice_mon_off() / notice_mon_on() to temporarily disable
+   noticing the monsters in the vision code - perhaps the game
+   needs to output some other messages in between.
+   Call notice_all_mons() afterwards to catch up. */
+#define notice_mon_off() do { a11y.mon_notices_blocked++; } while(0)
+#define notice_mon_on()  do { if (--a11y.mon_notices_blocked < 0) { \
+            impossible("mon_notices_blocked<0");                    \
+            a11y.mon_notices_blocked = 0;                           \
+        } } while(0)
+
 /*
  * Stuff that really isn't option or platform related and does not
  * get saved and restored.  They are set and cleared during the game
@@ -206,23 +226,24 @@ struct instance_flags {
     int at_midnight;       /* only valid during end of game disclosure */
     int at_night;          /* also only valid during end of game disclosure */
     int failing_untrap;    /* move_into_trap() -> spoteffects() -> dotrap() */
+    int getdir_click;      /* as input to getdir(): non-zero, accept simulated
+                            * click that's not adjacent to or on hero;
+                            * as output from getdir(): simulated button used
+                            * 0 (none) or CLICK_1 (left) or CLICK_2 (right) */
+    int getloc_filter;     /* GFILTER_foo */
     int in_lava_effects;   /* hack for Boots_off() */
     int last_msg;          /* indicator of last message player saw */
     int override_ID;       /* true to force full identification of objects */
     int parse_config_file_src;  /* hack for parse_config_line() */
     int purge_monsters;    /* # of dead monsters still on fmon list */
     int suppress_price;    /* controls doname() for unpaid objects */
-    int terrainmode; /* for getpos()'s autodescribe when #terrain is active */
-#define TER_MAP    0x01
-#define TER_TRP    0x02
-#define TER_OBJ    0x04
-#define TER_MON    0x08
-#define TER_DETECT 0x10    /* detect_foo magic rather than #terrain */
-    int getdir_click;      /* as input to getdir(): non-zero, accept simulated
-                            * click that's not adjacent to or on hero;
-                            * as output from getdir(): simulated button used
-                            * 0 (none) or CLICK_1 (left) or CLICK_2 (right) */
-    int getloc_filter;     /* GFILTER_foo */
+    unsigned  terrainmode; /* for getpos()'s autodescribe during #terrain */
+#define TER_MAP    0x01U
+#define TER_TRP    0x02U
+#define TER_OBJ    0x04U
+#define TER_MON    0x08U
+#define TER_FULL   0x10U   /* explore|wizard mode view full map */
+#define TER_DETECT 0x20U   /* detect_foo magic rather than #terrain */
     boolean bgcolors;      /* display background colors on a map position */
     boolean getloc_moveskip;
     boolean getloc_travelmode;
@@ -249,7 +270,7 @@ struct instance_flags {
     int getpos_coords;    /* show coordinates when getting cursor position */
     int menuinvertmode;  /* 0 = invert toggles every item;
                             1 = invert skips 'all items' item */
-    int menu_headings;    /* ATR for menu headings */
+    color_attr menu_headings;    /* CLR_ and ATR_ for menu headings */
     uint32_t colorcount;    /* store how many colors terminal is capable of */
     boolean use_truecolor;  /* force use of truecolor */
 #ifdef ALTMETA
@@ -269,7 +290,7 @@ struct instance_flags {
     boolean menu_tab_sep;     /* Use tabs to separate option menu fields */
     boolean news;             /* print news */
     boolean num_pad;          /* use numbers for movement commands */
-    boolean perm_invent;      /* keep full inventories up until dismissed */
+    boolean perm_invent;      /* display persistent inventory window */
     boolean renameallowed;    /* can change hero name during role selection */
     boolean renameinprogress; /* we are changing hero name */
     boolean sounds;           /* master on/off switch for using soundlib */
@@ -288,8 +309,16 @@ struct instance_flags {
     boolean zerocomp;         /* write zero-compressed save files */
     boolean rlecomp;          /* alternative to zerocomp; run-length encoding
                                * compression of levels when writing savefile */
+    schar ice_rating;         /* ice_descr()'s classification of ice terrain */
     schar prev_decor;         /* 'mention_decor' just mentioned this */
-    uchar num_pad_mode;
+    uchar num_pad_mode;       /* for num_pad==True, controls how 5 behaves
+                               * and/or 789456123 vs phone-style 123456789;
+                               * for False, qwertY vs qwertZ */
+    uchar perminv_mode;       /* what to display in persistent invent window
+                               * 0: nothing, 1: all inventory except gold,
+                               * 2: full including gold, 8: in-use items only,
+                               * 5|6: 1|2 with invent letters shown in empty
+                               * slots (TTY only: 'sparse' modes) */
     uchar bouldersym;         /* symbol for boulder display */
     char prevmsg_window;      /* type of old message window to use */
     boolean extmenu;          /* extended commands use menu interface */
@@ -323,7 +352,6 @@ struct instance_flags {
 #endif
     boolean cmdassist;       /* provide detailed assistance for some comnds */
     boolean fireassist;      /* autowield launcher when using fire-command */
-    boolean time_botl;       /* context.botl for 'time' (moves) only */
     boolean wizweight;       /* display weight of everything in wizard mode */
     boolean wizmgender;      /* test gender info from core in window port */
     /*
@@ -402,6 +430,8 @@ struct instance_flags {
                                     chosen_windowport[], but do not switch to
                                     it in the midst of options processing */
     genericptr_t returning_missile; /* 'struct obj *'; Mjollnir or aklys */
+    boolean wiz_error_flag;     /* flag for tracking failed wizmode auth */
+    boolean explore_error_flag; /* ditto for explore mode */
     boolean obsolete;  /* obsolete options can point at this, it isn't used */
 };
 
@@ -424,6 +454,7 @@ struct instance_flags {
 
 extern NEARDATA struct flag flags;
 extern NEARDATA struct instance_flags iflags;
+extern NEARDATA struct accessibility_data a11y;
 
 /* last_msg values
  * Usage:
@@ -482,6 +513,8 @@ enum runmode_types {
 #define ParanoidEating ((flags.paranoia_bits & PARANOID_EATING) != 0)
 /* Prevent going into lava or water without explicitly forcing it */
 #define ParanoidSwim ((flags.paranoia_bits & PARANOID_SWIM) != 0)
+/* Prevent going onto/into known trap unless it is harmless */
+#define ParanoidTrap ((flags.paranoia_bits & PARANOID_TRAP) != 0)
 /* Require confirmation for choosing 'A' in class menu for menustyle:Full */
 #define ParanoidAutoAll ((flags.paranoia_bits & PARANOID_AUTOALL) != 0U)
 

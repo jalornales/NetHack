@@ -30,8 +30,12 @@ extern glyph_info mesg_gi;
 #define USE_CURSES_PUTMIXED
 #else  /* WIDE */
 #ifdef NH_PRAGMA_MESSAGE
+#ifdef _MSC_VER
+#pragma message ("Curses wide support not defined so NetHack curses message window functionality reduced")
+#else
 #pragma message "Curses wide support not defined so NetHack curses message window functionality reduced"
-#endif
+#endif /* _MSC_VER */
+#endif /* NH_PRAGMA_MESSAGE */
 #endif /* WIDE */
 #endif /* CURSES_GENL_PUTMIXED */
 
@@ -145,6 +149,7 @@ int orig_cursor;            /* Preserve initial cursor state */
 WINDOW *base_term;          /* underlying terminal window */
 boolean counting;           /* Count window is active */
 WINDOW *mapwin, *statuswin, *messagewin;    /* Main windows */
+color_attr curses_menu_promptstyle = { NO_COLOR, ATR_NONE };
 
 /* Track if we're performing an update to the permanent window.
    Needed since we aren't using the normal menu functions to handle
@@ -206,7 +211,6 @@ curses_init_nhwindows(
 #else
     base_term = initscr();
 #endif
-#ifdef TEXTCOLOR
     if (has_colors()) {
         start_color();
         curses_init_nhcolors();
@@ -216,12 +220,6 @@ curses_init_nhwindows(
         iflags.wc2_guicolor = FALSE;
         set_wc2_option_mod_status(WC2_GUICOLOR, set_in_config);
     }
-#else
-    iflags.use_color = FALSE;
-    set_option_mod_status("color", set_in_config);
-    iflags.wc2_guicolor = FALSE;
-    set_wc2_option_mod_status(WC2_GUICOLOR, set_in_config);
-#endif
     noecho();
     raw();
     nonl(); /* don't force ^M into newline (^J); input accepts them both
@@ -465,6 +463,8 @@ curses_display_nhwindow(winid wid, boolean block)
 {
     menu_item *selected = NULL;
 
+    if (wid == WIN_ERR)
+        return;
     if (curses_is_menu(wid) || curses_is_text(wid)) {
         curses_end_menu(wid, "");
         (void) curses_select_menu(wid, PICK_NONE, &selected);
@@ -580,12 +580,37 @@ curses_putstr(winid wid, int attr, const char *text)
 void
 curses_putmixed(winid window, int attr, const char *str)
 {
+    const char *substr = 0;
+    char buf[BUFSZ];
+    boolean done_output = FALSE;
+#ifdef ENHANCED_SYMBOLS
+    int utf8flag = 0;
+#endif
+
     if (window == WIN_MESSAGE) {
         str = mixed_to_glyphinfo(str, &mesg_gi);
         mesg_mixed = 1;
+    } else {
+        if ((substr = strstri(str, "\\G")) != 0) {
+#ifdef ENHANCED_SYMBOLS
+            if ((windowprocs.wincap2 & WC2_U_UTF8STR) && SYMHANDLING(H_UTF8)) {
+                mixed_to_utf8(buf, sizeof buf, str, &utf8flag);
+            } else {
+#endif
+                decode_mixed(buf, str);
+#ifdef ENHANCED_SYMBOLS
+            }
+#endif
+            /* now send buf to the normal putstr */
+            curses_putstr(window, attr, buf);
+            done_output = TRUE;
+	}
     }
-    /* now send it to the normal putstr */
-    curses_putstr(window, attr, str);
+
+    if (!done_output) {
+        /* just send str to the normal putstr */
+        curses_putstr(window, attr, str);
+    }
     if (window == WIN_MESSAGE)
         mesg_mixed = 0;
 }
@@ -651,25 +676,26 @@ void
 curses_add_menu(winid wid, const glyph_info *glyphinfo,
                 const ANY_P *identifier,
                 char accelerator, char group_accel, int attr,
-                int clr UNUSED, const char *str, unsigned itemflags)
+                int clr, const char *str, unsigned itemflags)
 {
     int curses_attr;
 
     attr &= ~(ATR_URGENT | ATR_NOHISTORY);
     curses_attr = curses_convert_attr(attr);
 
+    /* 'inv_update': 0 for normal menus, 1 and up for perminv window */
     if (inv_update) {
         /* persistent inventory window; nothing is selectable;
            omit glyphinfo because perm_invent is to the side of
-           the map so usually cramped for space */
-        curs_add_invt(inv_update, accelerator, curses_attr, str);
+           the map so usually cramped for horizontal space */
+        curs_add_invt(inv_update, accelerator, curses_attr, clr, str);
         inv_update++;
         return;
     }
 
     curses_add_nhmenu_item(wid, glyphinfo, identifier,
                            accelerator, group_accel,
-                           curses_attr, str, itemflags);
+                           curses_attr, clr, str, itemflags);
 }
 
 /*
@@ -767,10 +793,29 @@ curses_update_inventory(int arg)
 win_request_info *
 curses_ctrl_nhwindow(
     winid window UNUSED,
-    int request UNUSED,
-    win_request_info *wri UNUSED)
+    int request,
+    win_request_info *wri)
 {
-    return (win_request_info *) 0;
+    int attr;
+
+    if (!wri)
+        return (win_request_info *) 0;
+
+    switch (request) {
+    case set_mode:
+    case request_settings:
+        break;
+    case set_menu_promptstyle:
+	curses_menu_promptstyle.color = wri->fromcore.menu_promptstyle.color;
+        if (curses_menu_promptstyle.color == NO_COLOR)
+            curses_menu_promptstyle.color = NONE;
+	attr = wri->fromcore.menu_promptstyle.attr;
+	curses_menu_promptstyle.attr = curses_convert_attr(attr);;
+        break;
+    default:
+        break;
+    }
+    return wri;
 }
 
 /*
@@ -796,9 +841,11 @@ wait_synch()    -- Wait until all pending output is complete (*flush*() for
 void
 curses_wait_synch(void)
 {
-    if (curses_got_output())
-        (void) curses_more();
-    curses_mark_synch();
+    if (iflags.window_inited) {
+        if (curses_got_output())
+            (void) curses_more();
+        curses_mark_synch();
+    }
     /* [do we need 'if (counting) curses_count_window((char *)0);' here?] */
 }
 
@@ -882,9 +929,12 @@ curses_print_glyph(
             else /* if (iflags.use_inverse) */
                 attr = A_REVERSE;
         }
-        /* water and lava look the same except for color; when color is off,
-           render lava in inverse video so that they look different */
-        if ((special & (MG_BW_LAVA | MG_BW_ICE)) != 0 && iflags.use_inverse) {
+        /* water and lava look the same except for color; when color is off
+           (checked by core), render lava in inverse video so that it looks
+           different from water; similar for floor vs ice, fountain vs sink,
+           and corridor vs engranving-in-corridor */
+        if ((special & (MG_BW_LAVA | MG_BW_ICE | MG_BW_SINK | MG_BW_ENGR))
+            != 0 && iflags.use_inverse) {
             /* reset_glyphmap() only sets MG_BW_foo if color is off */
             attr = A_REVERSE;
         }

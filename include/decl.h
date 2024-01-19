@@ -1,4 +1,4 @@
-/* NetHack 3.7  decl.h  $NHDT-Date: 1686726249 2023/06/14 07:04:09 $  $NHDT-Branch: NetHack-3.7 $:$NHDT-Revision: 1.333 $ */
+/* NetHack 3.7  decl.h  $NHDT-Date: 1704043695 2023/12/31 17:28:15 $  $NHDT-Branch: keni-luabits2 $:$NHDT-Revision: 1.351 $ */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /*-Copyright (c) Michael Allison, 2007. */
 /* NetHack may be freely redistributed.  See license for details. */
@@ -29,6 +29,7 @@ extern NEARDATA const struct c_color_names c_color_names;
 /* common_strings */
 extern const struct c_common_strings c_common_strings;
 #define nothing_happens c_common_strings.c_nothing_happens
+#define nothing_seems_to_happen c_common_strings.c_nothing_seems_to_happen
 #define thats_enough_tries c_common_strings.c_thats_enough_tries
 #define silly_thing_to c_common_strings.c_silly_thing_to
 #define shudder_for_moment c_common_strings.c_shudder_for_moment
@@ -114,6 +115,13 @@ extern struct tc_gbl_data {   /* also declared in tcap.h */
 extern const char *ARGV0;
 #endif
 
+struct display_hints {
+    boolean botl;            /* partially redo status line */
+    boolean botlx;           /* print an entirely new bottom line */
+    boolean time_botl;       /* context.botl for 'time' (moves) only */
+};
+extern struct display_hints disp;
+
 /*
  * 'gX' -- instance_globals holds engine state that does not need to be
  * persisted upon game exit.  The initialization state is well defined
@@ -146,6 +154,8 @@ struct instance_globals_a {
     int animal_list_count;
 
     /* pickup.c */
+    int A_first_hint; /* menustyle:Full plus 'A' response + !paranoid:A */
+    int A_second_hint; /* menustyle:Full plus 'A' response + paranoid:A */
     boolean abort_looting;
 
     /* shk.c */
@@ -199,6 +209,9 @@ struct instance_globals_b {
 
     /* zap.c */
     struct monst *buzzer; /* zapper/caster/breather who initiates buzz() */
+
+    /* new */
+    boolean bot_disabled;
 
     boolean havestate;
     unsigned long magic; /* validate that structure layout is preserved */
@@ -322,6 +335,10 @@ struct instance_globals_d {
        but that would require all xname() and doname() calls to be modified */
     int distantname;
 
+    /* pickup.c */
+    boolean decor_fumble_override;
+    boolean decor_levitate_override;
+
     boolean havestate;
     unsigned long magic; /* validate that structure layout is preserved */
 };
@@ -340,6 +357,7 @@ struct instance_globals_e {
     struct bubble *ebubbles;
 
     /* new stuff */
+    struct exclusion_zone *exclusion_zones;
     int early_raw_messages;   /* if raw_prints occurred early prior
                                  to gb.beyond_savefile_load */
 
@@ -380,6 +398,7 @@ struct instance_globals_g {
     coordxy gbuf_stop[ROWNO];
 
     /* do_name.c */
+    coordxy getposx, getposy; /* cursor position in case of async resize */
     struct selectionvar *gloc_filter_map;
     int gloc_filter_floodfill_match_glyph;
 
@@ -460,6 +479,8 @@ struct instance_globals_i {
     /* sp_lev.c */
     boolean in_mk_themerooms;
 
+    /* new */
+
     boolean havestate;
     unsigned long magic; /* validate that structure layout is preserved */
 };
@@ -491,7 +512,7 @@ struct instance_globals_l {
     /* cmd.c */
     cmdcount_nht last_command_count;
 
-    /* dbridge.c */
+    /* decl.c (before being incorporated into instance_globals_*) */
     schar lastseentyp[COLNO][ROWNO]; /* last seen/touched dungeon typ */
     struct linfo level_info[MAXLINFO];
     dlevel_t level; /* level map */
@@ -527,6 +548,8 @@ struct instance_globals_l {
     /* nhlua.c */
     genericptr_t luacore; /* lua_State * */
     char lua_warnbuf[BUFSZ];
+    int loglua;
+    int lua_sid;
 
     /* options.c */
     boolean loot_reset_justpicked;
@@ -712,6 +735,7 @@ struct instance_globals_o {
     boolean opt_from_file;
     boolean opt_need_redraw; /* for doset() */
     boolean opt_need_glyph_reset;
+    boolean opt_need_promptstyle;
 
     /* pickup.c */
     int oldcap; /* last encumberance */
@@ -762,6 +786,8 @@ struct instance_globals_p {
 
     /* pickup.c */
     boolean picked_filter;
+    int pickup_encumbrance; /* when picking up multiple items in a single
+                             * operation, encumbrance after previous item */
 
     /* pline.c */
     unsigned pline_flags;
@@ -1135,9 +1161,12 @@ struct const_globals {
     const struct obj zeroobj;      /* used to zero out a struct obj */
     const struct monst zeromonst;  /* used to zero out a struct monst */
     const anything zeroany;        /* used to zero out union any */
+    const NhRect zeroNhRect;       /* used to zero out NhRect */
 };
 
 extern const struct const_globals cg;
+
+extern struct obj hands_obj;
 
 #endif /* DECL_H */
 
